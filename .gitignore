@@ -1,0 +1,40 @@
+# Operating system files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Editor and IDE files
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.sublime-workspace
+.*.kate-swp
+
+# Temporary and backup files
+*.tmp
+*.bak
+*.orig
+*.log
+tmp/
+
+# Secrets and local environment — never commit credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+credentials.json
+secrets.json
+secrets.yaml
+secrets.yml
+secrets.toml
+
+# Local scratch/override files
+*.local
+.direnv/
