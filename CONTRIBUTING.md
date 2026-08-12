@@ -14,7 +14,7 @@ Mithril is in a **pre-implementation phase**. There is no product source code, n
 
 The repository does contain an experimental Agda mechanization of candidate kernel semantics under `agda/`. It is an exploratory spike, not a product prototype, and it does not select Agda as the implementation language.
 
-It requires **exactly Agda 2.8.0**, uses Agda builtins only (no standard library and no other external library), and verifies **none** of Mithril's target properties: TenantIsolation, AuthenticatedMutation and NoSelfPrivilegeEscalation remain unverified.
+It requires **exactly Agda 2.8.0** and uses Agda builtins only (no standard library and no other external library). Its only application-level result is one checked, hand-transcribed, fixed-schema proof slice (see [`agda/README.md`](agda/README.md)): the Acme example's `Membership.changeRole` action satisfies its selected NoSelfPrivilegeEscalation case, with checked negative evidence that an unsafe self-promotion variant violates the same proposition. Everything else remains unverified: there is no automated JSON-to-Agda connection, neither `examples/acme/acme.mir.json` nor the complete Acme model is verified, no other action or guarantee family (TenantIsolation, AuthenticatedMutation) is proved, and the slice is an experiment, not a product verifier.
 
 Its two authoritative checks are real commands. Run both from the repository root, and run each from deleted `.agdai` interfaces so that neither check can succeed through interfaces produced by the other:
 

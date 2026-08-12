@@ -14,7 +14,7 @@ Mithril is experimental formal-verification infrastructure for authorization and
 - `examples/acme/acme.mir.json` is a handwritten source example. Neither file is generated; both are edited by hand.
 - Schema acceptance is structural validation only — required fields, closed constructor sets, principal-mode surface shape, classification/effect/result compatibility. It is not semantic validation and not proof: declaration uniqueness, name resolution, typing, enum-order permutation checks, policy evaluation, and guarantee verification all require the later parser, resolver, typechecker, and normalizer, none of which exists.
 - No parser, implementation language, or product toolchain has been selected or built.
-- The Agda spike under `agda/` remains a separate exploration; it does not consume this JSON and does not establish the Acme example's guarantees.
+- The Agda spike under `agda/` remains a separate exploration; it does not consume this JSON. It now contains one hand-transcribed application slice — a checked NoSelfPrivilegeEscalation case for `Membership.changeRole` (see `agda/README.md`) — which does not establish the JSON document's guarantees.
 
 ## Hard rules
 

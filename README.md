@@ -1,6 +1,6 @@
 # Mithril
 
-> **Status: experimental, pre-implementation.** This repository currently contains documentation, an experimental Agda semantic spike (`agda/`), and the first Mithril Core v0 concrete-syntax checkpoint: a normative JSON Schema plus one handwritten example model. There is no parser, verifier, or code generator yet, and nothing described below is verified.
+> **Status: experimental, pre-implementation.** This repository currently contains documentation, an experimental Agda semantic spike (`agda/`), and the first Mithril Core v0 concrete-syntax checkpoint: a normative JSON Schema plus one handwritten example model. There is no parser, verifier, or code generator yet. The spike now includes one hand-transcribed application experiment — a NoSelfPrivilegeEscalation proof for a single Acme action inside the fixed-schema Agda kernel ([`agda/README.md`](agda/README.md)) — but no automated verifier or JSON-to-Agda connection exists, and the JSON document itself and everything else described below remain unverified.
 
 Mithril is experimental formal-verification infrastructure for **authorization and data-access security in AI-generated web backends**. That is its entire initial scope: it is not a general-purpose verification framework, not a web framework, and not a security product.
 
@@ -19,7 +19,7 @@ The key design commitment is that the LLM's role ends at Core. Verification and 
 
 | Status | Description |
 |---|---|
-| **Exists today** | This documentation, contribution and security policies, agent guidelines, an experimental Agda semantic spike under `agda/`, and the Core v0 concrete-syntax checkpoint: [`core/schema.json`](core/schema.json) with the handwritten [`examples/acme/acme.mir.json`](examples/acme/acme.mir.json). |
+| **Exists today** | This documentation, contribution and security policies, agent guidelines, an experimental Agda semantic spike under `agda/` (including one hand-transcribed application slice: a checked NoSelfPrivilegeEscalation proof for the Acme `Membership.changeRole` action, see [`agda/README.md`](agda/README.md)), and the Core v0 concrete-syntax checkpoint: [`core/schema.json`](core/schema.json) with the handwritten [`examples/acme/acme.mir.json`](examples/acme/acme.mir.json). |
 | **Does not exist yet** | Everything beyond Core's concrete JSON syntax: the parser, resolver, typechecker, normalizer, verifier, Wasp generator, LLM translation layer, any test suite, and any product toolchain. The implementation language has not been selected. |
 
 ## Core v0 syntax checkpoint
@@ -28,17 +28,19 @@ The key design commitment is that the LLM's role ends at Core. Verification and 
 
 It validates JSON shape only. Schema acceptance establishes structural facts (required fields, closed constructor sets, principal-mode surface shape, action classification/effect/result compatibility, and the structural exclusion of direct `Actor` syntax from anonymous policy branches and from `AnyPrincipal` effects and results). It establishes no name resolution, no uniqueness, no typing, no enum-order correctness, no policy evaluation, and no security property.
 
-[`examples/acme/acme.mir.json`](examples/acme/acme.mir.json) is a handwritten example model. It is neither generated nor verified. The three guarantee objects it selects — TenantIsolation, AuthenticatedMutation, and NoSelfPrivilegeEscalation — remain unverified target properties, exactly as described below; their appearance in the JSON selects proof obligations and proves nothing.
+[`examples/acme/acme.mir.json`](examples/acme/acme.mir.json) is a handwritten example model. It is neither generated nor verified. The three guarantee objects it selects — TenantIsolation, AuthenticatedMutation, and NoSelfPrivilegeEscalation — remain unverified for this document; their appearance in the JSON selects proof obligations and proves nothing. Separately, the Agda spike hand-transcribes the `Membership.changeRole` action and proves its selected NoSelfPrivilegeEscalation case inside the fixed-schema kernel ([`agda/README.md`](agda/README.md)); no tool connects that proof to this JSON document.
 
-No parser, resolver, typechecker, normalizer, verifier, application proof, Wasp generator, or product toolchain exists yet. Conformance of an instance to the schema can be checked with any standard JSON Schema draft 2020-12 validator. The separate Agda spike under `agda/` explores candidate kernel semantics and does not consume this JSON.
+No parser, resolver, typechecker, normalizer, verifier, Wasp generator, or product toolchain exists yet. Conformance of an instance to the schema can be checked with any standard JSON Schema draft 2020-12 validator. The separate Agda spike under `agda/` explores candidate kernel semantics; it does not consume this JSON, and its single hand-transcribed application proof does not verify this document.
 
 ## Target properties (not implemented guarantees)
 
-The following are properties Mithril **aims to verify in the future**. None of them is implemented, checked, or guaranteed by anything in this repository today:
+The following are properties Mithril **aims to verify in the future**. No product implementation of them exists, and none of them is guaranteed for any real application:
 
 - **TenantIsolation** — a request executing on behalf of one tenant cannot read or write another tenant's data through generated data-access paths.
 - **AuthenticatedMutation** — no generated mutation endpoint is reachable without an authenticated principal.
 - **NoSelfPrivilegeEscalation** — no principal can use generated endpoints to raise their own privileges.
+
+The only formal artifact so far is the Agda spike's hand-transcribed, fixed-schema experiment ([`agda/README.md`](agda/README.md)): one NoSelfPrivilegeEscalation action/property slice — the Acme `Membership.changeRole` action — is proved inside the kernel, with a checked counterexample for an unsafe variant. It covers nothing else: not the complete Acme model, not the JSON document, and not the other two properties. No automated verifier or JSON-to-Agda connection exists yet.
 
 ## What Mithril will not guarantee
 

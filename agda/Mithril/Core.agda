@@ -33,14 +33,20 @@ record EntityRef (k : EntityKind) : Set where
   field ix : Nat
 open EntityRef public
 
+-- Boolean equality on Nat.  Top-level rather than where-local under
+-- `eqRef`: a where-local helper is lifted over its clause's pattern
+-- variables, so no inductive fact about it is provable from other
+-- modules.  `Mithril.Guarantee.eqNat-refl` — which the Acme slice's
+-- actor ≠ target reasoning rests on — needs it top-level.  Reduction on
+-- closed values is identical either way.
+eqNat : Nat → Nat → Bool
+eqNat zero    zero    = true
+eqNat zero    (suc _) = false
+eqNat (suc _) zero    = false
+eqNat (suc m) (suc n) = eqNat m n
+
 eqRef : ∀ {k} → EntityRef k → EntityRef k → Bool
 eqRef r₁ r₂ = eqNat (ix r₁) (ix r₂)
-  where
-  eqNat : Nat → Nat → Bool
-  eqNat zero    zero    = true
-  eqNat zero    (suc _) = false
-  eqNat (suc _) zero    = false
-  eqNat (suc m) (suc n) = eqNat m n
 
 -- The spike's representative finite ordered enum: Membership payloads.
 -- Order: memberR < adminR.
