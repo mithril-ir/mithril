@@ -4,10 +4,29 @@ Thanks for your interest in Mithril. Please read this short document before open
 
 ## Where the project stands
 
-Mithril is in a **pre-implementation phase**. There is no source code, no chosen implementation language, and no toolchain yet. Because of that:
+Mithril is in a **pre-implementation phase**. There is no product source code, no selected implementation language, and no product build, test, lint, or formatting toolchain. Because of that:
 
-- There are **no setup, build, test, or formatting commands** to document. Any such commands you find elsewhere are not real. They will be documented here once a toolchain exists.
-- The most valuable contributions right now are design discussion, review of the scope and non-guarantees documented in the README, and prior-art references — not code.
+- There are **no product setup, build, test, lint, or formatting commands** to document. Any such commands you find elsewhere are not real. They will be documented here once a toolchain exists.
+- The one exception is the experimental Agda semantic spike described below, whose checks are real.
+- The most valuable contributions right now are design discussion, review of the scope and non-guarantees documented in the README, and prior-art references — not product code.
+
+### The experimental Agda semantic spike
+
+The repository does contain an experimental Agda mechanization of candidate kernel semantics under `agda/`. It is an exploratory spike, not a product prototype, and it does not select Agda as the implementation language.
+
+It requires **exactly Agda 2.8.0**, uses Agda builtins only (no standard library and no other external library), and verifies **none** of Mithril's target properties: TenantIsolation, AuthenticatedMutation and NoSelfPrivilegeEscalation remain unverified.
+
+Its two authoritative checks are real commands. Run both from the repository root, and run each from deleted `.agdai` interfaces so that neither check can succeed through interfaces produced by the other:
+
+```
+find . -type f -name '*.agdai' -delete
+agda --safe -i agda agda/Mithril/Everything.agda
+
+find . -type f -name '*.agdai' -delete
+agda --safe --no-libraries --ignore-interfaces -i agda agda/Mithril/Everything.agda
+```
+
+[`agda/README.md`](agda/README.md) is the detailed source for the spike's boundary and these commands. Changes touching `agda/` must keep both checks passing.
 
 ## Discuss before building
 
