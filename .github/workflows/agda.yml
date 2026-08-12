@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          path: source
 
       - name: Install Agda 2.8.0
         uses: agda/agda-setup-action@c931d59d76a036d1bed9f322cc12cc105bda7881 # v1
@@ -30,11 +32,13 @@ jobs:
         run: agda --version
 
       - name: Check spike (safe)
+        working-directory: source
         run: |
           find . -type f -name '*.agdai' -delete
           agda --safe -i agda agda/Mithril/Everything.agda
 
       - name: Check spike (safe, no libraries, ignore interfaces)
+        working-directory: source
         run: |
           find . -type f -name '*.agdai' -delete
           agda --safe --no-libraries --ignore-interfaces -i agda agda/Mithril/Everything.agda
