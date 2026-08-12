@@ -6,7 +6,15 @@ This file is operational guidance for AI coding agents (and useful context for h
 
 Mithril is experimental formal-verification infrastructure for authorization and data-access security in AI-generated web backends. Intended flow: natural language → LLM → Mithril Core → formal verification and deterministic Wasp generation.
 
-**Current status: pre-implementation.** The repository contains documentation, repository configuration, and an experimental Agda semantic spike under `agda/` (see `agda/README.md`) — an exploratory mechanization of candidate kernel semantics that neither selects Agda as the implementation language nor constitutes a product prototype. There is no product source code, no verifier, no generator, and no production toolchain.
+**Current status: pre-implementation.** The repository contains documentation, repository configuration, an experimental Agda semantic spike under `agda/` (see `agda/README.md`) — an exploratory mechanization of candidate kernel semantics that neither selects Agda as the implementation language nor constitutes a product prototype — and the Core v0 concrete-syntax checkpoint described below. There is no product source code, no verifier, no generator, and no production toolchain.
+
+## Core v0 concrete syntax
+
+- `core/schema.json` (JSON Schema, draft 2020-12) is the source of truth for the current external JSON shape of a Mithril Core v0 document.
+- `examples/acme/acme.mir.json` is a handwritten source example. Neither file is generated; both are edited by hand.
+- Schema acceptance is structural validation only — required fields, closed constructor sets, principal-mode surface shape, classification/effect/result compatibility. It is not semantic validation and not proof: declaration uniqueness, name resolution, typing, enum-order permutation checks, policy evaluation, and guarantee verification all require the later parser, resolver, typechecker, and normalizer, none of which exists.
+- No parser, implementation language, or product toolchain has been selected or built.
+- The Agda spike under `agda/` remains a separate exploration; it does not consume this JSON and does not establish the Acme example's guarantees.
 
 ## Hard rules
 
