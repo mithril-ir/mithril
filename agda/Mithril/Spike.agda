@@ -10,9 +10,9 @@
 --
 -- Several example actions below are DELIBERATELY permissive: they exercise
 -- the mechanics (upsert, creation, framing), not sensible policy design.
--- No application-level security property is claimed; in particular
--- NoSelfPrivilegeEscalation remains a future target, not something this
--- spike enforces.
+-- No application-level security property is claimed in this module; the
+-- first hand-transcribed NoSelfPrivilegeEscalation action slice lives in
+-- `Mithril.Acme`.
 
 module Mithril.Spike where
 

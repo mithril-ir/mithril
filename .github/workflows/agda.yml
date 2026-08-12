@@ -1,8 +1,11 @@
 name: Agda
 
 # Type-checks the experimental Agda semantic spike under agda/ only.
-# It does not verify Mithril's application-level target properties
-# (TenantIsolation, AuthenticatedMutation, NoSelfPrivilegeEscalation).
+# Besides the kernel modules this includes one hand-transcribed
+# application slice: a NoSelfPrivilegeEscalation proof for the Acme
+# Membership.changeRole action (see agda/README.md). It verifies neither
+# the JSON document under examples/ nor the TenantIsolation and
+# AuthenticatedMutation target properties.
 
 on:
   pull_request:

@@ -10,7 +10,7 @@ Please do **not** disclose vulnerabilities in public issues, discussions, or pul
 
 ## Project status
 
-Mithril is **experimental and pre-implementation**. There is currently no released software, no verifier, and no code generator, and therefore no verified artifacts of any kind. Nothing in this repository should be relied on to secure a production system.
+Mithril is **experimental and pre-implementation**. There is currently no released software, no product verifier, and no code generator. The only checked formal artifact is an experimental, hand-transcribed, fixed-schema Agda proof slice ([`agda/README.md`](agda/README.md)): the Acme example's `Membership.changeRole` action satisfies one selected NoSelfPrivilegeEscalation case, with checked negative evidence that an unsafe self-promotion variant violates the same proposition. No tool connects that slice to the JSON example: `examples/acme/acme.mir.json` and the complete Acme model remain unverified, no other action or guarantee family is proved, and the slice provides no production-security assurance. Nothing in this repository should be relied on to secure a production system.
 
 ## Scope of future verification claims
 

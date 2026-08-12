@@ -3,10 +3,18 @@
 An experimental Agda mechanization of the hardest representation choices in
 the provisional Mithril Core v0 semantic kernel. It is **not** the Mithril
 Core language, parser, JSON representation, verifier, or an application
-implementation, and it verifies none of the project's target properties
-(TenantIsolation, AuthenticatedMutation, NoSelfPrivilegeEscalation). It
-exists to validate or falsify kernel-representation choices before any
-product implementation is designed.
+implementation. It exists to validate or falsify kernel-representation
+choices before any product implementation is designed.
+
+Of the project's target properties (TenantIsolation, AuthenticatedMutation,
+NoSelfPrivilegeEscalation), the spike now carries exactly one
+application-level slice: a hand-transcribed, fixed-schema rendering of the
+Acme example's `Membership.changeRole` action together with a checked proof
+of its selected NoSelfPrivilegeEscalation case (see
+["The Acme application slice"](#the-acme-application-slice) below).
+Everything else — the other two property families, the rest of the Acme
+model, and the JSON document itself — remains unverified, and no automated
+verifier or JSON-to-Agda connection exists.
 
 ## Checking
 
@@ -35,6 +43,8 @@ termination or rewrite pragmas, and no holes.
 | `Mithril.Policy` | Authentication levels and environments, typed argument contexts, policy terms, total evaluation, principal modes, policies with anonymous/authenticated branches, callers, validity, `eval-valid`, `fresh-not-evaluable`. |
 | `Mithril.Effect` | Result descriptors, effects indexed by the descriptor they produce, actions, the `Capability` authorization evidence, the authorized transition `execute`, `execute-wf`, and general read/upsert/creation theorems. |
 | `Mithril.Spike` | The representative Acme-style example: capabilities, authorized executions, and the regression evidence (ghost requests, fresh-candidate exclusion, complete-action binding). |
+| `Mithril.Guarantee` | The fixed-schema NoSelfPrivilegeEscalation proposition: authority as the Membership payload with absence as bottom (`nothing < Member < Admin`), non-escalation for one transition, and the unchanged-authority route into it. |
+| `Mithril.Acme` | The application slice: the hand-transcribed `Membership.changeRole` action, its universal no-self-escalation theorems, a non-vacuity execution, and the checked unsafe-variant counterexample. |
 | `Mithril.Everything` | Entry point importing all of the above. |
 
 ## The authorization boundary
@@ -168,6 +178,49 @@ are unconstructable).
   the written tuple is preserved; creation's exact footprint is itemized
   in the previous bullet.
 
+## The Acme application slice
+
+`Mithril.Guarantee` and `Mithril.Acme` carry the first application-level
+proof slice on top of the kernel: **one action, one property, by hand**.
+This is a hand-transcribed, fixed-schema Agda application *experiment* —
+no parser, resolver, typechecker, normalizer, verifier, or JSON-to-Agda
+lowering exists, and nothing checks the transcription against the JSON
+document.
+
+- `Mithril.Acme.changeRole` hand-transcribes the `Membership.changeRole`
+  action of [`examples/acme/acme.mir.json`](../examples/acme/acme.mir.json):
+  the parameters `target : User`, `organization : Organization`,
+  `newRole : MembershipRole` become the typed context; the allow policy
+  (actor is Admin in the organization, actor is not the target, the target
+  currently has a Membership there) and the SetRelation effect
+  (`Membership(target, organization) := newRole`, result `Done`) are
+  transcribed constructor by constructor with the JSON's nesting.
+- `Mithril.Guarantee.NoSelfPrivilegeEscalation` states the selected
+  guarantee case for one transition: the subject's own Membership
+  authority in the scope organization — the payload ordered with absence
+  as bottom, `nothing < Member < Admin` — does not increase.
+- `Mithril.Acme.changeRole-actor-authority-unchanged` proves the stronger
+  fact for **every** pre-state, authenticated actor, argument environment,
+  capability and allocator: an authorized execution leaves the actor's own
+  Membership tuple in the selected organization exactly unchanged. Policy
+  success forces actor ≠ target, and the kernel's SetRelation frame lemma
+  does the rest. `changeRole-no-self-escalation` derives the guarantee
+  form, and a concrete admin-promotes-another-member execution shows the
+  theorems are not vacuous.
+- Negative evidence, checked rather than inspected:
+  `Mithril.Acme.changeRoleUnsafe` (not part of the JSON document) keeps the
+  parameters and effect but weakens the policy to "actor holds at least
+  Member", so a Member may target themself. A concrete valid, authorized
+  execution takes that Member's own tuple from Member to Admin, and
+  `changeRoleUnsafe-violates-no-self-escalation` proves the transition
+  violates the same proposition; `changeRole-denies-self-promotion` shows
+  the safe action has no capability for the identical request.
+
+The slice verifies nothing beyond this: not the JSON document, not the
+remaining Acme actions (`Project.delete`'s DeleteEntity effect is not even
+representable in the kernel), not the other guarantee families, and no
+general property of Core.
+
 ## Generic vs. specialized
 
 **Generic in shape** (expected to survive generalization): the indexing
@@ -193,4 +246,6 @@ preservation and frame lemmas.
 
 **Deferred entirely**: JSON representation, parsing, a CLI, Wasp
 generation, production reference allocation, concurrency, the full Core
-action language, and the three application-level target properties.
+action language, the TenantIsolation and AuthenticatedMutation property
+families, and everything of NoSelfPrivilegeEscalation beyond the single
+hand-transcribed `Membership.changeRole` slice described above.
