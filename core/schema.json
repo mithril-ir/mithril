@@ -1,0 +1,1592 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mithril Core v0 document",
+  "description": "Normative concrete JSON syntax for generic Mithril Core v0 models.",
+  "$comment": "First normative concrete-syntax checkpoint. This schema establishes structural facts only: required fields, closed object shapes, the finite constructor sets, principal-mode surface shape, action classification/effect/result compatibility, and the structural exclusion of Actor syntax from anonymous policy branches and AnyPrincipal effects/results. Declaration-name uniqueness, name resolution, referenced-declaration existence, static typing, enum-order permutation, endpoint arity/type compatibility, policy evaluation, action authorization and guarantee truth are all deferred to later semantic stages (parser, resolver, typechecker, normalizer). Guarantees appearing in a document are selected proof obligations, not established results.",
+  "type": "object",
+  "properties": {
+    "format": {
+      "const": "mithril-core"
+    },
+    "formatVersion": {
+      "const": "0",
+      "$comment": "The JSON string \"0\", not the number 0."
+    },
+    "name": {
+      "$ref": "#/$defs/declarationName",
+      "$comment": "The model name uses the declaration-name form."
+    },
+    "schema": {
+      "$ref": "#/$defs/modelSchema"
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/action"
+      }
+    },
+    "guarantees": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/guarantee"
+      }
+    }
+  },
+  "required": [
+    "format",
+    "formatVersion",
+    "name",
+    "schema",
+    "actions",
+    "guarantees"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "declarationName": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Za-z0-9]*$",
+      "$comment": "Declaration and enum-value names. Uniqueness among declarations is a semantic check."
+    },
+    "memberName": {
+      "type": "string",
+      "pattern": "^[a-z][A-Za-z0-9]*$",
+      "$comment": "Attribute and endpoint names."
+    },
+    "parameterName": {
+      "type": "string",
+      "pattern": "^[a-z][A-Za-z0-9]*$",
+      "not": {
+        "const": "actor"
+      },
+      "$comment": "Parameter names. The name \"actor\" is reserved for the implicit principal and rejected; the principal is only reachable through the distinct Actor term constructor."
+    },
+    "actionName": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*$"
+    },
+    "boolType": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Bool"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "unitType": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Unit"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "enumType": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Enum"
+        },
+        "enum": {
+          "$ref": "#/$defs/declarationName"
+        }
+      },
+      "required": [
+        "kind",
+        "enum"
+      ],
+      "additionalProperties": false,
+      "$comment": "Existence of the named enum declaration is a semantic check."
+    },
+    "entityRefType": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "EntityRef"
+        },
+        "entity": {
+          "$ref": "#/$defs/declarationName"
+        }
+      },
+      "required": [
+        "kind",
+        "entity"
+      ],
+      "additionalProperties": false,
+      "$comment": "Existence of the named entity declaration is a semantic check."
+    },
+    "attributeType": {
+      "$comment": "Entity attribute types: exactly Bool, Enum or EntityRef (no Unit).",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/boolType"
+        },
+        {
+          "$ref": "#/$defs/enumType"
+        },
+        {
+          "$ref": "#/$defs/entityRefType"
+        }
+      ]
+    },
+    "parameterType": {
+      "$comment": "Action parameter types: exactly Bool, Unit, Enum or EntityRef.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/boolType"
+        },
+        {
+          "$ref": "#/$defs/unitType"
+        },
+        {
+          "$ref": "#/$defs/enumType"
+        },
+        {
+          "$ref": "#/$defs/entityRefType"
+        }
+      ]
+    },
+    "relationPayloadType": {
+      "$comment": "Relation payloads are exactly Unit or Enum.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/unitType"
+        },
+        {
+          "$ref": "#/$defs/enumType"
+        }
+      ]
+    },
+    "modelSchema": {
+      "type": "object",
+      "properties": {
+        "entities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/entityDeclaration"
+          },
+          "contains": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "const": "User"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "$comment": "v0 distinguished structural requirement: some entity is named User. Name uniqueness and all other reference checks remain semantic validation."
+        },
+        "enums": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/enumDeclaration"
+          }
+        },
+        "relations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/relationDeclaration"
+          }
+        }
+      },
+      "required": [
+        "entities",
+        "enums",
+        "relations"
+      ],
+      "additionalProperties": false
+    },
+    "entityDeclaration": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/declarationName"
+        },
+        "attributes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/attributeDeclaration"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "attributes"
+      ],
+      "additionalProperties": false
+    },
+    "attributeDeclaration": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/memberName"
+        },
+        "type": {
+          "$ref": "#/$defs/attributeType"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "enumDeclaration": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/declarationName"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/declarationName"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "order": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/declarationName"
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "$comment": "Optional explicit order. That order is exactly a permutation of values is established by later semantic validation, not by this schema. Absence of a payload is semantic bottom and is never serialized as an enum value."
+        }
+      },
+      "required": [
+        "name",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "relationDeclaration": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/declarationName"
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/endpointDeclaration"
+          },
+          "minItems": 1,
+          "maxItems": 2
+        },
+        "payload": {
+          "$ref": "#/$defs/relationPayloadType"
+        }
+      },
+      "required": [
+        "name",
+        "endpoints",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    "endpointDeclaration": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/memberName"
+        },
+        "entity": {
+          "$ref": "#/$defs/declarationName"
+        }
+      },
+      "required": [
+        "name",
+        "entity"
+      ],
+      "additionalProperties": false
+    },
+    "parameterDeclaration": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/parameterName"
+        },
+        "type": {
+          "$ref": "#/$defs/parameterType"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "boolTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Bool"
+        },
+        "value": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "unitTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Unit"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "enumTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Enum"
+        },
+        "enum": {
+          "$ref": "#/$defs/declarationName"
+        },
+        "value": {
+          "$ref": "#/$defs/declarationName"
+        }
+      },
+      "required": [
+        "kind",
+        "enum",
+        "value"
+      ],
+      "additionalProperties": false,
+      "$comment": "Whether value is one of the named enum's declared values is a semantic check."
+    },
+    "argumentTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Argument"
+        },
+        "name": {
+          "$ref": "#/$defs/parameterName"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "additionalProperties": false,
+      "$comment": "Resolution to a declared parameter of the enclosing action is a semantic check."
+    },
+    "actorTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Actor"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false,
+      "$comment": "The implicit authenticated principal. Excluded from the Actor-free term families."
+    },
+    "attributeTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Attribute"
+        },
+        "source": {
+          "$ref": "#/$defs/valueTerm"
+        },
+        "attribute": {
+          "$ref": "#/$defs/memberName"
+        }
+      },
+      "required": [
+        "kind",
+        "source",
+        "attribute"
+      ],
+      "additionalProperties": false,
+      "$comment": "Existence and typing of the named attribute on the source's entity is a semantic check."
+    },
+    "valueTerm": {
+      "$comment": "Value terms; the Actor constructor is available. See actorFreeValueTerm for the family that excludes it.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/boolTerm"
+        },
+        {
+          "$ref": "#/$defs/unitTerm"
+        },
+        {
+          "$ref": "#/$defs/enumTerm"
+        },
+        {
+          "$ref": "#/$defs/argumentTerm"
+        },
+        {
+          "$ref": "#/$defs/actorTerm"
+        },
+        {
+          "$ref": "#/$defs/attributeTerm"
+        }
+      ]
+    },
+    "actorFreeAttributeTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Attribute"
+        },
+        "source": {
+          "$ref": "#/$defs/actorFreeValueTerm"
+        },
+        "attribute": {
+          "$ref": "#/$defs/memberName"
+        }
+      },
+      "required": [
+        "kind",
+        "source",
+        "attribute"
+      ],
+      "additionalProperties": false
+    },
+    "actorFreeValueTerm": {
+      "$comment": "Value terms with the Actor constructor excluded at every nesting depth.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/boolTerm"
+        },
+        {
+          "$ref": "#/$defs/unitTerm"
+        },
+        {
+          "$ref": "#/$defs/enumTerm"
+        },
+        {
+          "$ref": "#/$defs/argumentTerm"
+        },
+        {
+          "$ref": "#/$defs/actorFreeAttributeTerm"
+        }
+      ]
+    },
+    "lookupTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Lookup"
+        },
+        "relation": {
+          "$ref": "#/$defs/declarationName"
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/valueTerm"
+          },
+          "minItems": 1,
+          "maxItems": 2
+        }
+      },
+      "required": [
+        "kind",
+        "relation",
+        "endpoints"
+      ],
+      "additionalProperties": false,
+      "$comment": "1..2 mirrors the structural relation arity bound; exact arity/type agreement with the named relation is a semantic check."
+    },
+    "noneTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "None"
+        },
+        "payloadType": {
+          "$ref": "#/$defs/relationPayloadType"
+        }
+      },
+      "required": [
+        "kind",
+        "payloadType"
+      ],
+      "additionalProperties": false,
+      "$comment": "Absence of a relation payload; contains a payload type, never a term, so it is shared by both policy-term families."
+    },
+    "someTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Some"
+        },
+        "value": {
+          "$ref": "#/$defs/valueTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "isSomeTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "IsSome"
+        },
+        "value": {
+          "$ref": "#/$defs/policyTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "equalTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Equal"
+        },
+        "left": {
+          "$ref": "#/$defs/policyTerm"
+        },
+        "right": {
+          "$ref": "#/$defs/policyTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "left",
+        "right"
+      ],
+      "additionalProperties": false
+    },
+    "lessOrEqualTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "LessOrEqual"
+        },
+        "left": {
+          "$ref": "#/$defs/policyTerm"
+        },
+        "right": {
+          "$ref": "#/$defs/policyTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "left",
+        "right"
+      ],
+      "additionalProperties": false,
+      "$comment": "Order compatibility of the operands (for example a declared enum order) is a semantic check."
+    },
+    "andTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "And"
+        },
+        "left": {
+          "$ref": "#/$defs/policyTerm"
+        },
+        "right": {
+          "$ref": "#/$defs/policyTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "left",
+        "right"
+      ],
+      "additionalProperties": false,
+      "$comment": "Binary only; no n-ary sugar."
+    },
+    "orTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Or"
+        },
+        "left": {
+          "$ref": "#/$defs/policyTerm"
+        },
+        "right": {
+          "$ref": "#/$defs/policyTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "left",
+        "right"
+      ],
+      "additionalProperties": false,
+      "$comment": "Binary only; no n-ary sugar."
+    },
+    "notTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Not"
+        },
+        "value": {
+          "$ref": "#/$defs/policyTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "policyTerm": {
+      "$comment": "Policy terms: every value term plus lookup, option, comparison and boolean constructors. Evaluation is a semantic stage; this schema fixes shape only.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/valueTerm"
+        },
+        {
+          "$ref": "#/$defs/lookupTerm"
+        },
+        {
+          "$ref": "#/$defs/noneTerm"
+        },
+        {
+          "$ref": "#/$defs/someTerm"
+        },
+        {
+          "$ref": "#/$defs/isSomeTerm"
+        },
+        {
+          "$ref": "#/$defs/equalTerm"
+        },
+        {
+          "$ref": "#/$defs/lessOrEqualTerm"
+        },
+        {
+          "$ref": "#/$defs/andTerm"
+        },
+        {
+          "$ref": "#/$defs/orTerm"
+        },
+        {
+          "$ref": "#/$defs/notTerm"
+        }
+      ]
+    },
+    "actorFreeLookupTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Lookup"
+        },
+        "relation": {
+          "$ref": "#/$defs/declarationName"
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/actorFreeValueTerm"
+          },
+          "minItems": 1,
+          "maxItems": 2
+        }
+      },
+      "required": [
+        "kind",
+        "relation",
+        "endpoints"
+      ],
+      "additionalProperties": false
+    },
+    "actorFreeSomeTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Some"
+        },
+        "value": {
+          "$ref": "#/$defs/actorFreeValueTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "actorFreeIsSomeTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "IsSome"
+        },
+        "value": {
+          "$ref": "#/$defs/actorFreePolicyTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "actorFreeEqualTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Equal"
+        },
+        "left": {
+          "$ref": "#/$defs/actorFreePolicyTerm"
+        },
+        "right": {
+          "$ref": "#/$defs/actorFreePolicyTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "left",
+        "right"
+      ],
+      "additionalProperties": false
+    },
+    "actorFreeLessOrEqualTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "LessOrEqual"
+        },
+        "left": {
+          "$ref": "#/$defs/actorFreePolicyTerm"
+        },
+        "right": {
+          "$ref": "#/$defs/actorFreePolicyTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "left",
+        "right"
+      ],
+      "additionalProperties": false
+    },
+    "actorFreeAndTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "And"
+        },
+        "left": {
+          "$ref": "#/$defs/actorFreePolicyTerm"
+        },
+        "right": {
+          "$ref": "#/$defs/actorFreePolicyTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "left",
+        "right"
+      ],
+      "additionalProperties": false
+    },
+    "actorFreeOrTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Or"
+        },
+        "left": {
+          "$ref": "#/$defs/actorFreePolicyTerm"
+        },
+        "right": {
+          "$ref": "#/$defs/actorFreePolicyTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "left",
+        "right"
+      ],
+      "additionalProperties": false
+    },
+    "actorFreeNotTerm": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Not"
+        },
+        "value": {
+          "$ref": "#/$defs/actorFreePolicyTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "actorFreePolicyTerm": {
+      "$comment": "Policy terms with the Actor constructor excluded at every nesting depth. Used for the anonymous branch of AnyPrincipal policies.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/actorFreeValueTerm"
+        },
+        {
+          "$ref": "#/$defs/actorFreeLookupTerm"
+        },
+        {
+          "$ref": "#/$defs/noneTerm"
+        },
+        {
+          "$ref": "#/$defs/actorFreeSomeTerm"
+        },
+        {
+          "$ref": "#/$defs/actorFreeIsSomeTerm"
+        },
+        {
+          "$ref": "#/$defs/actorFreeEqualTerm"
+        },
+        {
+          "$ref": "#/$defs/actorFreeLessOrEqualTerm"
+        },
+        {
+          "$ref": "#/$defs/actorFreeAndTerm"
+        },
+        {
+          "$ref": "#/$defs/actorFreeOrTerm"
+        },
+        {
+          "$ref": "#/$defs/actorFreeNotTerm"
+        }
+      ]
+    },
+    "noChangeEffect": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "NoChange"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "createEntityEffect": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "CreateEntity"
+        },
+        "entity": {
+          "$ref": "#/$defs/declarationName"
+        },
+        "attributes": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/memberName"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/valueTerm"
+          },
+          "$comment": "Intentionally name-keyed initializer map: attribute-name keys, value-term values. Agreement with the target entity's declared attributes is a semantic check. This is the only open-keyed object in the syntax."
+        }
+      },
+      "required": [
+        "kind",
+        "entity",
+        "attributes"
+      ],
+      "additionalProperties": false
+    },
+    "deleteEntityEffect": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "DeleteEntity"
+        },
+        "target": {
+          "$ref": "#/$defs/valueTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "setRelationEffect": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "SetRelation"
+        },
+        "relation": {
+          "$ref": "#/$defs/declarationName"
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/valueTerm"
+          },
+          "minItems": 1,
+          "maxItems": 2
+        },
+        "payload": {
+          "$ref": "#/$defs/valueTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "relation",
+        "endpoints",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    "removeRelationEffect": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "RemoveRelation"
+        },
+        "relation": {
+          "$ref": "#/$defs/declarationName"
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/valueTerm"
+          },
+          "minItems": 1,
+          "maxItems": 2
+        }
+      },
+      "required": [
+        "kind",
+        "relation",
+        "endpoints"
+      ],
+      "additionalProperties": false
+    },
+    "effect": {
+      "$comment": "Exactly one effect per action; no sequences, arbitrary code, SQL, FFI, conditions or implicit cascades.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/noChangeEffect"
+        },
+        {
+          "$ref": "#/$defs/createEntityEffect"
+        },
+        {
+          "$ref": "#/$defs/deleteEntityEffect"
+        },
+        {
+          "$ref": "#/$defs/setRelationEffect"
+        },
+        {
+          "$ref": "#/$defs/removeRelationEffect"
+        }
+      ]
+    },
+    "actorFreeCreateEntityEffect": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "CreateEntity"
+        },
+        "entity": {
+          "$ref": "#/$defs/declarationName"
+        },
+        "attributes": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/memberName"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/actorFreeValueTerm"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "entity",
+        "attributes"
+      ],
+      "additionalProperties": false
+    },
+    "actorFreeDeleteEntityEffect": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "DeleteEntity"
+        },
+        "target": {
+          "$ref": "#/$defs/actorFreeValueTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "actorFreeSetRelationEffect": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "SetRelation"
+        },
+        "relation": {
+          "$ref": "#/$defs/declarationName"
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/actorFreeValueTerm"
+          },
+          "minItems": 1,
+          "maxItems": 2
+        },
+        "payload": {
+          "$ref": "#/$defs/actorFreeValueTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "relation",
+        "endpoints",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    "actorFreeRemoveRelationEffect": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "RemoveRelation"
+        },
+        "relation": {
+          "$ref": "#/$defs/declarationName"
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/actorFreeValueTerm"
+          },
+          "minItems": 1,
+          "maxItems": 2
+        }
+      },
+      "required": [
+        "kind",
+        "relation",
+        "endpoints"
+      ],
+      "additionalProperties": false
+    },
+    "actorFreeEffect": {
+      "$comment": "Effects with Actor excluded at every nesting depth; required for AnyPrincipal actions.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/noChangeEffect"
+        },
+        {
+          "$ref": "#/$defs/actorFreeCreateEntityEffect"
+        },
+        {
+          "$ref": "#/$defs/actorFreeDeleteEntityEffect"
+        },
+        {
+          "$ref": "#/$defs/actorFreeSetRelationEffect"
+        },
+        {
+          "$ref": "#/$defs/actorFreeRemoveRelationEffect"
+        }
+      ]
+    },
+    "observeResult": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Observe"
+        },
+        "entity": {
+          "$ref": "#/$defs/valueTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "entity"
+      ],
+      "additionalProperties": false
+    },
+    "createdResult": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Created"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "doneResult": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Done"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "result": {
+      "$comment": "Exactly one result descriptor per action.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/observeResult"
+        },
+        {
+          "$ref": "#/$defs/createdResult"
+        },
+        {
+          "$ref": "#/$defs/doneResult"
+        }
+      ]
+    },
+    "actorFreeObserveResult": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "Observe"
+        },
+        "entity": {
+          "$ref": "#/$defs/actorFreeValueTerm"
+        }
+      },
+      "required": [
+        "kind",
+        "entity"
+      ],
+      "additionalProperties": false
+    },
+    "actorFreeResult": {
+      "$comment": "Results with Actor excluded at every nesting depth; required for AnyPrincipal actions.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/actorFreeObserveResult"
+        },
+        {
+          "$ref": "#/$defs/createdResult"
+        },
+        {
+          "$ref": "#/$defs/doneResult"
+        }
+      ]
+    },
+    "anyPrincipalAllow": {
+      "type": "object",
+      "properties": {
+        "anonymous": {
+          "$ref": "#/$defs/actorFreePolicyTerm"
+        },
+        "authenticated": {
+          "$ref": "#/$defs/policyTerm"
+        }
+      },
+      "required": [
+        "anonymous",
+        "authenticated"
+      ],
+      "additionalProperties": false,
+      "$comment": "AnyPrincipal allow surface: the anonymous branch is structurally Actor-free; the authenticated branch may use Actor. No nullable or magical actor representation exists."
+    },
+    "action": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/actionName"
+        },
+        "parameters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/parameterDeclaration"
+          }
+        },
+        "principalMode": {
+          "enum": [
+            "AuthenticatedOnly",
+            "AnyPrincipal"
+          ]
+        },
+        "classification": {
+          "enum": [
+            "Read",
+            "Mutation"
+          ]
+        },
+        "allow": {
+          "type": "object",
+          "$comment": "Exact shape is fixed by the principal-mode branch below."
+        },
+        "effect": {
+          "$ref": "#/$defs/effect"
+        },
+        "result": {
+          "$ref": "#/$defs/result"
+        }
+      },
+      "required": [
+        "name",
+        "parameters",
+        "principalMode",
+        "classification",
+        "allow",
+        "effect",
+        "result"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "$comment": "Principal-mode surface shape. AuthenticatedOnly: allow is one policy term and Actor is available in policy, effect and result terms. AnyPrincipal: allow is an anonymous/authenticated pair whose anonymous branch is Actor-free, and the effect and result are additionally constrained to the Actor-free families.",
+          "oneOf": [
+            {
+              "properties": {
+                "principalMode": {
+                  "const": "AuthenticatedOnly"
+                },
+                "allow": {
+                  "$ref": "#/$defs/policyTerm"
+                }
+              },
+              "required": [
+                "principalMode"
+              ]
+            },
+            {
+              "properties": {
+                "principalMode": {
+                  "const": "AnyPrincipal"
+                },
+                "allow": {
+                  "$ref": "#/$defs/anyPrincipalAllow"
+                },
+                "effect": {
+                  "$ref": "#/$defs/actorFreeEffect"
+                },
+                "result": {
+                  "$ref": "#/$defs/actorFreeResult"
+                }
+              },
+              "required": [
+                "principalMode"
+              ]
+            }
+          ]
+        },
+        {
+          "$comment": "Supported classification/effect/result combinations; every other combination is rejected.",
+          "oneOf": [
+            {
+              "$comment": "Read: NoChange effect and Observe result.",
+              "properties": {
+                "classification": {
+                  "const": "Read"
+                },
+                "effect": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "NoChange"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                },
+                "result": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "Observe"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                }
+              },
+              "required": [
+                "classification"
+              ]
+            },
+            {
+              "$comment": "Mutation with CreateEntity: Created result.",
+              "properties": {
+                "classification": {
+                  "const": "Mutation"
+                },
+                "effect": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "CreateEntity"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                },
+                "result": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "Created"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                }
+              },
+              "required": [
+                "classification"
+              ]
+            },
+            {
+              "$comment": "Mutation with NoChange, DeleteEntity, SetRelation or RemoveRelation: Done result.",
+              "properties": {
+                "classification": {
+                  "const": "Mutation"
+                },
+                "effect": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "NoChange",
+                        "DeleteEntity",
+                        "SetRelation",
+                        "RemoveRelation"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                },
+                "result": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "Done"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                }
+              },
+              "required": [
+                "classification"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "authenticatedMutationGuarantee": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "AuthenticatedMutation"
+        },
+        "target": {
+          "type": "object",
+          "properties": {
+            "classification": {
+              "const": "Mutation"
+            }
+          },
+          "required": [
+            "classification"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "kind",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "tenantIsolationCase": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/actionName"
+        },
+        "tenant": {
+          "$ref": "#/$defs/valueTerm"
+        },
+        "protected": {
+          "$ref": "#/$defs/policyTerm"
+        },
+        "tenantAccess": {
+          "$ref": "#/$defs/policyTerm"
+        }
+      },
+      "required": [
+        "action",
+        "tenant",
+        "protected",
+        "tenantAccess"
+      ],
+      "additionalProperties": false,
+      "$comment": "Each case is later typechecked in the environment of its named action; the action reference itself is resolved semantically."
+    },
+    "tenantIsolationGuarantee": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "TenantIsolation"
+        },
+        "cases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tenantIsolationCase"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "kind",
+        "cases"
+      ],
+      "additionalProperties": false
+    },
+    "noSelfPrivilegeEscalationCase": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/actionName"
+        },
+        "scope": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/valueTerm"
+          },
+          "maxItems": 1,
+          "$comment": "v0: zero or one scope term. Correspondence with the authority's scopeEndpoints and the named action's types is a semantic check."
+        }
+      },
+      "required": [
+        "action",
+        "scope"
+      ],
+      "additionalProperties": false
+    },
+    "noSelfPrivilegeEscalationGuarantee": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "NoSelfPrivilegeEscalation"
+        },
+        "authority": {
+          "type": "object",
+          "properties": {
+            "relation": {
+              "$ref": "#/$defs/declarationName"
+            },
+            "subjectEndpoint": {
+              "$ref": "#/$defs/memberName"
+            },
+            "scopeEndpoints": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/memberName"
+              },
+              "maxItems": 1,
+              "$comment": "v0: zero or one scope endpoint."
+            },
+            "absenceLevel": {
+              "const": "Bottom",
+              "$comment": "Absence of an authority tuple ranks as semantic bottom; it is never serialized as an enum value."
+            },
+            "payloadOrder": {
+              "$ref": "#/$defs/declarationName",
+              "$comment": "Names the enum whose declared order ranks authority payloads; existence and ordered-ness of that enum are semantic checks."
+            }
+          },
+          "required": [
+            "relation",
+            "subjectEndpoint",
+            "scopeEndpoints",
+            "absenceLevel",
+            "payloadOrder"
+          ],
+          "additionalProperties": false
+        },
+        "cases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/noSelfPrivilegeEscalationCase"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "kind",
+        "authority",
+        "cases"
+      ],
+      "additionalProperties": false
+    },
+    "guarantee": {
+      "$comment": "Selecting a guarantee records a target proof obligation; schema acceptance does not establish it. Unknown guarantee constructors are rejected.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/authenticatedMutationGuarantee"
+        },
+        {
+          "$ref": "#/$defs/tenantIsolationGuarantee"
+        },
+        {
+          "$ref": "#/$defs/noSelfPrivilegeEscalationGuarantee"
+        }
+      ]
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # Mithril
 
-> **Status: experimental, pre-implementation.** This repository currently contains project scaffolding and documentation only. There is no working code, no verifier, and no code generator yet. Nothing described below is implemented or verified.
+> **Status: experimental, pre-implementation.** This repository currently contains documentation, an experimental Agda semantic spike (`agda/`), and the first Mithril Core v0 concrete-syntax checkpoint: a normative JSON Schema plus one handwritten example model. There is no parser, verifier, or code generator yet, and nothing described below is verified.
 
 Mithril is experimental formal-verification infrastructure for **authorization and data-access security in AI-generated web backends**. That is its entire initial scope: it is not a general-purpose verification framework, not a web framework, and not a security product.
 
@@ -19,8 +19,18 @@ The key design commitment is that the LLM's role ends at Core. Verification and 
 
 | Status | Description |
 |---|---|
-| **Exists today** | This documentation, contribution and security policies, and agent guidelines. |
-| **Does not exist yet** | The Mithril Core language, the verifier, the Wasp generator, the LLM translation layer, any test suite, and any toolchain. The implementation language has not been selected. |
+| **Exists today** | This documentation, contribution and security policies, agent guidelines, an experimental Agda semantic spike under `agda/`, and the Core v0 concrete-syntax checkpoint: [`core/schema.json`](core/schema.json) with the handwritten [`examples/acme/acme.mir.json`](examples/acme/acme.mir.json). |
+| **Does not exist yet** | Everything beyond Core's concrete JSON syntax: the parser, resolver, typechecker, normalizer, verifier, Wasp generator, LLM translation layer, any test suite, and any product toolchain. The implementation language has not been selected. |
+
+## Core v0 syntax checkpoint
+
+[`core/schema.json`](core/schema.json) is the first normative concrete-syntax checkpoint for generic Mithril Core v0: a JSON Schema (draft 2020-12) that freezes the external JSON shape of a Core document — schema declarations, term constructors, effects, results, principal modes, and guarantee selections.
+
+It validates JSON shape only. Schema acceptance establishes structural facts (required fields, closed constructor sets, principal-mode surface shape, action classification/effect/result compatibility, and the structural exclusion of direct `Actor` syntax from anonymous policy branches and from `AnyPrincipal` effects and results). It establishes no name resolution, no uniqueness, no typing, no enum-order correctness, no policy evaluation, and no security property.
+
+[`examples/acme/acme.mir.json`](examples/acme/acme.mir.json) is a handwritten example model. It is neither generated nor verified. The three guarantee objects it selects — TenantIsolation, AuthenticatedMutation, and NoSelfPrivilegeEscalation — remain unverified target properties, exactly as described below; their appearance in the JSON selects proof obligations and proves nothing.
+
+No parser, resolver, typechecker, normalizer, verifier, application proof, Wasp generator, or product toolchain exists yet. Conformance of an instance to the schema can be checked with any standard JSON Schema draft 2020-12 validator. The separate Agda spike under `agda/` explores candidate kernel semantics and does not consume this JSON.
 
 ## Target properties (not implemented guarantees)
 
