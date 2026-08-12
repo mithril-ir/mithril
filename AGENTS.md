@@ -6,7 +6,7 @@ This file is operational guidance for AI coding agents (and useful context for h
 
 Mithril is experimental formal-verification infrastructure for authorization and data-access security in AI-generated web backends. Intended flow: natural language → LLM → Mithril Core → formal verification and deterministic Wasp generation.
 
-**Current status: pre-implementation.** The repository contains only documentation and repository configuration. There is no source code, no verifier, no generator, no test suite, and no toolchain.
+**Current status: pre-implementation.** The repository contains documentation, repository configuration, and an experimental Agda semantic spike under `agda/` (see `agda/README.md`) — an exploratory mechanization of candidate kernel semantics that neither selects Agda as the implementation language nor constitutes a product prototype. There is no product source code, no verifier, no generator, and no production toolchain.
 
 ## Hard rules
 
@@ -20,7 +20,7 @@ Mithril is experimental formal-verification infrastructure for authorization and
 ## Undecided things — do not decide them
 
 - The **implementation language and toolchain are undecided.** Do not select or imply TypeScript, Haskell, Rust, OCaml, or any other language; do not add language-specific configuration, manifests, or scaffolding.
-- **Do not invent build, test, lint, or formatting commands.** None exist. If a task seems to require running such a command, report that it does not exist instead of fabricating one.
+- **Do not invent build, test, lint, or formatting commands.** No product build/test/lint/format toolchain exists; if a task seems to require one, report that it does not exist instead of fabricating one. The sole exception is the experimental Agda spike, whose only real commands are the authoritative checks documented in `agda/README.md` — run exactly those, and only when a task involves the spike.
 - **Architecture and source-of-truth boundaries** (what is authored, what is derived, what is trusted) must be documented and agreed before product implementation begins. Do not begin implementing the product ahead of that documentation.
 
 ## Reporting
