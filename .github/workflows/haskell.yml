@@ -1,0 +1,57 @@
+name: Haskell
+
+# Builds and tests the minimal Haskell host-tool scaffold: the
+# mithril-ir Cabal package with the mithril CLI (help and version
+# output only) and its base-only unit tests. No compiler stage —
+# parser, structural validator, resolver, typechecker, normalizer,
+# verifier, or generator — exists yet.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up GHC and cabal-install
+        uses: haskell-actions/setup@cd0d9bdd65b20557f41bea4dbe43d0b5fbbfe553 # v2.11.0
+        with:
+          ghc-version: "9.12.4"
+          cabal-version: "3.18.1.0"
+          cabal-update: true
+
+      - name: Check package description
+        run: cabal check
+
+      - name: Build
+        run: cabal build all --enable-tests
+
+      - name: Test
+        run: cabal test all --test-show-details=direct
+
+      - name: Run mithril --help
+        run: cabal run mithril -- --help
+
+      - name: Run mithril --version
+        run: cabal run mithril -- --version
+
+      - name: Create source distribution
+        run: cabal sdist all

@@ -1,0 +1,7 @@
+packages: .
+index-state: 2026-08-13T00:00:00Z
+
+-- Keep -Werror on for every local and CI build; the flag exists only
+-- because 'cabal check' rejects an unconditional -Werror.
+package mithril-ir
+  flags: +werror

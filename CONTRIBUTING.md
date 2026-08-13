@@ -4,10 +4,20 @@ Thanks for your interest in Mithril. Please read this short document before open
 
 ## Where the project stands
 
-Mithril is in a **pre-implementation phase**. There is no product source code and no product build, test, lint, or formatting toolchain. Haskell has been selected as the implementation language for the future deterministic host tool, but no Haskell implementation exists yet; see [`docs/compiler-architecture.md`](docs/compiler-architecture.md). Because of that:
+Mithril's compiler is **not implemented**. On the Haskell side the repository contains only a bootstrap: the `mithril-ir` Cabal package (GHC 9.12.4, cabal-install 3.18.1.0, GHC2021, `base` as the only dependency) whose `mithril` CLI prints help and version output, plus base-only unit tests for that CLI boundary and pinned Haskell CI. No parser, validator, resolver, typechecker, normalizer, verifier, or generator exists yet; see [`docs/compiler-architecture.md`](docs/compiler-architecture.md).
 
-- There are **no product setup, build, test, lint, or formatting commands** to document. Any such commands you find elsewhere are not real. They will be documented here once a toolchain exists.
-- The one exception is the experimental Agda semantic spike described below, whose checks are real.
+The canonical Haskell build and test commands, run from the repository root:
+
+```
+cabal check
+cabal build all --enable-tests
+cabal test all --test-show-details=direct
+cabal run mithril -- --help
+cabal run mithril -- --version
+```
+
+- **No lint or formatting command has been selected.** Do not invent one — any Haskell lint or format command you find elsewhere is not real. Such tools will be documented here if and when they are chosen.
+- The experimental Agda semantic spike described below stays separate from the Haskell scaffold; its checks are real and remain required whenever files under `agda/` change.
 - The most valuable contributions right now are design discussion, review of the scope and non-guarantees documented in the README, and prior-art references — not product code.
 
 ### The experimental Agda semantic spike
