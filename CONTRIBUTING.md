@@ -4,7 +4,7 @@ Thanks for your interest in Mithril. Please read this short document before open
 
 ## Where the project stands
 
-Mithril is in a **pre-implementation phase**. There is no product source code, no selected implementation language, and no product build, test, lint, or formatting toolchain. Because of that:
+Mithril is in a **pre-implementation phase**. There is no product source code and no product build, test, lint, or formatting toolchain. Haskell has been selected as the implementation language for the future deterministic host tool, but no Haskell implementation exists yet; see [`docs/compiler-architecture.md`](docs/compiler-architecture.md). Because of that:
 
 - There are **no product setup, build, test, lint, or formatting commands** to document. Any such commands you find elsewhere are not real. They will be documented here once a toolchain exists.
 - The one exception is the experimental Agda semantic spike described below, whose checks are real.
@@ -30,7 +30,7 @@ agda --safe --no-libraries --ignore-interfaces -i agda agda/Mithril/Everything.a
 
 ## Discuss before building
 
-Major architectural changes — the design of Mithril Core, the verification approach, the choice of implementation language, the code-generation strategy — should be **discussed in an issue before any implementation work begins**. A pull request that lands a large unsolicited design is likely to be closed in favor of a discussion, however good the code is. Small fixes (typos, broken links, clarifications) can go straight to a pull request.
+Major architectural changes — the design of Mithril Core, the verification approach, the code-generation strategy — should be **discussed in an issue before any implementation work begins**. A pull request that lands a large unsolicited design is likely to be closed in favor of a discussion, however good the code is. Small fixes (typos, broken links, clarifications) can go straight to a pull request.
 
 ## Conventions
 

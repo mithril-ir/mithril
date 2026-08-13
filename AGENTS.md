@@ -4,16 +4,16 @@ This file is operational guidance for AI coding agents (and useful context for h
 
 ## What this project is
 
-Mithril is experimental formal-verification infrastructure for authorization and data-access security in AI-generated web backends. Intended flow: natural language → LLM → Mithril Core → formal verification and deterministic Wasp generation.
+Mithril is experimental formal-verification infrastructure for authorization and data-access security in AI-generated web backends. Intended flow: natural-language intent → authored Mithril Core JSON (written by a human, optionally proposed by an untrusted LLM) → one deterministic Haskell frontend → typed normalized Core → human-readable contract, Agda checking, and deterministic Wasp generation. `docs/compiler-architecture.md` is authoritative for this pipeline and for artifact ownership.
 
-**Current status: pre-implementation.** The repository contains documentation, repository configuration, an experimental Agda semantic spike under `agda/` (see `agda/README.md`) — an exploratory mechanization of candidate kernel semantics that neither selects Agda as the implementation language nor constitutes a product prototype — and the Core v0 concrete-syntax checkpoint described below. There is no product source code, no verifier, no generator, and no production toolchain.
+**Current status: pre-implementation.** The repository contains documentation (including the accepted compiler-architecture specification, `docs/compiler-architecture.md`), repository configuration, an experimental Agda semantic spike under `agda/` (see `agda/README.md`) — an exploratory mechanization of candidate kernel semantics that neither selects Agda as the implementation language nor constitutes a product prototype — and the Core v0 concrete-syntax checkpoint described below. There is no product source code, no verifier, no generator, and no production toolchain.
 
 ## Core v0 concrete syntax
 
 - `core/schema.json` (JSON Schema, draft 2020-12) is the source of truth for the current external JSON shape of a Mithril Core v0 document.
 - `examples/acme/acme.mir.json` is a handwritten source example. Neither file is generated; both are edited by hand.
 - Schema acceptance is structural validation only — required fields, closed constructor sets, principal-mode surface shape, classification/effect/result compatibility. It is not semantic validation and not proof: declaration uniqueness, name resolution, typing, enum-order permutation checks, policy evaluation, and guarantee verification all require the later parser, resolver, typechecker, and normalizer, none of which exists.
-- No parser, implementation language, or product toolchain has been selected or built.
+- Haskell is the selected implementation language for the deterministic host tool (see `docs/compiler-architecture.md`), but no parser, frontend, or product toolchain has been built.
 - The Agda spike under `agda/` remains a separate exploration; it does not consume this JSON. It now contains one hand-transcribed application slice — a checked NoSelfPrivilegeEscalation case for `Membership.changeRole` (see `agda/README.md`) — which does not establish the JSON document's guarantees.
 
 ## Hard rules
@@ -25,11 +25,22 @@ Mithril is experimental formal-verification infrastructure for authorization and
 5. **Never hand-edit generated files.** Once code generation exists, generated artifacts are modified only by changing their source and regenerating. If a generated file looks wrong, fix the generator or the input, and say so.
 6. **Do not overstate security.** Documentation and code you write must describe TenantIsolation, AuthenticatedMutation, and NoSelfPrivilegeEscalation (and any future properties) as targets until they are actually verified, and must never claim general security.
 
-## Undecided things — do not decide them
+## Decided architecture — follow it
 
-- The **implementation language and toolchain are undecided.** Do not select or imply TypeScript, Haskell, Rust, OCaml, or any other language; do not add language-specific configuration, manifests, or scaffolding.
+The following decisions are made and documented. Do not re-open them, contradict them, or describe them as undecided.
+
+- **Haskell is the selected implementation language** for the deterministic host tool: the CLI, the frontend stages (conceptually `Raw -> Resolved -> Typed -> Normalized`), the contract renderer, and the backend emitters. Agda remains the separate formal backend/checker, reached through generated files and a process boundary — the Haskell decision does not make Haskell the proof backend, and the host tool must not import or depend on Agda compiler internals as a Haskell library.
+- **No Haskell scaffold or toolchain exists yet.** The selection is not an invitation to bootstrap: add language-specific scaffolding, manifests, configuration, or dependencies only when an explicit task requests exactly that.
+- **`docs/compiler-architecture.md` is authoritative** for the compiler pipeline and for artifact ownership (authored vs. derived vs. trusted). `core/schema.json` remains authoritative for the external Core v0 JSON shape.
+- **One frontend, one typed normalized Core.** Contract generation, Agda generation, and executable enforcement must all consume the same typed normalized Core produced by the single frontend. Never create or imply an independent per-backend interpretation of the JSON.
+- **No LLM output in the deterministic path.** An LLM may at most propose the authored Mithril JSON. LLM-generated Agda, contracts, normalization, or target enforcement code is forbidden.
+- **Generated files are never hand-edited** (hard rule 5) — and, today, nothing is generated: the `Mithril.Acme` proof slice remains hand-transcribed authored Agda, not a derived artifact of `examples/acme/acme.mir.json`.
+
+## Still undecided — do not decide them
+
 - **Do not invent build, test, lint, or formatting commands.** No product build/test/lint/format toolchain exists; if a task seems to require one, report that it does not exist instead of fabricating one. The sole exception is the experimental Agda spike, whose only real commands are the authoritative checks documented in `agda/README.md` — run exactly those, and only when a task involves the spike.
-- **Architecture and source-of-truth boundaries** (what is authored, what is derived, what is trusted) must be documented and agreed before product implementation begins. Do not begin implementing the product ahead of that documentation.
+- **Haskell toolchain details are open.** GHC, Cabal, dependency, packaging, and distribution choices have not been made; do not select or imply them.
+- **Emitter surface details are open.** Exact generated filenames, the generated-artifact metadata/manifest format, and the final target-adapter API are deferred to emitter design; do not freeze them in documentation or code.
 
 ## Reporting
 
