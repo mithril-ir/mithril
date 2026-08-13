@@ -72,7 +72,7 @@ Haskell is the accepted implementation language for the deterministic host tool:
 
 - It does not make Haskell the proof backend. Agda remains a separate formal backend/checker, reached through generated files and a process boundary; Mithril will not import or depend on Agda compiler internals as a Haskell library.
 - Advanced Haskell types should enforce concrete pipeline invariants — for example, that emitters and the contract renderer accept only the `Normalized` stage — not recreate a second proof assistant inside the host tool.
-- GHC, Cabal, dependency, packaging, and distribution choices are not made by this document and remain open until the toolchain is bootstrapped by an explicit task.
+- This document makes no toolchain choices itself. An explicit bootstrap task has since fixed GHC 9.12.4, cabal-install 3.18.1.0, and the GHC2021 language edition for the minimal scaffold, with `base` as its only dependency; dependency selection beyond `base` (including the JSON Schema validator library), packaging, and distribution remain open.
 
 ## LLM boundary
 
@@ -161,18 +161,19 @@ A backend cannot receive a verification claim merely because the abstract Core v
 
 ## Current implementation status
 
-As of 2026-08-13, no part of the pipeline above is implemented.
+As of 2026-08-13, no part of the pipeline above is implemented. A minimal Haskell host-tool scaffold exists — infrastructure only, neither a frontend nor any compiler stage.
 
 Exists today (all authored by hand):
 
 - [`core/schema.json`](../core/schema.json) — the normative Core v0 external JSON shape;
 - [`examples/acme/acme.mir.json`](../examples/acme/acme.mir.json) — a handwritten, unverified example model;
 - the experimental Agda kernel spike under [`agda/`](../agda/README.md), including the hand-transcribed `Mithril.Acme` slice: one checked NoSelfPrivilegeEscalation case for the Acme `Membership.changeRole` action, with a checked unsafe-variant counterexample;
+- the minimal Haskell scaffold: Cabal package `mithril-ir` building the `mithril` CLI (help and version output only) with base-only unit tests, fixed to GHC 9.12.4, cabal-install 3.18.1.0, and GHC2021 for this bootstrap, plus the pinned Haskell CI workflow;
 - this document.
 
 Does not exist yet:
 
-- any Haskell code: no CLI, parser, resolver, typechecker, normalizer, contract renderer, or emitter, and no Haskell scaffold, package configuration, or toolchain;
+- any actual frontend or compiler stage: no parser, structural validator, resolver, typechecker, normalizer, contract renderer, or emitter — the scaffold is not a parser, verifier, compiler, or generator;
 - any automated JSON-to-Agda connection — the `Mithril.Acme` slice is hand-transcribed, not derived from the JSON example;
 - any contract rendering, Wasp generation, or other target generation;
 - any derived artifact, generation metadata, or manifest.
@@ -182,7 +183,7 @@ Does not exist yet:
 This document makes design commitments, not correctness claims:
 
 - It does not claim that any stage of the pipeline is implemented. None is.
-- Selecting Haskell does not create a Haskell toolchain, scaffold, or package; none exists, and none may be added except by an explicit task.
+- The minimal Haskell scaffold, created by an explicit bootstrap task, is infrastructure only: a package, a help/version CLI, base-only unit tests, and CI. It is not a parser, verifier, compiler, or generator and implies no pipeline progress; packaging, distribution, dependency selection beyond `base`, validator choice, generated filenames, manifest format, and the adapter API all remain open.
 - Determinism and reproducibility are design intent, not demonstrated properties of any existing tool — and determinism, once achieved, is still not correctness.
 - Generated code will not be called verified merely because it was generated; a verified status requires the gates in [Verification gates](#verification-gates).
 - Neither [`examples/acme/acme.mir.json`](../examples/acme/acme.mir.json) nor the complete Acme model is verified. The one existing proof slice is hand-transcribed and covers a single action and a single selected guarantee case.

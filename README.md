@@ -1,6 +1,6 @@
 # Mithril
 
-> **Status: experimental, pre-implementation.** This repository currently contains documentation — including the accepted compiler-architecture specification, [`docs/compiler-architecture.md`](docs/compiler-architecture.md) — an experimental Agda semantic spike (`agda/`), and the first Mithril Core v0 concrete-syntax checkpoint: a normative JSON Schema plus one handwritten example model. Haskell has been selected as the implementation language for the future deterministic host tool, but there is no parser, verifier, or code generator yet. The spike now includes one hand-transcribed application experiment — a NoSelfPrivilegeEscalation proof for a single Acme action inside the fixed-schema Agda kernel ([`agda/README.md`](agda/README.md)) — but no automated verifier or JSON-to-Agda connection exists, and the JSON document itself and everything else described below remain unverified.
+> **Status: experimental; the compiler is not implemented.** This repository currently contains documentation — including the accepted compiler-architecture specification, [`docs/compiler-architecture.md`](docs/compiler-architecture.md) — an experimental Agda semantic spike (`agda/`), the first Mithril Core v0 concrete-syntax checkpoint: a normative JSON Schema plus one handwritten example model, and a minimal Haskell host-tool scaffold with pinned Haskell CI. The scaffold's `mithril` CLI supports only help and version output; no parser, validator, resolver, typechecker, normalizer, verifier, or generator exists yet. The spike now includes one hand-transcribed application experiment — a NoSelfPrivilegeEscalation proof for a single Acme action inside the fixed-schema Agda kernel ([`agda/README.md`](agda/README.md)) — but no automated verifier or JSON-to-Agda connection exists, and the JSON document itself and everything else described below remain unverified.
 
 Mithril is experimental formal-verification infrastructure for **authorization and data-access security in AI-generated web backends**. That is its entire initial scope: it is not a general-purpose verification framework, not a web framework, and not a security product.
 
@@ -21,14 +21,26 @@ typed normalized Core ──┬──▶ human-readable security contract
                         └──▶ deterministic generation of Wasp code
 ```
 
-The key design commitment is that any LLM involvement ends at the authored Core document, and that contract rendering, Agda verification, and target code generation all consume the same typed normalized Core rather than interpreting the JSON independently. Everything downstream of the authored document is intended to be deterministic and auditable, so that what gets checked is exactly what gets executed. Haskell has been selected as the implementation language for this future deterministic host tool — a decision only; no Haskell code exists yet. [Wasp](https://wasp.sh/) is the first planned executable target. [`docs/compiler-architecture.md`](docs/compiler-architecture.md) is authoritative for the pipeline and its artifact-ownership boundaries.
+The key design commitment is that any LLM involvement ends at the authored Core document, and that contract rendering, Agda verification, and target code generation all consume the same typed normalized Core rather than interpreting the JSON independently. Everything downstream of the authored document is intended to be deterministic and auditable, so that what gets checked is exactly what gets executed. Haskell has been selected as the implementation language for this future deterministic host tool; today only a minimal CLI scaffold exists (help and version output), and none of the pipeline stages is implemented. [Wasp](https://wasp.sh/) is the first planned executable target. [`docs/compiler-architecture.md`](docs/compiler-architecture.md) is authoritative for the pipeline and its artifact-ownership boundaries.
 
 ## Current status vs. intended functionality
 
 | Status | Description |
 |---|---|
-| **Exists today** | This documentation, the accepted compiler-architecture specification ([`docs/compiler-architecture.md`](docs/compiler-architecture.md)), contribution and security policies, agent guidelines, an experimental Agda semantic spike under `agda/` (including one hand-transcribed application slice: a checked NoSelfPrivilegeEscalation proof for the Acme `Membership.changeRole` action, see [`agda/README.md`](agda/README.md)), and the Core v0 concrete-syntax checkpoint: [`core/schema.json`](core/schema.json) with the handwritten [`examples/acme/acme.mir.json`](examples/acme/acme.mir.json). |
-| **Does not exist yet** | Everything beyond Core's concrete JSON syntax: the parser, resolver, typechecker, normalizer, verifier, contract renderer, Wasp generator, the optional LLM authoring aid (untrusted; it may propose Mithril Core JSON but remains outside the deterministic and trusted compiler pipeline), any test suite, and any product toolchain. Haskell has been selected as the implementation language for the deterministic host tool, but no Haskell implementation, scaffold, or toolchain exists yet. |
+| **Exists today** | This documentation, the accepted compiler-architecture specification ([`docs/compiler-architecture.md`](docs/compiler-architecture.md)), contribution and security policies, agent guidelines, an experimental Agda semantic spike under `agda/` (including one hand-transcribed application slice: a checked NoSelfPrivilegeEscalation proof for the Acme `Membership.changeRole` action, see [`agda/README.md`](agda/README.md)), the Core v0 concrete-syntax checkpoint: [`core/schema.json`](core/schema.json) with the handwritten [`examples/acme/acme.mir.json`](examples/acme/acme.mir.json), and a minimal Haskell host-tool scaffold with pinned Haskell CI: Cabal package `mithril-ir` building the `mithril` CLI (help and version output only) with base-only unit tests (GHC 9.12.4, cabal-install 3.18.1.0). |
+| **Does not exist yet** | Everything beyond Core's concrete JSON syntax: the parser, structural validator, resolver, typechecker, normalizer, verifier, contract renderer, Wasp generator, and the optional LLM authoring aid (untrusted; it may propose Mithril Core JSON but remains outside the deterministic and trusted compiler pipeline). The Haskell scaffold implements none of these: its CLI supports only help and version output, and its unit tests cover only that CLI boundary. |
+
+### Canonical Haskell commands
+
+The scaffold's authoritative build and test commands, run from the repository root:
+
+```
+cabal check
+cabal build all --enable-tests
+cabal test all --test-show-details=direct
+cabal run mithril -- --help
+cabal run mithril -- --version
+```
 
 ## Core v0 syntax checkpoint
 
@@ -38,7 +50,7 @@ It validates JSON shape only. Schema acceptance establishes structural facts (re
 
 [`examples/acme/acme.mir.json`](examples/acme/acme.mir.json) is a handwritten example model. It is neither generated nor verified. The three guarantee objects it selects — TenantIsolation, AuthenticatedMutation, and NoSelfPrivilegeEscalation — remain unverified for this document; their appearance in the JSON selects proof obligations and proves nothing. Separately, the Agda spike hand-transcribes the `Membership.changeRole` action and proves its selected NoSelfPrivilegeEscalation case inside the fixed-schema kernel ([`agda/README.md`](agda/README.md)); no tool connects that proof to this JSON document.
 
-No parser, resolver, typechecker, normalizer, verifier, Wasp generator, or product toolchain exists yet. Those deferred semantic stages belong to the planned single Haskell frontend, which will produce the one typed normalized Core consumed by contract rendering, Agda checking, and target generation alike ([`docs/compiler-architecture.md`](docs/compiler-architecture.md)). Conformance of an instance to the schema can be checked with any standard JSON Schema draft 2020-12 validator. The separate Agda spike under `agda/` explores candidate kernel semantics; it does not consume this JSON, and its single hand-transcribed application proof does not verify this document.
+No parser, resolver, typechecker, normalizer, verifier, or Wasp generator exists yet; the Haskell scaffold's CLI prints only help and version output. Those deferred semantic stages belong to the planned single Haskell frontend, which will produce the one typed normalized Core consumed by contract rendering, Agda checking, and target generation alike ([`docs/compiler-architecture.md`](docs/compiler-architecture.md)). Conformance of an instance to the schema can be checked with any standard JSON Schema draft 2020-12 validator. The separate Agda spike under `agda/` explores candidate kernel semantics; it does not consume this JSON, and its single hand-transcribed application proof does not verify this document.
 
 ## Target properties (not implemented guarantees)
 

@@ -1,0 +1,67 @@
+cabal-version:      3.12
+name:               mithril-ir
+version:            0.1.0.0
+synopsis:           Host-tool bootstrap for the Mithril Core IR
+description:
+  Minimal Cabal scaffold for Mithril's future deterministic host tool.
+  The @mithril@ executable currently prints only help and version
+  output; no parser, structural validator, resolver, typechecker,
+  normalizer, verifier, or generator is implemented yet.
+homepage:           https://github.com/mithril-ir/mithril
+bug-reports:        https://github.com/mithril-ir/mithril/issues
+license:            Apache-2.0
+license-file:       LICENSE
+author:             Mithril contributors
+maintainer:         Mithril contributors
+copyright:          2026 Mithril contributors
+category:           Development
+build-type:         Simple
+tested-with:        GHC == 9.12.4
+extra-doc-files:    README.md
+
+source-repository head
+  type:     git
+  location: https://github.com/mithril-ir/mithril
+
+-- 'cabal check' rejects an unconditional '-Werror' in a package
+-- description, so the option sits behind this manual flag, which
+-- cabal.project switches on for every local and CI build.
+flag werror
+  description: Treat GHC warnings as errors.
+  manual:      True
+  default:     False
+
+common shared
+  default-language: GHC2021
+  build-depends:    base >= 4.21 && < 4.22
+  ghc-options:
+    -Wall
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wmissing-export-lists
+    -Wpartial-fields
+
+  if flag(werror)
+    ghc-options: -Werror
+
+library
+  import:          shared
+  hs-source-dirs:  src
+  exposed-modules: Mithril.CLI
+
+executable mithril
+  import:          shared
+  hs-source-dirs:  app
+  main-is:         Main.hs
+  other-modules:   Paths_mithril_ir
+  autogen-modules: Paths_mithril_ir
+  build-depends:   mithril-ir
+
+test-suite mithril-ir-test
+  import:          shared
+  type:            exitcode-stdio-1.0
+  hs-source-dirs:  test
+  main-is:         Main.hs
+  build-depends:   mithril-ir

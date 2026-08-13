@@ -42,3 +42,8 @@ secrets.toml
 # Agda interface/build artifacts (experimental spike under agda/ only)
 /agda/**/*.agdai
 /agda/_build/
+
+# Haskell build-local artifacts (Cabal)
+dist-newstyle/
+cabal.project.local
+.ghc.environment.*
