@@ -5,14 +5,18 @@
 -- handles, choosing the exit status — belong to the executable's
 -- @Main@ module.
 --
--- The bootstrap tool understands only self-describing invocations.
--- No compiler stage exists yet.
+-- The tool understands the self-describing invocations plus one real
+-- command: @validate FILE@, the structural Core v0 validation
+-- boundary.  No other compiler stage exists yet.
 module Mithril.CLI
   ( Command (..)
   , parseCommand
+  , displayArgument
   , renderHelp
   , renderVersion
   ) where
+
+import Data.Char (isPrint)
 
 -- | A fully interpreted command-line invocation.
 data Command
@@ -20,15 +24,27 @@ data Command
     ShowHelp
   | -- | Print the package version and exit successfully.
     ShowVersion
+  | -- | Structurally validate FILE against the bundled Core v0
+    -- schema.
+    Validate FilePath
   deriving (Eq, Show)
 
 -- | Interpret raw command-line arguments.
 --
--- No arguments selects 'ShowHelp'.  Anything else that is not exactly
--- one recognized option yields a deterministic error message intended
--- for stderr.
+-- Exactly these invocations are accepted: no arguments (help),
+-- @--help@, @-h@, @--version@, and @validate FILE@.  Anything else —
+-- an unknown argument, a missing FILE, or extra arguments after a
+-- complete invocation — yields a deterministic error message intended
+-- for stderr.  Every user-supplied argument embedded in such a
+-- message is rendered through 'displayArgument', so no argument can
+-- add physical lines or terminal controls to a diagnostic.
 parseCommand :: [String] -> Either String Command
 parseCommand [] = Right ShowHelp
+parseCommand ("validate" : rest) =
+  case rest of
+    [file] -> Right (Validate file)
+    [] -> Left missingFileError
+    (_file : extras) -> Left (extraArgumentsError "validate FILE" extras)
 parseCommand (argument : rest) =
   case recognize argument of
     Nothing -> Left (unknownArgumentError argument)
@@ -43,20 +59,44 @@ recognize "-h" = Just ShowHelp
 recognize "--version" = Just ShowVersion
 recognize _ = Nothing
 
+-- | Render a user-supplied command-line argument for inclusion in a
+-- diagnostic.  This is the single rendering point for every
+-- user-controlled argument that parse errors embed.
+--
+-- An ordinary argument — non-empty, printable, and free of quote and
+-- backslash characters — keeps the existing readable @'...'@ form.
+-- Anything else is rendered as a Haskell string literal via 'show':
+-- control characters (newline, carriage return, escape, delete, ...)
+-- become visible escape sequences instead of physical output
+-- controls, and quotes and backslashes cannot break the quoting
+-- convention.  Rendering is pure, deterministic, and never introduces
+-- a line break.
+displayArgument :: String -> String
+displayArgument argument
+  | not (null argument) && all ordinary argument = "'" ++ argument ++ "'"
+  | otherwise = show argument
+  where
+    ordinary c = isPrint c && c /= '\'' && c /= '"' && c /= '\\'
+
 -- | Deterministic error for an unrecognized argument.
 unknownArgumentError :: String -> String
 unknownArgumentError argument =
-  "mithril: unknown argument '" ++ argument ++ "'\n" ++ usageHint
+  "mithril: unknown argument " ++ displayArgument argument ++ "\n" ++ usageHint
 
--- | Deterministic error for arguments after a recognized option.
+-- | Deterministic error for arguments after a complete invocation.
 extraArgumentsError :: String -> [String] -> String
 extraArgumentsError argument extras =
-  "mithril: unexpected extra arguments after '"
-    ++ argument
-    ++ "': "
-    ++ unwords extras
+  "mithril: unexpected extra arguments after "
+    ++ displayArgument argument
+    ++ ": "
+    ++ unwords (map displayArgument extras)
     ++ "\n"
     ++ usageHint
+
+-- | Deterministic error for @validate@ without its FILE argument.
+missingFileError :: String
+missingFileError =
+  "mithril: 'validate' requires exactly one FILE argument\n" ++ usageHint
 
 usageHint :: String
 usageHint = "Run 'mithril --help' for usage."
@@ -65,16 +105,21 @@ usageHint = "Run 'mithril --help' for usage."
 renderHelp :: String
 renderHelp =
   unlines
-    [ "mithril - host-tool bootstrap for the Mithril Core IR"
+    [ "mithril - host tool for the Mithril Core IR"
     , ""
     , "Usage:"
-    , "  mithril            Print this help text."
-    , "  mithril --help     Print this help text."
-    , "  mithril -h         Print this help text."
-    , "  mithril --version  Print the package version."
+    , "  mithril                Print this help text."
+    , "  mithril --help         Print this help text."
+    , "  mithril -h             Print this help text."
+    , "  mithril --version      Print the package version."
+    , "  mithril validate FILE  Parse FILE as JSON and check it against"
+    , "                         the bundled Mithril Core v0 schema."
     , ""
-    , "Compiler commands are not implemented yet. This bootstrap only"
-    , "prints the help and version output described above."
+    , "validate performs structural Core v0 validation only: JSON syntax"
+    , "plus conformance to the supported core/schema.json profile. It is"
+    , "not semantic verification and not proof checking; it does not"
+    , "resolve names, typecheck, normalize, verify guarantees, or"
+    , "generate anything. No other compiler stage is implemented yet."
     ]
 
 -- | Version line for the given package version string.

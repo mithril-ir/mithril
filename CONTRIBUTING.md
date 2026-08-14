@@ -4,9 +4,9 @@ Thanks for your interest in Mithril. Please read this short document before open
 
 ## Where the project stands
 
-Mithril's compiler is **not implemented**. On the Haskell side the repository contains only a bootstrap: the `mithril-ir` Cabal package (GHC 9.12.4, cabal-install 3.18.1.0, GHC2021, `base` as the only dependency) whose `mithril` CLI prints help and version output, plus base-only unit tests for that CLI boundary and pinned Haskell CI. No parser, validator, resolver, typechecker, normalizer, verifier, or generator exists yet; see [`docs/compiler-architecture.md`](docs/compiler-architecture.md).
+Mithril's compiler is **not implemented**. On the Haskell side the repository contains the `mithril-ir` Cabal package (GHC 9.12.4, cabal-install 3.18.1.0, GHC2021) whose `mithril` CLI prints help and version output and implements one deterministic frontend boundary: `mithril validate FILE`, JSON parsing plus structural Core v0 validation against the bundled `core/schema.json` (JSON parsing via `aeson`; validation via the exactly pinned, provisional `jsonschema 0.3.0.1` behind an explicit schema-profile gate), together with unit tests for those boundaries and pinned Haskell CI. Structural validation establishes JSON shape only. No resolver, Mithril typechecker, normalizer, verifier, or generator exists yet; see [`docs/compiler-architecture.md`](docs/compiler-architecture.md).
 
-The canonical Haskell build and test commands, run from the repository root:
+The canonical Haskell checks, run from the repository root:
 
 ```
 cabal check
@@ -14,7 +14,12 @@ cabal build all --enable-tests
 cabal test all --test-show-details=direct
 cabal run mithril -- --help
 cabal run mithril -- --version
+cabal run mithril -- validate examples/acme/acme.mir.json
 ```
+
+CI runs all of them on every push and pull request. Run them locally before submitting a change that touches the Haskell tool, `core/schema.json`, or `examples/acme/acme.mir.json`; the final command must keep reporting the Acme example as structurally valid.
+
+Two operational caveats of the current validator — known gaps, not contracts: duplicate JSON object members are accepted under Aeson's member semantics rather than rejected (no particular occurrence is contractually the winner), and no independent input-size, nesting, memory, or execution-resource limits exist yet. Do not describe `mithril validate` as hardened validation for arbitrary untrusted, unbounded input. Neither caveat affects the narrower claim that the unchanged Acme example structurally validates.
 
 - **No lint or formatting command has been selected.** Do not invent one — any Haskell lint or format command you find elsewhere is not real. Such tools will be documented here if and when they are chosen.
 - The experimental Agda semantic spike described below stays separate from the Haskell scaffold; its checks are real and remain required whenever files under `agda/` change.

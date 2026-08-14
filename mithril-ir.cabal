@@ -1,12 +1,16 @@
 cabal-version:      3.12
 name:               mithril-ir
 version:            0.1.0.0
-synopsis:           Host-tool bootstrap for the Mithril Core IR
+synopsis:           Host tool for the Mithril Core IR
 description:
-  Minimal Cabal scaffold for Mithril's future deterministic host tool.
-  The @mithril@ executable currently prints only help and version
-  output; no parser, structural validator, resolver, typechecker,
-  normalizer, verifier, or generator is implemented yet.
+  Cabal package for Mithril's deterministic host tool.  Besides help
+  and version output, the @mithril@ executable supports
+  @mithril validate FILE@: JSON parsing plus structural validation of
+  a Mithril Core v0 document against the bundled @core/schema.json@.
+  Structural validation establishes JSON shape conformance only; no
+  resolver, typechecker, normalizer, verifier, or generator is
+  implemented yet, and schema acceptance neither verifies a model nor
+  establishes any guarantee.
 homepage:           https://github.com/mithril-ir/mithril
 bug-reports:        https://github.com/mithril-ir/mithril/issues
 license:            Apache-2.0
@@ -18,6 +22,17 @@ category:           Development
 build-type:         Simple
 tested-with:        GHC == 9.12.4
 extra-doc-files:    README.md
+
+-- The normative Core v0 schema ships with the tool and is loaded via
+-- Paths_mithril_ir, never via the process working directory.
+data-files:
+    core/schema.json
+
+-- The handwritten Acme example is not consumed by the build, but the
+-- test suite and the documented smoke command validate it, so source
+-- distributions must carry it.
+extra-source-files:
+    examples/acme/acme.mir.json
 
 source-repository head
   type:     git
@@ -49,7 +64,18 @@ common shared
 library
   import:          shared
   hs-source-dirs:  src
-  exposed-modules: Mithril.CLI
+  exposed-modules:
+    Mithril.CLI
+    Mithril.Command.Validate
+    Mithril.Core.Validation
+  other-modules:   Paths_mithril_ir
+  autogen-modules: Paths_mithril_ir
+  build-depends:
+    , aeson >= 2.2 && < 2.3
+    , bytestring >= 0.12 && < 0.13
+    , jsonschema >= 0.3.0.1 && < 0.4
+    , regex-tdfa >= 1.3.1 && < 1.4
+    , text >= 2.1 && < 2.2
 
 executable mithril
   import:          shared
@@ -57,11 +83,21 @@ executable mithril
   main-is:         Main.hs
   other-modules:   Paths_mithril_ir
   autogen-modules: Paths_mithril_ir
-  build-depends:   mithril-ir
+  build-depends:
+    , mithril-ir
+    , text >= 2.1 && < 2.2
 
 test-suite mithril-ir-test
   import:          shared
   type:            exitcode-stdio-1.0
   hs-source-dirs:  test
   main-is:         Main.hs
-  build-depends:   mithril-ir
+  other-modules:
+    Mithril.CLITests
+    Mithril.CoreValidationTests
+    Mithril.Test
+  build-depends:
+    , aeson >= 2.2 && < 2.3
+    , bytestring >= 0.12 && < 0.13
+    , mithril-ir
+    , text >= 2.1 && < 2.2
