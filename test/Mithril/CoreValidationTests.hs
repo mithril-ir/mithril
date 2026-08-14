@@ -4,13 +4,23 @@
 -- "Mithril.Core.Validation" and "Mithril.Command.Validate".
 --
 -- Everything goes through the production API — documents enter via
--- 'parseCoreDocument', the only obtainable schema is the bundled one
--- from 'loadBundledCoreSchema', and the profile gate is probed with
--- arbitrary bytes through 'checkCoreSchemaProfile'; no validation
--- logic is duplicated here.  Mutated documents are built in memory
--- from the pristine Acme example and re-encoded, so no invalid
--- fixture files exist and the normative schema and example are never
--- modified.
+-- 'parseCoreDocument', the only obtainable schema is the compiled-in
+-- canonical one ('bundledCoreSchema'), and the profile gate is probed
+-- with arbitrary bytes through 'checkCoreSchemaProfile'; no
+-- validation logic is duplicated here.  Mutated documents are built
+-- in memory from the pristine Acme example and re-encoded; the only
+-- invalid documents stored as files are the deliberate fixtures under
+-- @test\/fixtures\/@ (shared with the process-level CLI tests), and
+-- the normative schema and example are never modified.
+-- 'validateCoreFile' continues through name resolution, so its
+-- successful outcomes here carry the 'Resolved' stage; the resolution
+-- boundary itself is covered by "Mithril.CoreResolutionTests".
+--
+-- The schema-provenance regressions at the end pin the review's
+-- substitution attack shut: pointing the Cabal data-directory
+-- override at a nonexistent or malicious location must not change
+-- which grammar validation uses, because the schema is a compile-time
+-- constant of the library, not a runtime lookup.
 module Mithril.CoreValidationTests
   ( tests
   ) where
@@ -36,7 +46,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as Text
-import System.Environment (lookupEnv, setEnv, unsetEnv)
+import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 
 import Mithril.Command.Validate
@@ -47,6 +57,7 @@ import Mithril.Command.Validate
   , renderValidateSuccess
   , validateCoreFile
   )
+import Mithril.Core.Resolution (Resolved)
 import Mithril.Core.Validation
   ( CoreDocument
   , CoreSchema
@@ -54,9 +65,9 @@ import Mithril.Core.Validation
   , SchemaLoadError (..)
   , StructurallyValid
   , StructuralViolation (..)
+  , bundledCoreSchema
   , checkCoreSchemaProfile
   , draft202012SchemaUri
-  , loadBundledCoreSchema
   , normalizeViolations
   , parseCoreDocument
   , renderJsonPointer
@@ -65,27 +76,37 @@ import Mithril.Core.Validation
   , validateCoreDocument
   )
 import Mithril.Test (Check, check)
+import Mithril.TestEnv
+  ( datadirVariable
+  , permissiveSchemaBytes
+  , withEnvVarSet
+  , withPermissiveDatadir
+  )
 
 -- | The handwritten example validated by the full checkpoint checks.
 acmePath :: FilePath
 acmePath = "examples/acme/acme.mir.json"
 
+-- | The independent review's near-Core document: a checked-in fixture
+-- whose root carries plausible @schema@\/@actions@\/@guarantees@
+-- members but none of the canonical root requirements.
+nearCorePath :: FilePath
+nearCorePath = "test/fixtures/near-core.mir.json"
+
 -- | All validation checks.  The file reads assume the test process
 -- runs from the package root, which is how @cabal test@ runs it.
 tests :: IO [Check]
 tests = do
-  schemaOutcome <- loadBundledCoreSchema
+  let schemaOutcome = bundledCoreSchema
   acmeBytes <- ByteString.readFile acmePath
   acmeFileOutcome <- validateCoreFile acmePath
   missingFileOutcome <- validateCoreFile "test/does-not-exist.mir.json"
   readmeOutcome <- validateCoreFile "README.md"
-  -- Last, because it temporarily overrides the data-directory
-  -- environment variable: point the bundled-schema loader at a
-  -- nonexistent directory, exercising the real internal-error path
-  -- end to end, then restore and prove the loader still works.
-  brokenDatadirOutcome <- withDatadirOverride "test/no-such-datadir" $
-    validateCoreFile acmePath
-  restoredSchemaOutcome <- loadBundledCoreSchema
+  nearCoreBytes <- ByteString.readFile nearCorePath
+  nearCoreOutcome <- validateCoreFile nearCorePath
+  -- Last, because they temporarily override the data-directory
+  -- environment variable (restoring it exactly).
+  overrideChecks <- schemaOverrideChecks
   pure $
     concat
       [ pointerChecks
@@ -98,31 +119,17 @@ tests = do
               [ acmeChecks schema acmeBytes acmeFileOutcome
               , mutationChecks schema acme
               , diagnosticsChecks schema acme
+              , nearCoreChecks schema nearCoreBytes nearCoreOutcome
               ]
       , commandChecks missingFileOutcome readmeOutcome
-      , datadirChecks brokenDatadirOutcome restoredSchemaOutcome
+      , overrideChecks
       ]
 
--- | Run an action with the Cabal data-directory environment variable
--- pointing elsewhere, restoring the previous state afterwards.  This
--- is the standard @Paths_mithril_ir@ override that @cabal run@ and
--- @cabal test@ themselves use; no repository file is touched.
-withDatadirOverride :: String -> IO a -> IO a
-withDatadirOverride dir action = do
-  let variable = "mithril_ir_datadir"
-  original <- lookupEnv variable
-  setEnv variable dir
-  outcome <- action
-  case original of
-    Just value -> setEnv variable value
-    Nothing -> unsetEnv variable
-  pure outcome
-
--- | Run checks that need the bundled schema, or fail one check.
+-- | Run checks that need the compiled-in schema, or fail one check.
 withSchema
   :: Either SchemaLoadError CoreSchema -> (CoreSchema -> [Check]) -> [Check]
 withSchema (Left failure) _ =
-  [check ("bundled schema loads (prerequisite): " ++ show failure) False]
+  [check ("compiled-in schema gates (prerequisite): " ++ show failure) False]
 withSchema (Right schema) buildChecks = buildChecks schema
 
 -- | Run checks that need the decoded Acme document, or fail one check.
@@ -226,7 +233,7 @@ parseChecks =
 schemaProfileChecks :: Either SchemaLoadError CoreSchema -> [Check]
 schemaProfileChecks schemaOutcome =
   [ check
-      "the bundled schema loads through the profile gate"
+      "the compiled-in schema passes the profile gate"
       (isRight schemaOutcome)
   , check
       "a minimal draft 2020-12 schema passes the profile check"
@@ -234,8 +241,8 @@ schemaProfileChecks schemaOutcome =
   , -- The independent review's permissive schema: inside the keyword
     -- profile, so the profile check accepts it — but acceptance
     -- yields only (), never a CoreSchema, so it cannot be used to
-    -- mint a StructurallyValid document.  loadBundledCoreSchema is
-    -- the sole CoreSchema producer.
+    -- mint a StructurallyValid document.  bundledCoreSchema is the
+    -- sole CoreSchema producer, and it is a compile-time constant.
     check
       "an in-profile permissive schema yields only () from the profile check"
       ( checkSchemaValue
@@ -371,10 +378,10 @@ schemaProfileChecks schemaOutcome =
       )
   , -- The four patterns below are copies of the four "pattern" values
     -- in core/schema.json.  They must compile through the gate's
-    -- regex check; the real file is covered by the bundled-schema
-    -- check above, which now compiles every pattern it contains.
+    -- regex check; the real file is covered by the compiled-in-schema
+    -- check above, which compiles every pattern it contains.
     check
-      "the bundled Core v0 patterns compile through the profile gate"
+      "the canonical Core v0 patterns compile through the profile gate"
       ( checkSchemaValue
           ( withDraftUri
               [ "allOf"
@@ -406,11 +413,11 @@ schemaProfileChecks schemaOutcome =
   , check
       "the supported keyword inventory is pinned exactly"
       (supportedSchemaKeywords == expectedKeywordInventory)
-  , -- Also pins position-awareness of the keyword walk: the bundled
-    -- schema's property and $defs names (name, actions, ...) must not
-    -- surface as keywords here.
+  , -- Also pins position-awareness of the keyword walk: the
+    -- compiled-in schema's property and $defs names (name, actions,
+    -- ...) must not surface as keywords here.
     check
-      "the bundled schema uses exactly the supported keyword inventory"
+      "the compiled-in schema uses exactly the supported keyword inventory"
       (fmap usedSchemaKeywords schemaOutcome == Right supportedSchemaKeywords)
   ]
   where
@@ -457,7 +464,7 @@ schemaProfileChecks schemaOutcome =
 acmeChecks
   :: CoreSchema
   -> ByteString
-  -> Either ValidateFileError (CoreDocument StructurallyValid)
+  -> Either ValidateFileError (CoreDocument Resolved)
   -> [Check]
 acmeChecks schema acmeBytes acmeFileOutcome =
   [ check
@@ -481,7 +488,7 @@ acmeChecks schema acmeBytes acmeFileOutcome =
       )
   , check
       "validateCoreFile accepts the Acme example"
-      (either (const False) hasStructurallyValidStage acmeFileOutcome)
+      (either (const False) hasResolvedStage acmeFileOutcome)
   ]
 
 -- | Compile-time witness that a value sits at the
@@ -489,6 +496,11 @@ acmeChecks schema acmeBytes acmeFileOutcome =
 -- does not typecheck.
 hasStructurallyValidStage :: CoreDocument StructurallyValid -> Bool
 hasStructurallyValidStage _ = True
+
+-- | Compile-time witness that a 'validateCoreFile' success now sits
+-- at the 'Resolved' stage.
+hasResolvedStage :: CoreDocument Resolved -> Bool
+hasResolvedStage _ = True
 
 --------------------------------------------------------------------
 -- Targeted invalid mutations (built in memory from pristine Acme)
@@ -742,14 +754,14 @@ diagnosticsChecks schema acme =
 --------------------------------------------------------------------
 
 commandChecks
-  :: Either ValidateFileError (CoreDocument StructurallyValid)
-  -> Either ValidateFileError (CoreDocument StructurallyValid)
+  :: Either ValidateFileError (CoreDocument Resolved)
+  -> Either ValidateFileError (CoreDocument Resolved)
   -> [Check]
 commandChecks missingFileOutcome readmeOutcome =
   [ check
       "the success line is exactly as specified"
       ( renderValidateSuccess acmePath
-          == "examples/acme/acme.mir.json: structurally valid Mithril Core v0"
+          == "examples/acme/acme.mir.json: valid Mithril Core v0 through name resolution"
       )
   , check
       "a missing file is classified as a read error"
@@ -794,13 +806,14 @@ commandChecks missingFileOutcome readmeOutcome =
           == ExitFailure 1
       )
   , -- Internal-error classification is exercised through this pure
-    -- seam; the bundled package data is never corrupted in a test.
+    -- seam: with the schema compiled in and gated at build time, the
+    -- canonical public pipeline cannot construct these states, so the
+    -- renderer and exit classification are pinned directly.
     check
       "internal schema errors exit with status 2"
       ( all
           (\failure -> failureExitCode (InternalSchemaError failure) == ExitFailure 2)
-          [ SchemaReadError "detail"
-          , SchemaParseError "detail"
+          [ SchemaParseError "detail"
           , SchemaProfileError ("/x: problem" :| [])
           ]
       )
@@ -811,8 +824,7 @@ commandChecks missingFileOutcome readmeOutcome =
               "mithril: internal Core schema error: "
                 `Text.isPrefixOf` renderValidateFailure (InternalSchemaError failure)
           )
-          [ SchemaReadError "detail"
-          , SchemaParseError "detail"
+          [ SchemaParseError "detail"
           , SchemaProfileError ("/x: problem" :| [])
           ]
       )
@@ -836,31 +848,124 @@ commandChecks missingFileOutcome readmeOutcome =
   ]
 
 --------------------------------------------------------------------
--- The real bundled-schema loader under a broken data directory
+-- The review's near-Core document against the canonical schema
 --------------------------------------------------------------------
 
-datadirChecks
-  :: Either ValidateFileError (CoreDocument StructurallyValid)
-  -> Either SchemaLoadError CoreSchema
+-- | The near-Core fixture must be rejected structurally — for the
+-- missing canonical root requirements @format@, @formatVersion@, and
+-- @name@ — and can therefore never reach the resolver, let alone a
+-- @'CoreDocument' 'Resolved'@, through the public pipeline.
+nearCoreChecks
+  :: CoreSchema
+  -> ByteString
+  -> Either ValidateFileError (CoreDocument Resolved)
   -> [Check]
-datadirChecks brokenDatadirOutcome restoredSchemaOutcome =
-  [ -- End-to-end internal-error classification through the real
-    -- loader: with the data directory pointing nowhere, validateCoreFile
-    -- must classify the failure as internal (exit 2, required prefix)
-    -- rather than blaming the user's file or throwing.
-    check
-      "a broken data directory is an internal schema error with exit 2"
-      ( case brokenDatadirOutcome of
-          Left failure@(InternalSchemaError (SchemaReadError _)) ->
-            failureExitCode failure == ExitFailure 2
-              && "mithril: internal Core schema error: "
-                `Text.isPrefixOf` renderValidateFailure failure
-          _ -> False
+nearCoreChecks schema nearCoreBytes nearCoreOutcome =
+  [ check
+      "the near-Core document parses as JSON (control)"
+      (isRight (parseCoreDocument nearCoreBytes))
+  , check
+      "the near-Core document is rejected structurally, never validated"
+      ( case parseCoreDocument nearCoreBytes of
+          Left _ -> False
+          Right document -> isLeft (validateCoreDocument schema document)
       )
   , check
-      "the bundled schema loads again after the override is restored"
-      (isRight restoredSchemaOutcome)
+      "the near-Core rejection names every missing root requirement"
+      ( case parseCoreDocument nearCoreBytes of
+          Left _ -> False
+          Right document ->
+            case validateCoreDocument schema document of
+              Right _ -> False
+              Left violations ->
+                let rootMessages =
+                      [ violationMessage violation
+                      | violation <- NonEmpty.toList violations
+                      , null (violationPath violation)
+                      ]
+                    mentioned needle =
+                      any (needle `Text.isInfixOf`) rootMessages
+                 in all mentioned ["format", "formatVersion", "name"]
+      )
+  , check
+      "validateCoreFile classifies the near-Core fixture as a structural failure with exit 1"
+      ( case nearCoreOutcome of
+          Left failure@(FileStructuralViolations path _) ->
+            path == nearCorePath && failureExitCode failure == ExitFailure 1
+          _ -> False
+      )
   ]
+
+--------------------------------------------------------------------
+-- Schema provenance under data-directory overrides
+--------------------------------------------------------------------
+
+-- | The review's substitution attack, pinned shut end to end: no
+-- @mithril_ir_datadir@ value — nonexistent or pointing at a real
+-- directory containing an in-profile permissive schema — may alter
+-- the grammar validation uses, because 'bundledCoreSchema' is a
+-- compile-time constant.  Under the pre-fix runtime lookup the
+-- malicious half of this test minted a structurally \"valid\"
+-- non-Core document; now the same setup must change nothing.
+schemaOverrideChecks :: IO [Check]
+schemaOverrideChecks = do
+  variableBefore <- lookupEnv datadirVariable
+  nonexistentOutcomes <-
+    withEnvVarSet datadirVariable "test/no-such-datadir" $ do
+      acmeOutcome <- validateCoreFile acmePath
+      nearCoreOutcome <- validateCoreFile nearCorePath
+      pure (acmeOutcome, nearCoreOutcome)
+  maliciousOutcomes <-
+    withPermissiveDatadir $ \datadir ->
+      withEnvVarSet datadirVariable datadir $ do
+        acmeOutcome <- validateCoreFile acmePath
+        nearCoreFirst <- validateCoreFile nearCorePath
+        nearCoreSecond <- validateCoreFile nearCorePath
+        pure (acmeOutcome, nearCoreFirst, nearCoreSecond)
+  restoredOutcome <- validateCoreFile acmePath
+  variableAfter <- lookupEnv datadirVariable
+  let (nonexistentAcme, nonexistentNearCore) = nonexistentOutcomes
+      (maliciousAcme, maliciousNearCoreFirst, maliciousNearCoreSecond) =
+        maliciousOutcomes
+      isStructuralRejection outcome =
+        case outcome of
+          Left (FileStructuralViolations path _) -> path == nearCorePath
+          _ -> False
+      -- CoreDocument is opaque (no Eq), so determinism is compared on
+      -- the rejections, which both runs must be.
+      sameRejection first second =
+        case (first, second) of
+          (Left firstFailure, Left secondFailure) -> firstFailure == secondFailure
+          _ -> False
+  pure
+    [ -- Control: the planted schema really is the dangerous one — it
+      -- passes the profile gate (yielding only ()), so only compile-time
+      -- provenance, not the gate, keeps it out of the pipeline.
+      check
+        "the planted permissive schema passes the profile gate (control)"
+        (checkCoreSchemaProfile permissiveSchemaBytes == Right ())
+    , check
+        "a nonexistent datadir override does not break validation: Acme still resolves"
+        (isRight nonexistentAcme)
+    , check
+        "a nonexistent datadir override does not weaken validation: near-Core still rejected"
+        (isStructuralRejection nonexistentNearCore)
+    , check
+        "a malicious permissive datadir cannot alter the schema: Acme resolves against the canonical grammar"
+        (isRight maliciousAcme)
+    , check
+        "a malicious permissive datadir cannot mint validity for the near-Core document"
+        (isStructuralRejection maliciousNearCoreFirst)
+    , check
+        "rejection under the malicious override is deterministic"
+        (sameRejection maliciousNearCoreFirst maliciousNearCoreSecond)
+    , check
+        "validation still succeeds after the overrides are restored"
+        (isRight restoredOutcome)
+    , check
+        "the override helper restores the environment variable exactly"
+        (variableBefore == variableAfter)
+    ]
 
 --------------------------------------------------------------------
 -- Helpers: decoding, re-encoding, and in-memory JSON edits

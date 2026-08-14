@@ -4,7 +4,7 @@ Thanks for your interest in Mithril. Please read this short document before open
 
 ## Where the project stands
 
-Mithril's compiler is **not implemented**. On the Haskell side the repository contains the `mithril-ir` Cabal package (GHC 9.12.4, cabal-install 3.18.1.0, GHC2021) whose `mithril` CLI prints help and version output and implements one deterministic frontend boundary: `mithril validate FILE`, JSON parsing plus structural Core v0 validation against the bundled `core/schema.json` (JSON parsing via `aeson`; validation via the exactly pinned, provisional `jsonschema 0.3.0.1` behind an explicit schema-profile gate), together with unit tests for those boundaries and pinned Haskell CI. Structural validation establishes JSON shape only. No resolver, Mithril typechecker, normalizer, verifier, or generator exists yet; see [`docs/compiler-architecture.md`](docs/compiler-architecture.md).
+Mithril's compiler is **not implemented**. On the Haskell side the repository contains the `mithril-ir` Cabal package (GHC 9.12.4, cabal-install 3.18.1.0, GHC2021) whose `mithril` CLI prints help and version output and implements the first two deterministic frontend boundaries: `mithril validate FILE`, JSON parsing, structural Core v0 validation against the canonical `core/schema.json` compiled into the tool at build time — no runtime file or environment lookup selects the grammar — (JSON parsing via `aeson`; validation via the exactly pinned, provisional `jsonschema 0.3.0.1` behind an explicit schema-profile gate), and complete Core v0 name resolution (declaration-name uniqueness per namespace and resolution of every name reference; deterministic maps and sets via the direct `containers` dependency), together with unit tests, process-level CLI regression tests over the built executable, downstream API-boundary compile-fail probes, and pinned Haskell CI. Structural validation establishes JSON shape only, and name resolution establishes names only — the resolved stage is an opaque attestation, not typed normalized Core. No Mithril typechecker, normalizer, verifier, or generator exists yet; see [`docs/compiler-architecture.md`](docs/compiler-architecture.md).
 
 The canonical Haskell checks, run from the repository root:
 
@@ -12,14 +12,17 @@ The canonical Haskell checks, run from the repository root:
 cabal check
 cabal build all --enable-tests
 cabal test all --test-show-details=direct
+sh test/api-probes/run-api-probes.sh
 cabal run mithril -- --help
 cabal run mithril -- --version
 cabal run mithril -- validate examples/acme/acme.mir.json
 ```
 
-CI runs all of them on every push and pull request. Run them locally before submitting a change that touches the Haskell tool, `core/schema.json`, or `examples/acme/acme.mir.json`; the final command must keep reporting the Acme example as structurally valid.
+CI runs all of them on every push and pull request. Run them locally before submitting a change that touches the Haskell tool, `core/schema.json`, or `examples/acme/acme.mir.json`; the final command must keep reporting the Acme example as valid Mithril Core v0 through name resolution. The probe script builds the expected-to-fail downstream package under `test/api-probes/` with a dedicated project file (`cabal.project.probes`) and verifies that every attack on the stage abstraction — importing the hidden document module, calling the `CoreDocument` constructor, or coercing between stages — still fails to compile for its intended reason; it needs a POSIX shell in addition to the pinned toolchain (on platforms without one, CI remains the authoritative runner).
 
-Two operational caveats of the current validator — known gaps, not contracts: duplicate JSON object members are accepted under Aeson's member semantics rather than rejected (no particular occurrence is contractually the winner), and no independent input-size, nesting, memory, or execution-resource limits exist yet. Do not describe `mithril validate` as hardened validation for arbitrary untrusted, unbounded input. Neither caveat affects the narrower claim that the unchanged Acme example structurally validates.
+If a `core/schema.json` change affects declaration namespaces, reference-bearing fields, Core constructors, enum uniqueness/order or `User` assumptions, or structural invariants used by resolution, follow the [mandatory schema-and-resolver audit](docs/compiler-architecture.md#schema-and-resolver-evolution): audit `Mithril.Core.Resolution`, identify every changed reference location, and add the relevant targeted regressions in the same change. Recompilation only detects changed schema bytes; passing structural validation and compilation does not establish resolver completeness.
+
+Two operational caveats of the current validator — known gaps, not contracts: duplicate JSON object members are accepted under Aeson's member semantics rather than rejected (no particular occurrence is contractually the winner), and no independent input-size, nesting, memory, or execution-resource limits exist yet. Do not describe `mithril validate` as hardened validation for arbitrary untrusted, unbounded input. Neither caveat affects the narrower claim that the unchanged Acme example structurally validates and resolves.
 
 - **No lint or formatting command has been selected.** Do not invent one — any Haskell lint or format command you find elsewhere is not real. Such tools will be documented here if and when they are chosen.
 - The experimental Agda semantic spike described below stays separate from the Haskell scaffold; its checks are real and remain required whenever files under `agda/` change.

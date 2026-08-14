@@ -1,7 +1,7 @@
 -- | Minimal manual test harness shared by the test modules.
 --
 -- A check is a named 'Bool'.  Groups build their checks in 'IO' (some
--- need to read files or load the bundled schema); the runner forces
+-- need to read files or spawn the built executable); the runner forces
 -- every check, reports each failure by name on stderr, and exits
 -- nonzero if anything failed.  No third-party test framework is used.
 module Mithril.Test
