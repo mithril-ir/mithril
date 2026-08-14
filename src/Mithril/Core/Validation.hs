@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RoleAnnotations #-}
 
 -- | The first deterministic frontend boundary for Mithril Core v0:
 --
@@ -9,13 +8,16 @@
 -- >   -> structurally-valid opaque document
 --
 -- This boundary establishes syntactic JSON well-formedness and
--- structural conformance to the supported profile of the bundled
--- @core/schema.json@ (JSON Schema draft 2020-12) — nothing more.  It
+-- structural conformance to the supported profile of the canonical
+-- @core/schema.json@ (JSON Schema draft 2020-12), compiled into this
+-- library at build time — nothing more.  It
 -- performs no name resolution, no Mithril typechecking, no
 -- normalization, no semantic well-formedness checks, no guarantee
 -- verification, no proof generation or checking, and no code
 -- generation.  A @'CoreDocument' 'StructurallyValid'@ is /not/ typed
--- normalized Core.
+-- normalized Core.  The next frontend stage, complete Core v0 name
+-- resolution, lives in "Mithril.Core.Resolution" and consumes the
+-- structurally valid document this module produces.
 --
 -- == Known limitations (deliberate, unresolved)
 --
@@ -26,7 +28,7 @@
 --   winner behavior; strict duplicate-member rejection remains
 --   unresolved and is expected to need a stricter parse step later.
 -- * Mithril enforces no independent input-size, nesting, memory, or
---   execution-resource limits on documents or on the bundled schema.
+--   execution-resource limits on documents or on the compiled-in schema.
 --   Excessive nesting or reference recursion is expected to fail
 --   closed inside the validation backend, but no dedicated depth
 --   diagnostic is guaranteed: the backend's error aggregation may
@@ -58,9 +60,9 @@ module Mithril.Core.Validation
     -- * JSON parsing
   , parseCoreDocument
 
-    -- * Bundled schema loading and the profile gate
+    -- * The compiled-in schema and the profile gate
   , checkCoreSchemaProfile
-  , loadBundledCoreSchema
+  , bundledCoreSchema
   , draft202012SchemaUri
   , supportedSchemaKeywords
   , usedSchemaKeywords
@@ -73,12 +75,10 @@ module Mithril.Core.Validation
   , renderJsonPointer
   ) where
 
-import Control.Exception (IOException, try)
 import Data.Aeson (Result (..), Value (..), eitherDecodeStrict', fromJSON)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as ByteString
 import Data.JSON.JSONSchema (ValidationError (..), validateWithErrors)
 import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty)
@@ -88,39 +88,28 @@ import qualified Data.Text as Text
 import Text.Regex.TDFA (defaultCompOpt, defaultExecOpt)
 import qualified Text.Regex.TDFA.Text as Regex
 
-import Paths_mithril_ir (getDataFileName)
+import Mithril.Core.Internal.BundledSchema (bundledCoreSchemaBytes)
+import Mithril.Core.Internal.Document
+  ( CoreDocument (..)
+  , Parsed
+  , StructurallyValid
+  )
 
--- | Type-level stage index: the bytes parsed as JSON, with no further
--- fact established.
-data Parsed
+-- 'CoreDocument', its stage indexes, and its nominal role annotation
+-- live in the hidden "Mithril.Core.Internal.Document" module and are
+-- re-exported abstractly here: the constructor is not exported and no
+-- accessor is exported, so later compiler stages cannot consume a
+-- merely 'Parsed' value while bypassing structural validation.  The
+-- only way to obtain a @'CoreDocument' 'StructurallyValid'@ is
+-- 'validateCoreDocument' — and since 'bundledCoreSchema' is the
+-- only public producer of 'CoreSchema', that stage always attests
+-- validity against the compiled-in canonical Core v0 schema, not
+-- against some caller-supplied or runtime-substituted schema.
 
--- | Type-level stage index: structurally valid against the bundled
--- Core v0 schema profile.  Structural validity is a fact about JSON
--- shape only; it is not resolution, typing, normalization, or any
--- semantic or security property.
-data StructurallyValid
-
--- | A Mithril Core v0 document at a pipeline stage, opaque by design.
---
--- The constructor is not exported and no accessor is exported: later
--- compiler stages must not be able to consume a merely 'Parsed' value
--- while bypassing structural validation.  The only way to obtain a
--- @'CoreDocument' 'StructurallyValid'@ is 'validateCoreDocument' —
--- and since 'loadBundledCoreSchema' is the only public producer of
--- 'CoreSchema', that stage always attests validity against the
--- bundled Core v0 schema, not against some caller-supplied schema.
-newtype CoreDocument stage = CoreDocument Value
-
--- The stage index is phantom; without this annotation GHC would infer
--- a phantom role and 'Data.Coerce.coerce' could forge a stage
--- transition without going through 'validateCoreDocument'.
-type role CoreDocument nominal
-
--- | A loaded Core v0 schema that has passed the supported-profile
--- gate.  Opaque: the constructor is not exported, and
--- 'loadBundledCoreSchema' is the only public producer — no public
+-- | A gated Core v0 schema.  Opaque: the constructor is not exported,
+-- and 'bundledCoreSchema' is the only public producer — no public
 -- function accepts arbitrary schema bytes and returns a 'CoreSchema',
--- so holding one means holding /the bundled schema/.
+-- so holding one means holding /the canonical compiled-in schema/.
 -- 'checkCoreSchemaProfile' exposes the same gate for tests and
 -- tooling without producing a schema value.
 newtype CoreSchema = CoreSchema Value
@@ -131,13 +120,12 @@ newtype ParseError = ParseError
   }
   deriving (Eq, Show)
 
--- | A failure to obtain a usable Core schema.  For the bundled schema
--- every one of these is an internal error of the @mithril@ tool, not
--- a problem with the user's document.
+-- | A failure to obtain a usable Core schema.  For the compiled-in
+-- schema every one of these is an internal error of the @mithril@
+-- tool — possible only when the @core/schema.json@ embedded at build
+-- time was itself broken — never a problem with the user's document.
 data SchemaLoadError
-  = -- | The bundled schema file could not be read.
-    SchemaReadError Text
-  | -- | The schema bytes are not valid JSON.
+  = -- | The schema bytes are not valid JSON.
     SchemaParseError Text
   | -- | The schema parsed but is outside the supported Core v0
     -- profile.  Each entry is a rendered @pointer: message@ line;
@@ -249,7 +237,7 @@ supportedSchemaKeywords =
 -- loaded schema, sorted.  Keys under @properties@ and @$defs@ are
 -- property or definition names, not schema keywords, and are not
 -- included.  Tests use this to pin 'supportedSchemaKeywords' to what
--- the bundled schema actually uses.
+-- the compiled-in schema actually uses.
 usedSchemaKeywords :: CoreSchema -> [Text]
 usedSchemaKeywords (CoreSchema value) =
   map NonEmpty.head (NonEmpty.group (sort (walkKeywords (walkSchema [] value))))
@@ -257,9 +245,9 @@ usedSchemaKeywords (CoreSchema value) =
 -- | Check schema bytes against the supported Core v0 profile,
 -- returning only evidence of the outcome.
 --
--- This is the exact gate that 'loadBundledCoreSchema' applies to the
--- bundled schema, exposed so tests and tooling can probe it with
--- arbitrary bytes.  The gate fails closed: before the backend
+-- This is the exact gate that 'bundledCoreSchema' applies to the
+-- compiled-in schema bytes, exposed so tests and tooling can probe it
+-- with arbitrary bytes.  The gate fails closed: before the backend
 -- validator is trusted with a schema, it verifies that
 --
 -- 1. the bytes parse as JSON;
@@ -286,9 +274,9 @@ usedSchemaKeywords (CoreSchema value) =
 -- behavior can be silently ignored (or thrown) by the backend.
 --
 -- Success is @()@ by design, never a schema value: 'CoreSchema' can
--- only be produced by 'loadBundledCoreSchema', which keeps
+-- only be produced by 'bundledCoreSchema', which keeps
 -- @'CoreDocument' 'StructurallyValid'@ meaning validity against the
--- bundled Core v0 schema.
+-- canonical compiled-in Core v0 schema.
 checkCoreSchemaProfile :: ByteString -> Either SchemaLoadError ()
 checkCoreSchemaProfile bytes = () <$ gateSchemaBytes bytes
 
@@ -309,20 +297,22 @@ gateSchemaBytes bytes =
         Nothing -> Right (CoreSchema value)
         Just problems -> Left (SchemaProfileError problems)
 
--- | Load and gate the schema bundled with the package: the only
--- public producer of 'CoreSchema'.
+-- | The canonical Core v0 schema, gated: the only public producer of
+-- 'CoreSchema'.
 --
--- The file is located through 'Paths_mithril_ir.getDataFileName', so
--- loading does not depend on the process working directory.  Read
--- failures are caught and returned as 'SchemaReadError'; the bytes
--- then pass through the same gate as 'checkCoreSchemaProfile'.
-loadBundledCoreSchema :: IO (Either SchemaLoadError CoreSchema)
-loadBundledCoreSchema = do
-  outcome <- try (getDataFileName "core/schema.json" >>= ByteString.readFile)
-  pure $ case outcome of
-    Left readFailure ->
-      Left (SchemaReadError (Text.pack (show (readFailure :: IOException))))
-    Right bytes -> gateSchemaBytes bytes
+-- The schema bytes are compiled into this library from
+-- @core/schema.json@ at build time (see
+-- "Mithril.Core.Internal.BundledSchema"), then pass through the same
+-- gate as 'checkCoreSchemaProfile'.  This value is pure by
+-- construction: no file is read at run time, so neither the process
+-- working directory nor any environment override — in particular the
+-- Cabal data-directory variable @mithril_ir_datadir@ — can influence
+-- which grammar confers the 'StructurallyValid' stage.  A 'Left' here
+-- means the schema embedded at build time was itself unparseable or
+-- outside the supported profile; the tool reports it deterministically
+-- as an internal error.
+bundledCoreSchema :: Either SchemaLoadError CoreSchema
+bundledCoreSchema = gateSchemaBytes bundledCoreSchemaBytes
 
 --------------------------------------------------------------------
 -- Internal: the schema-profile walk

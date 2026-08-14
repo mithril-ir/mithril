@@ -1,0 +1,9 @@
+{
+  "schema": {
+    "entities": [{"name": "User", "attributes": []}],
+    "enums": [],
+    "relations": []
+  },
+  "actions": [],
+  "guarantees": []
+}

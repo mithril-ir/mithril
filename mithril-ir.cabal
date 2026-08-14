@@ -5,12 +5,17 @@ synopsis:           Host tool for the Mithril Core IR
 description:
   Cabal package for Mithril's deterministic host tool.  Besides help
   and version output, the @mithril@ executable supports
-  @mithril validate FILE@: JSON parsing plus structural validation of
-  a Mithril Core v0 document against the bundled @core/schema.json@.
-  Structural validation establishes JSON shape conformance only; no
-  resolver, typechecker, normalizer, verifier, or generator is
-  implemented yet, and schema acceptance neither verifies a model nor
-  establishes any guarantee.
+  @mithril validate FILE@: JSON parsing, structural validation of a
+  Mithril Core v0 document against the canonical @core/schema.json@
+  — compiled into the tool at build time, so no runtime file or
+  environment lookup selects the grammar — and complete Core v0 name
+  resolution: declaration-name uniqueness in every global and
+  owner-local namespace, and resolution of every name reference in
+  its correct namespace.  The resolved stage is an opaque attestation
+  about names only, not typed normalized Core; no static typechecker,
+  normalizer, verifier, proof generator or checker, runtime
+  enforcement, or target generator is implemented yet, and acceptance
+  neither verifies a model nor establishes any guarantee.
 homepage:           https://github.com/mithril-ir/mithril
 bug-reports:        https://github.com/mithril-ir/mithril/issues
 license:            Apache-2.0
@@ -23,16 +28,25 @@ build-type:         Simple
 tested-with:        GHC == 9.12.4
 extra-doc-files:    README.md
 
--- The normative Core v0 schema ships with the tool and is loaded via
--- Paths_mithril_ir, never via the process working directory.
-data-files:
-    core/schema.json
-
--- The handwritten Acme example is not consumed by the build, but the
--- test suite and the documented smoke command validate it, so source
--- distributions must carry it.
+-- core/schema.json is the canonical Core v0 grammar; it is embedded
+-- into the library at compile time (Mithril.Core.Internal.BundledSchema),
+-- never installed as package data and never looked up at run time, so
+-- it belongs in the source distribution but not in data-files.  The
+-- handwritten Acme example, the invalid test fixtures, and the
+-- API-boundary probe material are consumed by the test suite and the
+-- documented probe command, so source distributions must carry them
+-- too.
 extra-source-files:
+    cabal.project
+    cabal.project.probes
+    core/schema.json
     examples/acme/acme.mir.json
+    test/api-probes/probe/*.hs
+    test/api-probes/probe/probe.cabal
+    test/api-probes/run-api-probes.sh
+    test/fixtures/malformed.mir.json
+    test/fixtures/near-core.mir.json
+    test/fixtures/unknown-name.mir.json
 
 source-repository head
   type:     git
@@ -67,14 +81,31 @@ library
   exposed-modules:
     Mithril.CLI
     Mithril.Command.Validate
+    Mithril.Core.Resolution
     Mithril.Core.Validation
-  other-modules:   Paths_mithril_ir
-  autogen-modules: Paths_mithril_ir
+
+  -- Mithril.Core.Internal.Document owns the opaque CoreDocument
+  -- representation and its stage indexes; Mithril.Core.Internal.BundledSchema
+  -- owns the compile-time-embedded bytes of core/schema.json.  Neither
+  -- must ever move to exposed-modules: hiding them is what keeps
+  -- external code from constructing documents, extracting their JSON,
+  -- coercing one pipeline stage into another, or validating against
+  -- anything but the canonical schema.
+  other-modules:
+    Mithril.Core.Internal.BundledSchema
+    Mithril.Core.Internal.Document
+
+  -- template-haskell serves exactly one purpose: embedding
+  -- core/schema.json into the library at compile time, so that no
+  -- runtime package-data lookup (Paths_mithril_ir/mithril_ir_datadir)
+  -- can substitute the grammar that mints the StructurallyValid stage.
   build-depends:
     , aeson >= 2.2 && < 2.3
     , bytestring >= 0.12 && < 0.13
+    , containers >= 0.7 && < 0.8
     , jsonschema >= 0.3.0.1 && < 0.4
     , regex-tdfa >= 1.3.1 && < 1.4
+    , template-haskell >= 2.23 && < 2.24
     , text >= 2.1 && < 2.2
 
 executable mithril
@@ -93,11 +124,25 @@ test-suite mithril-ir-test
   hs-source-dirs:  test
   main-is:         Main.hs
   other-modules:
+    Mithril.CLIProcessTests
     Mithril.CLITests
+    Mithril.CoreResolutionTests
     Mithril.CoreValidationTests
     Mithril.Test
+    Mithril.TestEnv
+
+  -- process runs the actually-built mithril executable (provided on
+  -- PATH by build-tool-depends) for the process-level CLI regression
+  -- tests; directory and filepath exist only so the schema-override
+  -- regressions can build and reliably remove a collision-safe
+  -- scratch data directory.  No test framework is used.
   build-depends:
     , aeson >= 2.2 && < 2.3
     , bytestring >= 0.12 && < 0.13
+    , directory >= 1.3 && < 1.4
+    , filepath >= 1.5 && < 1.6
     , mithril-ir
+    , process >= 1.6 && < 1.7
     , text >= 2.1 && < 2.2
+  build-tool-depends:
+    mithril-ir:mithril

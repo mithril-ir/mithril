@@ -6,8 +6,9 @@
 -- @Main@ module.
 --
 -- The tool understands the self-describing invocations plus one real
--- command: @validate FILE@, the structural Core v0 validation
--- boundary.  No other compiler stage exists yet.
+-- command: @validate FILE@, JSON parsing plus structural Core v0
+-- validation plus complete name resolution.  No later compiler stage
+-- exists yet.
 module Mithril.CLI
   ( Command (..)
   , parseCommand
@@ -24,8 +25,8 @@ data Command
     ShowHelp
   | -- | Print the package version and exit successfully.
     ShowVersion
-  | -- | Structurally validate FILE against the bundled Core v0
-    -- schema.
+  | -- | Parse FILE, validate it structurally against the compiled-in
+    -- Core v0 schema, and resolve every Core v0 name.
     Validate FilePath
   deriving (Eq, Show)
 
@@ -112,14 +113,18 @@ renderHelp =
     , "  mithril --help         Print this help text."
     , "  mithril -h             Print this help text."
     , "  mithril --version      Print the package version."
-    , "  mithril validate FILE  Parse FILE as JSON and check it against"
-    , "                         the bundled Mithril Core v0 schema."
+    , "  mithril validate FILE  Parse FILE as JSON, check it against the"
+    , "                         compiled-in Mithril Core v0 schema, and"
+    , "                         resolve every Core v0 name."
     , ""
-    , "validate performs structural Core v0 validation only: JSON syntax"
-    , "plus conformance to the supported core/schema.json profile. It is"
+    , "validate performs JSON parsing, structural Core v0 validation"
+    , "against the supported profile of core/schema.json (compiled into"
+    , "the tool at build time), and complete Core v0 name resolution:"
+    , "declaration-name uniqueness in every namespace and resolution"
+    , "of every name reference in its namespace. It is"
     , "not semantic verification and not proof checking; it does not"
-    , "resolve names, typecheck, normalize, verify guarantees, or"
-    , "generate anything. No other compiler stage is implemented yet."
+    , "typecheck, normalize, verify guarantees, or generate anything."
+    , "No other compiler stage is implemented yet."
     ]
 
 -- | Version line for the given package version string.

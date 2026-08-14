@@ -1,0 +1,61 @@
+cabal-version:      3.0
+name:               mithril-ir-api-probes
+version:            0.1.0.0
+synopsis:           Expected-to-fail probes of the mithril-ir API boundary
+description:
+  Each executable in this package is one attack on the mithril-ir
+  stage abstraction, written exactly as a downstream package would
+  write it (depending on mithril-ir as an external package, never by
+  adding its src/ to a module search path).  Every executable must
+  FAIL to compile, each for its intended reason; the driver
+  test/api-probes/run-api-probes.sh builds them one by one and treats
+  successful compilation — or failure with an unintended message — as
+  a broken API boundary.
+license:            Apache-2.0
+author:             Mithril contributors
+maintainer:         Mithril contributors
+build-type:         Simple
+
+common probe
+  default-language: GHC2021
+  hs-source-dirs:   .
+  build-depends:
+    , aeson
+    , base
+    , bytestring
+    , mithril-ir
+
+-- Control: legitimate downstream use of the public pipeline.  This
+-- one must COMPILE; the driver builds it first so that the attack
+-- failures below cannot be explained by a broken probe environment.
+executable probe-control
+  import:  probe
+  main-is: Control.hs
+
+-- Attack 1: import the hidden module that owns the CoreDocument
+-- representation.
+executable probe-hidden-import
+  import:  probe
+  main-is: HiddenImport.hs
+
+-- Attack 2: use the CoreDocument constructor through the public
+-- modules.
+executable probe-constructor-use
+  import:  probe
+  main-is: ConstructorUse.hs
+
+-- Attack 3: coerce a Parsed document to StructurallyValid.
+executable probe-coerce-parsed
+  import:  probe
+  main-is: CoerceParsed.hs
+
+-- Attack 4: coerce a StructurallyValid document to Resolved.
+executable probe-coerce-valid
+  import:  probe
+  main-is: CoerceValid.hs
+
+-- Attack 5: coerce a raw Aeson Value directly to CoreDocument
+-- Resolved.
+executable probe-coerce-value
+  import:  probe
+  main-is: CoerceValue.hs

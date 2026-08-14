@@ -2,14 +2,16 @@
 
 -- | The effectful file boundary of @mithril validate FILE@.
 --
--- This module owns reading the user's file, loading the bundled
--- schema, and classifying every failure of the boundary; expected
--- failures are returned as values, never thrown.  It also renders the
+-- This module owns reading the user's file, obtaining the compiled-in
+-- Core v0 schema, and classifying every failure of the boundary;
+-- expected failures are returned as values, never thrown.  It also renders the
 -- outcomes and classifies exit codes so that the executable's @Main@
 -- stays a thin dispatcher.
 --
--- The command establishes structural Core v0 validity only (see
--- "Mithril.Core.Validation" for the exact non-claims).
+-- The command establishes structural Core v0 validity plus complete
+-- Core v0 name resolution — nothing more (see
+-- "Mithril.Core.Validation" and "Mithril.Core.Resolution" for the
+-- exact non-claims).
 module Mithril.Command.Validate
   ( ValidateFileError (..)
   , validateCoreFile
@@ -29,13 +31,19 @@ import qualified Data.Text as Text
 import System.Exit (ExitCode (..))
 import System.IO.Error (ioeGetErrorString)
 
+import Mithril.Core.Resolution
+  ( ResolutionFailure (..)
+  , ResolutionViolation (..)
+  , Resolved
+  , ResolverInvariantViolation (..)
+  , resolveCoreDocument
+  )
 import Mithril.Core.Validation
   ( CoreDocument
   , ParseError (..)
   , SchemaLoadError (..)
-  , StructurallyValid
   , StructuralViolation (..)
-  , loadBundledCoreSchema
+  , bundledCoreSchema
   , parseCoreDocument
   , renderJsonPointer
   , validateCoreDocument
@@ -50,24 +58,36 @@ data ValidateFileError
   | -- | The user's file is valid JSON but violates the Core v0
     -- schema; violations are sorted and deduplicated.
     FileStructuralViolations FilePath (NonEmpty StructuralViolation)
-  | -- | The bundled schema failed to load, parse, or pass the
-    -- profile gate.  This is an internal error of the tool.
+  | -- | The user's file is structurally valid but has Core v0 name
+    -- problems; violations are sorted and deduplicated.
+    FileResolutionViolations FilePath (NonEmpty ResolutionViolation)
+  | -- | The schema compiled into the tool failed to parse or fell
+    -- outside the supported profile — possible only when the
+    -- @core/schema.json@ embedded at build time was itself broken.
+    -- This is an internal error of the tool.
     InternalSchemaError SchemaLoadError
+  | -- | The resolver could not interpret the structurally validated
+    -- document (schema\/resolver drift or a resolver bug).  This is
+    -- an internal error of the tool, never a user-document problem.
+    InternalResolverError (NonEmpty ResolverInvariantViolation)
   deriving (Eq, Show)
 
--- | Read FILE, parse it as JSON, and validate it structurally against
--- the bundled Core v0 schema.
+-- | Read FILE, parse it as JSON, validate it structurally against the
+-- compiled-in canonical Core v0 schema, and resolve every Core v0
+-- name.
 --
 -- Expected failures — an unreadable file, malformed JSON, structural
--- violations, or a broken bundled schema — are returned in 'Left';
--- 'IOException's from both the user file and the bundled schema are
--- caught and classified.
+-- violations, name-resolution violations, a broken compiled-in
+-- schema, or a resolver-invariant failure — are returned in 'Left';
+-- 'IOException's from reading the user file are caught and
+-- classified.  The schema itself involves no run-time I\/O
+-- ('bundledCoreSchema' is pure), so no environment override can
+-- substitute it.
 validateCoreFile
   :: FilePath
-  -> IO (Either ValidateFileError (CoreDocument StructurallyValid))
-validateCoreFile file = do
-  schemaOutcome <- loadBundledCoreSchema
-  case schemaOutcome of
+  -> IO (Either ValidateFileError (CoreDocument Resolved))
+validateCoreFile file =
+  case bundledCoreSchema of
     Left schemaError -> pure (Left (InternalSchemaError schemaError))
     Right schema -> do
       readOutcome <- try (ByteString.readFile file)
@@ -85,12 +105,18 @@ validateCoreFile file = do
               case validateCoreDocument schema document of
                 Left violations ->
                   Left (FileStructuralViolations file violations)
-                Right validDocument -> Right validDocument
+                Right validDocument ->
+                  case resolveCoreDocument validDocument of
+                    Left (ResolutionViolations violations) ->
+                      Left (FileResolutionViolations file violations)
+                    Left (ResolverInvariantViolations problems) ->
+                      Left (InternalResolverError problems)
+                    Right resolvedDocument -> Right resolvedDocument
 
 -- | The single success line, for stdout.
 renderValidateSuccess :: FilePath -> Text
 renderValidateSuccess file =
-  displayPath file <> ": structurally valid Mithril Core v0"
+  displayPath file <> ": valid Mithril Core v0 through name resolution"
 
 -- | Render a failure for stderr.  The result has no trailing newline;
 -- print it with a newline-appending writer.  Rendering is pure and
@@ -113,37 +139,61 @@ renderValidateFailure failure =
               | violation <- NonEmpty.toList violations
               ]
         )
+    FileResolutionViolations file violations ->
+      Text.intercalate
+        "\n"
+        ( (displayPath file <> ": invalid Mithril Core v0 name resolution")
+            : [ "  "
+                  <> renderJsonPointer (resolutionViolationPath violation)
+                  <> ": "
+                  <> escapeControlChars (resolutionViolationMessage violation)
+              | violation <- NonEmpty.toList violations
+              ]
+        )
     InternalSchemaError schemaError ->
       case schemaError of
-        SchemaReadError reason ->
-          internalPrefix
-            <> "cannot read the bundled schema\n  "
-            <> escapeControlChars reason
         SchemaParseError reason ->
-          internalPrefix
-            <> "the bundled schema is not valid JSON\n  "
+          internalSchemaPrefix
+            <> "the compiled-in schema is not valid JSON\n  "
             <> escapeControlChars reason
         SchemaProfileError problems ->
           Text.intercalate
             "\n"
-            ( (internalPrefix <> "the bundled schema is outside the supported profile")
+            ( (internalSchemaPrefix <> "the compiled-in schema is outside the supported profile")
                 : [ "  " <> escapeControlChars problem
                   | problem <- NonEmpty.toList problems
                   ]
             )
+    InternalResolverError problems ->
+      Text.intercalate
+        "\n"
+        ( ( internalResolverPrefix
+              <> "the structurally validated document does not match the"
+              <> " resolver's Core v0 interpretation"
+          )
+            : [ "  "
+                  <> renderJsonPointer (resolverInvariantPath problem)
+                  <> ": "
+                  <> escapeControlChars (resolverInvariantMessage problem)
+              | problem <- NonEmpty.toList problems
+              ]
+        )
   where
-    internalPrefix = "mithril: internal Core schema error: "
+    internalSchemaPrefix = "mithril: internal Core schema error: "
+    internalResolverPrefix = "mithril: internal Core resolver error: "
 
 -- | Exit classification: user-input failures exit @1@; internal
--- bundled-schema failures exit @2@.  (Success exits @0@ and is not a
--- 'ValidateFileError'.)
+-- compiled-in-schema and resolver failures exit @2@.  (Success exits
+-- @0@ and is not a 'ValidateFileError'.)
 failureExitCode :: ValidateFileError -> ExitCode
 failureExitCode failure =
   case failure of
     InternalSchemaError _ -> ExitFailure 2
+    InternalResolverError _ -> ExitFailure 2
     FileReadError _ _ -> ExitFailure 1
     FileParseError _ _ -> ExitFailure 1
     FileStructuralViolations _ _ -> ExitFailure 1
+    FileResolutionViolations _ _ -> ExitFailure 1
 
 -- | Deterministic rendering of a file path inside diagnostics.
 --

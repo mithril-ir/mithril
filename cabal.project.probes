@@ -1,0 +1,11 @@
+-- Project file for the downstream API-boundary compile-fail probes
+-- (test/api-probes/run-api-probes.sh).  It extends the canonical
+-- project with the probe package, which depends on mithril-ir as an
+-- ordinary external package — so hidden modules, abstract types, and
+-- nominal roles are enforced exactly as any downstream consumer would
+-- experience them.  The probes are expected to FAIL to compile; they
+-- are deliberately not part of the default project, so ordinary
+-- builds and tests never touch them.
+import: cabal.project
+
+packages: test/api-probes/probe

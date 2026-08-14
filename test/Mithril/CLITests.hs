@@ -67,8 +67,10 @@ checks =
       "help lists the validate command"
       ("validate FILE" `isInfixOf` renderHelp)
   , check
-      "help scopes validate to structural validation only"
-      ("structural Core v0 validation only" `isInfixOf` renderHelp)
+      "help scopes validate to structural validation plus name resolution"
+      ( ("structural Core v0 validation" `isInfixOf` renderHelp)
+          && ("name resolution" `isInfixOf` renderHelp)
+      )
   , check
       "help disclaims semantic verification and proof checking"
       ("not semantic verification and not proof checking" `isInfixOf` renderHelp)
