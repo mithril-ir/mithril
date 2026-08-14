@@ -1,6 +1,6 @@
 # Mithril
 
-> **Status: experimental; the compiler is not implemented.** This repository currently contains documentation — including the accepted compiler-architecture specification, [`docs/compiler-architecture.md`](docs/compiler-architecture.md) — an experimental Agda semantic spike (`agda/`), the first Mithril Core v0 concrete-syntax checkpoint: a normative JSON Schema plus one handwritten example model, and a minimal Haskell host-tool scaffold with pinned Haskell CI. The scaffold's `mithril` CLI supports only help and version output; no parser, validator, resolver, typechecker, normalizer, verifier, or generator exists yet. The spike now includes one hand-transcribed application experiment — a NoSelfPrivilegeEscalation proof for a single Acme action inside the fixed-schema Agda kernel ([`agda/README.md`](agda/README.md)) — but no automated verifier or JSON-to-Agda connection exists, and the JSON document itself and everything else described below remain unverified.
+> **Status: experimental; the compiler is not implemented.** This repository currently contains documentation — including the accepted compiler-architecture specification, [`docs/compiler-architecture.md`](docs/compiler-architecture.md) — an experimental Agda semantic spike (`agda/`), the first Mithril Core v0 concrete-syntax checkpoint: a normative JSON Schema plus one handwritten example model, and the Haskell host tool with pinned Haskell CI. The `mithril` CLI supports help and version output plus one deterministic frontend boundary, `mithril validate FILE`: JSON parsing and structural validation against the bundled Core v0 schema. No resolver, Mithril typechecker, normalizer, verifier, proof generator, or target generator exists yet, and schema acceptance neither proves guarantees nor verifies an application. The spike now includes one hand-transcribed application experiment — a NoSelfPrivilegeEscalation proof for a single Acme action inside the fixed-schema Agda kernel ([`agda/README.md`](agda/README.md)) — but no automated verifier or JSON-to-Agda connection exists; it is not generated from and not connected to the JSON, and the JSON document itself and everything else described below remain unverified.
 
 Mithril is experimental formal-verification infrastructure for **authorization and data-access security in AI-generated web backends**. That is its entire initial scope: it is not a general-purpose verification framework, not a web framework, and not a security product.
 
@@ -21,18 +21,18 @@ typed normalized Core ──┬──▶ human-readable security contract
                         └──▶ deterministic generation of Wasp code
 ```
 
-The key design commitment is that any LLM involvement ends at the authored Core document, and that contract rendering, Agda verification, and target code generation all consume the same typed normalized Core rather than interpreting the JSON independently. Everything downstream of the authored document is intended to be deterministic and auditable, so that what gets checked is exactly what gets executed. Haskell has been selected as the implementation language for this future deterministic host tool; today only a minimal CLI scaffold exists (help and version output), and none of the pipeline stages is implemented. [Wasp](https://wasp.sh/) is the first planned executable target. [`docs/compiler-architecture.md`](docs/compiler-architecture.md) is authoritative for the pipeline and its artifact-ownership boundaries.
+The key design commitment is that any LLM involvement ends at the authored Core document, and that contract rendering, Agda verification, and target code generation all consume the same typed normalized Core rather than interpreting the JSON independently. Everything downstream of the authored document is intended to be deterministic and auditable, so that what gets checked is exactly what gets executed. Haskell has been selected as the implementation language for this deterministic host tool; today it implements only the front of the first stage — JSON parsing plus Core v0 structural validation (`mithril validate FILE`) — and nothing downstream: no name resolution, no Mithril typechecking, no normalization, no verification, and no generation. [Wasp](https://wasp.sh/) is the first planned executable target. [`docs/compiler-architecture.md`](docs/compiler-architecture.md) is authoritative for the pipeline and its artifact-ownership boundaries.
 
 ## Current status vs. intended functionality
 
 | Status | Description |
 |---|---|
-| **Exists today** | This documentation, the accepted compiler-architecture specification ([`docs/compiler-architecture.md`](docs/compiler-architecture.md)), contribution and security policies, agent guidelines, an experimental Agda semantic spike under `agda/` (including one hand-transcribed application slice: a checked NoSelfPrivilegeEscalation proof for the Acme `Membership.changeRole` action, see [`agda/README.md`](agda/README.md)), the Core v0 concrete-syntax checkpoint: [`core/schema.json`](core/schema.json) with the handwritten [`examples/acme/acme.mir.json`](examples/acme/acme.mir.json), and a minimal Haskell host-tool scaffold with pinned Haskell CI: Cabal package `mithril-ir` building the `mithril` CLI (help and version output only) with base-only unit tests (GHC 9.12.4, cabal-install 3.18.1.0). |
-| **Does not exist yet** | Everything beyond Core's concrete JSON syntax: the parser, structural validator, resolver, typechecker, normalizer, verifier, contract renderer, Wasp generator, and the optional LLM authoring aid (untrusted; it may propose Mithril Core JSON but remains outside the deterministic and trusted compiler pipeline). The Haskell scaffold implements none of these: its CLI supports only help and version output, and its unit tests cover only that CLI boundary. |
+| **Exists today** | This documentation, the accepted compiler-architecture specification ([`docs/compiler-architecture.md`](docs/compiler-architecture.md)), contribution and security policies, agent guidelines, an experimental Agda semantic spike under `agda/` (including one hand-transcribed application slice: a checked NoSelfPrivilegeEscalation proof for the Acme `Membership.changeRole` action, see [`agda/README.md`](agda/README.md)), the Core v0 concrete-syntax checkpoint: [`core/schema.json`](core/schema.json) with the handwritten [`examples/acme/acme.mir.json`](examples/acme/acme.mir.json), and the Haskell host tool with pinned Haskell CI: Cabal package `mithril-ir` building the `mithril` CLI — help and version output plus `mithril validate FILE`, deterministic JSON parsing and Core v0 structural validation against the bundled schema (GHC 9.12.4, cabal-install 3.18.1.0; JSON parsing via `aeson`, structural validation via the exactly pinned `jsonschema 0.3.0.1` behind an explicit schema-profile gate). The Acme example passes structural validation. |
+| **Does not exist yet** | Everything beyond JSON parsing and structural validation: the resolver, Mithril typechecker, normalizer, verifier, contract renderer, Wasp generator, and the optional LLM authoring aid (untrusted; it may propose Mithril Core JSON but remains outside the deterministic and trusted compiler pipeline). Structural validation is JSON shape conformance only — it resolves nothing, types nothing, normalizes nothing, and establishes no security property. |
 
 ### Canonical Haskell commands
 
-The scaffold's authoritative build and test commands, run from the repository root:
+The host tool's authoritative build, test, and validation commands, run from the repository root:
 
 ```
 cabal check
@@ -40,6 +40,7 @@ cabal build all --enable-tests
 cabal test all --test-show-details=direct
 cabal run mithril -- --help
 cabal run mithril -- --version
+cabal run mithril -- validate examples/acme/acme.mir.json
 ```
 
 ## Core v0 syntax checkpoint
@@ -50,7 +51,15 @@ It validates JSON shape only. Schema acceptance establishes structural facts (re
 
 [`examples/acme/acme.mir.json`](examples/acme/acme.mir.json) is a handwritten example model. It is neither generated nor verified. The three guarantee objects it selects — TenantIsolation, AuthenticatedMutation, and NoSelfPrivilegeEscalation — remain unverified for this document; their appearance in the JSON selects proof obligations and proves nothing. Separately, the Agda spike hand-transcribes the `Membership.changeRole` action and proves its selected NoSelfPrivilegeEscalation case inside the fixed-schema kernel ([`agda/README.md`](agda/README.md)); no tool connects that proof to this JSON document.
 
-No parser, resolver, typechecker, normalizer, verifier, or Wasp generator exists yet; the Haskell scaffold's CLI prints only help and version output. Those deferred semantic stages belong to the planned single Haskell frontend, which will produce the one typed normalized Core consumed by contract rendering, Agda checking, and target generation alike ([`docs/compiler-architecture.md`](docs/compiler-architecture.md)). Conformance of an instance to the schema can be checked with any standard JSON Schema draft 2020-12 validator. The separate Agda spike under `agda/` explores candidate kernel semantics; it does not consume this JSON, and its single hand-transcribed application proof does not verify this document.
+The `mithril` CLI checks exactly this structural conformance deterministically:
+
+```sh
+cabal run mithril -- validate examples/acme/acme.mir.json
+```
+
+`mithril validate FILE` parses FILE as JSON (rejecting malformed input and trailing garbage) and validates it against the bundled schema, within an explicitly gated schema profile (local `#` references only; see the tool's help text for its non-claims). The Acme example passes. Passing establishes JSON shape only: no resolver, Mithril typechecker, normalizer, verifier, or Wasp generator exists yet, and those deferred semantic stages belong to the planned single Haskell frontend, which will produce the one typed normalized Core consumed by contract rendering, Agda checking, and target generation alike ([`docs/compiler-architecture.md`](docs/compiler-architecture.md)). Conformance can equally be checked with any standard JSON Schema draft 2020-12 validator. The separate Agda spike under `agda/` explores candidate kernel semantics; it remains hand-transcribed, is not generated from and does not consume this JSON, and its single application proof does not verify this document.
+
+Two operational caveats apply to the current tool — known gaps, not contracts: duplicate JSON object members are currently accepted under the JSON parser's (Aeson's) member semantics rather than rejected, and which occurrence wins is not part of any Mithril contract; and no independent input-size, nesting, memory, or execution-resource limits are enforced yet. `mithril validate` should therefore not be treated as hardened validation for arbitrary untrusted, unbounded input. Neither caveat changes the narrower claim above: the unchanged Acme example structurally validates.
 
 ## Target properties (not implemented guarantees)
 

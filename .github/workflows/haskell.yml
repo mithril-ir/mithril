@@ -1,10 +1,11 @@
 name: Haskell
 
-# Builds and tests the minimal Haskell host-tool scaffold: the
-# mithril-ir Cabal package with the mithril CLI (help and version
-# output only) and its base-only unit tests. No compiler stage —
-# parser, structural validator, resolver, typechecker, normalizer,
-# verifier, or generator — exists yet.
+# Builds and tests the Haskell host tool: the mithril-ir Cabal package
+# with the mithril CLI (help, version, and structural Core v0
+# validation via 'mithril validate FILE') and its unit tests. The
+# validate command establishes JSON shape conformance only; no
+# resolver, typechecker, normalizer, verifier, or generator exists
+# yet.
 
 on:
   push:
@@ -46,6 +47,9 @@ jobs:
 
       - name: Test
         run: cabal test all --test-show-details=direct
+
+      - name: Validate Acme Core document
+        run: cabal run mithril -- validate examples/acme/acme.mir.json
 
       - name: Run mithril --help
         run: cabal run mithril -- --help

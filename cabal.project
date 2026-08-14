@@ -1,6 +1,13 @@
 packages: .
 index-state: 2026-08-13T00:00:00Z
 
+-- The JSON Schema validation backend is pinned exactly: it is a
+-- provisional dependency, reviewed against the current Core v0 schema
+-- profile only. Changing this pin requires re-reviewing the profile
+-- gate in Mithril.Core.Validation.
+constraints:
+    jsonschema == 0.3.0.1
+
 -- Keep -Werror on for every local and CI build; the flag exists only
 -- because 'cabal check' rejects an unconditional -Werror.
 package mithril-ir

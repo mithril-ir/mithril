@@ -5,7 +5,7 @@
 
 This document is authoritative for the Mithril compiler pipeline and for artifact-ownership boundaries: which artifacts are authored, which are derived, and which are trusted. It does not replace [`core/schema.json`](../core/schema.json), which remains the normative authority for the external JSON shape of a Core v0 document.
 
-The architecture below is agreed, not built. No part of the pipeline is implemented yet; [Current implementation status](#current-implementation-status) states exactly what exists today.
+The architecture below is agreed and almost entirely unbuilt. Exactly one boundary of the frontend's first stage exists — deterministic JSON parsing plus Core v0 structural validation (`mithril validate FILE`); [Current implementation status](#current-implementation-status) states exactly what exists today.
 
 ## Purpose
 
@@ -72,7 +72,7 @@ Haskell is the accepted implementation language for the deterministic host tool:
 
 - It does not make Haskell the proof backend. Agda remains a separate formal backend/checker, reached through generated files and a process boundary; Mithril will not import or depend on Agda compiler internals as a Haskell library.
 - Advanced Haskell types should enforce concrete pipeline invariants — for example, that emitters and the contract renderer accept only the `Normalized` stage — not recreate a second proof assistant inside the host tool.
-- This document makes no toolchain choices itself. An explicit bootstrap task has since fixed GHC 9.12.4, cabal-install 3.18.1.0, and the GHC2021 language edition for the minimal scaffold, with `base` as its only dependency; dependency selection beyond `base` (including the JSON Schema validator library), packaging, and distribution remain open.
+- This document makes no toolchain choices itself. Explicit tasks have since fixed GHC 9.12.4, cabal-install 3.18.1.0, and the GHC2021 language edition, and selected the structural-validation dependencies: Aeson for JSON parsing, the native Haskell `jsonschema` package, pinned exactly to 0.3.0.1, as the provisional JSON Schema backend, and `regex-tdfa` — the backend's own regex engine — as a direct dependency of the schema-profile gate. The backend is trusted only for an explicitly gated schema profile (exact draft 2020-12 `$schema` URI, a closed keyword inventory, local unescaped `#` references only, annotation-only `$ref` siblings; no external references or anchors, no `unevaluated*` or dynamic references, and regex semantics inherited from the backend rather than guaranteed ECMA-262 — the gate compiles every `pattern` with that same engine at load time, so an uncompilable pattern is a schema-load failure rather than a validation-time exception) — schema loading fails closed outside that profile, and no complete Draft 2020-12 implementation is claimed. The bundled `core/schema.json` is the only schema the public validation API will load. Packaging and distribution remain open.
 
 ## LLM boundary
 
@@ -112,7 +112,7 @@ No derived artifact exists today: the repository has no automated pipeline, and 
 
 Determinism is not itself correctness: a deterministic pipeline reproducibly delivers whatever its trusted components produce, including their bugs. For the MVP, the trusted computing base includes, as applicable to the deployment in question:
 
-- the Haskell frontend and emitters, including the contract renderer;
+- the Haskell frontend and emitters, including the contract renderer — today that means the implemented parse + structural-validation boundary, including Aeson (JSON parsing), the exactly pinned `jsonschema 0.3.0.1` package (MPL-2.0), which performs structural validation for the gated Core v0 schema profile and is trusted for nothing beyond it, and `regex-tdfa` (BSD-3-Clause), the regex engine beneath that backend, which the profile gate also uses directly to compile every schema `pattern` at load time;
 - the generic Agda model that generated obligations target;
 - the Agda toolchain;
 - the target adapter and runtime;
@@ -161,19 +161,21 @@ A backend cannot receive a verification claim merely because the abstract Core v
 
 ## Current implementation status
 
-As of 2026-08-13, no part of the pipeline above is implemented. A minimal Haskell host-tool scaffold exists — infrastructure only, neither a frontend nor any compiler stage.
+As of 2026-08-13, exactly one boundary of the pipeline above is implemented: the frontend's deterministic JSON parsing plus Core v0 structural validation, exposed as `mithril validate FILE`. Everything after it remains unbuilt.
 
 Exists today (all authored by hand):
 
-- [`core/schema.json`](../core/schema.json) — the normative Core v0 external JSON shape;
-- [`examples/acme/acme.mir.json`](../examples/acme/acme.mir.json) — a handwritten, unverified example model;
+- [`core/schema.json`](../core/schema.json) — the normative Core v0 external JSON shape, bundled with the tool as package data;
+- [`examples/acme/acme.mir.json`](../examples/acme/acme.mir.json) — a handwritten, unverified example model, which passes structural validation;
 - the experimental Agda kernel spike under [`agda/`](../agda/README.md), including the hand-transcribed `Mithril.Acme` slice: one checked NoSelfPrivilegeEscalation case for the Acme `Membership.changeRole` action, with a checked unsafe-variant counterexample;
-- the minimal Haskell scaffold: Cabal package `mithril-ir` building the `mithril` CLI (help and version output only) with base-only unit tests, fixed to GHC 9.12.4, cabal-install 3.18.1.0, and GHC2021 for this bootstrap, plus the pinned Haskell CI workflow;
+- the Haskell host tool: Cabal package `mithril-ir` building the `mithril` CLI — help and version output plus `mithril validate FILE` (raw bytes → JSON parsing → Core v0 structural validation → structurally-valid opaque document, with stage-indexed types so later stages cannot accept merely parsed input as validated) — with unit tests over these boundaries, fixed to GHC 9.12.4, cabal-install 3.18.1.0, and GHC2021, plus the pinned Haskell CI workflow;
 - this document.
+
+Known limitations of the implemented boundary (deliberate, unresolved): duplicate JSON object members are not rejected (Aeson member semantics — a provisional gap, not a desired contract), and no input-size or resource limits are enforced. The validation backend is trusted only within the gated schema profile described under [Haskell boundary](#haskell-boundary).
 
 Does not exist yet:
 
-- any actual frontend or compiler stage: no parser, structural validator, resolver, typechecker, normalizer, contract renderer, or emitter — the scaffold is not a parser, verifier, compiler, or generator;
+- every semantic frontend stage: no resolver, no Mithril typechecker, no normalizer — a structurally valid document is unresolved, untyped, and unnormalized, and no typed normalized Core exists;
 - any automated JSON-to-Agda connection — the `Mithril.Acme` slice is hand-transcribed, not derived from the JSON example;
 - any contract rendering, Wasp generation, or other target generation;
 - any derived artifact, generation metadata, or manifest.
@@ -182,8 +184,9 @@ Does not exist yet:
 
 This document makes design commitments, not correctness claims:
 
-- It does not claim that any stage of the pipeline is implemented. None is.
-- The minimal Haskell scaffold, created by an explicit bootstrap task, is infrastructure only: a package, a help/version CLI, base-only unit tests, and CI. It is not a parser, verifier, compiler, or generator and implies no pipeline progress; packaging, distribution, dependency selection beyond `base`, validator choice, generated filenames, manifest format, and the adapter API all remain open.
+- It does not claim that any pipeline stage beyond the parse + structural-validation boundary is implemented. None is.
+- A structurally valid document is not typed normalized Core. Structural validation establishes JSON shape conformance to the gated schema profile only; it is not name resolution, not typing, not normalization, not semantic well-formedness, not guarantee truth, and not verification of the Acme model or any application.
+- The structural-validation backend (`jsonschema 0.3.0.1`) is provisional and gated: only the supported schema profile is accepted, and no complete Draft 2020-12 implementation is claimed. Duplicate JSON member rejection and input/resource limits remain unresolved gaps of the implemented boundary. Packaging, distribution, generated filenames, manifest format, and the adapter API all remain open.
 - Determinism and reproducibility are design intent, not demonstrated properties of any existing tool — and determinism, once achieved, is still not correctness.
 - Generated code will not be called verified merely because it was generated; a verified status requires the gates in [Verification gates](#verification-gates).
 - Neither [`examples/acme/acme.mir.json`](../examples/acme/acme.mir.json) nor the complete Acme model is verified. The one existing proof slice is hand-transcribed and covers a single action and a single selected guarantee case.
