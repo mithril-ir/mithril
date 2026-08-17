@@ -3,9 +3,18 @@
 -- project with the probe package, which depends on mithril-ir as an
 -- ordinary external package — so hidden modules, abstract types, and
 -- nominal roles are enforced exactly as any downstream consumer would
--- experience them.  The probes are expected to FAIL to compile; they
--- are deliberately not part of the default project, so ordinary
--- builds and tests never touch them.
+-- experience them.  The control executable must COMPILE, proving the
+-- probe environment sound; the eight attack executables must FAIL to
+-- compile, each for its intended boundary reason.  The probes are
+-- deliberately not part of the default project, so ordinary builds
+-- and tests never touch them.
 import: cabal.project
 
 packages: test/api-probes/probe
+
+-- The probe package compiles under the repository warning policy:
+-- the same warning set as the mithril-ir components plus -Werror,
+-- enabled through the probe package's own werror flag exactly as the
+-- imported cabal.project enables mithril-ir's.
+package mithril-ir-api-probes
+  flags: +werror
