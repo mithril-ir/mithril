@@ -15,23 +15,27 @@
 -- constructor family — the actor-available families
 -- (@AuthenticatedOnly@ bodies, authenticated branches, guarantee
 -- terms) and the actor-free families (@AnyPrincipal@ anonymous
--- branches, effects, and results) — through the complete pipeline
--- successfully, and reference sites that only this fixture exercises
--- (an arity-one authority relation, actor-free initializer keys,
--- actor-free effect terms) get targeted unknown-name regressions with
--- exact paths and messages.  The successful model's /content/ —
--- identifiers, owners, retained source paths, and cross-run
--- determinism — is inspected by "Mithril.CoreModelTests", which
--- reaches the real internal model through the package-private
--- @core-internal@ sublibrary instead of weakening this public
--- boundary.
+-- branches, effects, and results) — through parsing, structural
+-- validation, and name resolution successfully, and reference sites
+-- that only this fixture exercises (an arity-one authority relation,
+-- actor-free initializer keys, actor-free effect terms) get targeted
+-- unknown-name regressions with exact paths and messages.  The
+-- successful model's /content/ — identifiers, owners, retained
+-- source paths, and cross-run determinism — is inspected by
+-- "Mithril.CoreModelTests", which reaches the real internal model
+-- through the package-private @core-internal@ sublibrary instead of
+-- weakening this public boundary.
 --
 -- The fixture also bakes in deliberately ill-typed but well-named
 -- constructs (a lookup passing two endpoint terms — the second a
 -- @Bool@ literal — to the arity-one relation @Flagged@, an unordered
 -- @payloadOrder@ enum, incompatible comparison operands), so its
--- acceptance is a regression that constructing the representation
--- adds no typechecking.
+-- acceptance by resolution is a regression that constructing the
+-- representation adds no typechecking — while the file-level
+-- pipeline, which now continues into static typing, must reject it
+-- with type violations, never name-resolution ones (the exact
+-- violation list is pinned in "Mithril.CoreTypingTests" and at the
+-- process level).
 module Mithril.CoreRepresentationTests
   ( tests
   ) where
@@ -53,9 +57,10 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 
 import Mithril.Command.Validate
-  ( ValidateFileError
+  ( ValidateFileError (..)
   , validateCoreFile
   )
+import Mithril.Core.Typing (Typed)
 import Mithril.Core.Resolution
   ( ResolutionFailure (..)
   , ResolutionViolation (..)
@@ -116,11 +121,14 @@ withCoverage bytes buildChecks =
 -- The complete public pipeline over the coverage fixture
 --------------------------------------------------------------------
 
-fileChecks :: Either ValidateFileError (CoreDocument Resolved) -> [Check]
+fileChecks :: Either ValidateFileError (CoreDocument Typed) -> [Check]
 fileChecks fileOutcome =
   [ check
-      "the coverage fixture resolves through the complete public pipeline from a file"
-      (either (const False) (const True) fileOutcome)
+      "the coverage fixture reaches static typing through the file pipeline and is rejected there"
+      ( case fileOutcome of
+          Left (FileTypeViolations _ _) -> True
+          _ -> False
+      )
   ]
 
 coverageChecks :: CoreSchema -> ByteString -> Value -> [Check]

@@ -52,19 +52,20 @@
 -- source that is known /not/ to denote an entity reference is a
 -- resolution failure; nothing else about types is checked.
 --
--- Everything else remains for the (unimplemented) static typechecker
--- and later stages: general term typing, operator operand
--- compatibility, equality and ordered-comparison compatibility,
--- enum-order completeness and permutation validity, whether a
--- @payloadOrder@ enum is ordered or agrees with the authority
--- relation, relation endpoint arity and endpoint type compatibility
--- at lookup and effect sites, effect value typing, @CreateEntity@
--- initializer completeness and value typing, result typing, guarantee
--- well-typedness and truth, policy evaluation, and normalization.  A
--- structurally valid document can therefore resolve successfully and
--- still fail the future typechecker.  A @'CoreDocument' 'Resolved'@
--- is an attestation about names only — /not/ typed normalized Core,
--- and no semantic or security property.
+-- Everything else remains for the later stages: general term typing,
+-- operator operand compatibility, equality and ordered-comparison
+-- compatibility, enum-order completeness and permutation validity,
+-- whether a @payloadOrder@ enum is ordered or agrees with the
+-- authority relation, relation endpoint arity and endpoint type
+-- compatibility at lookup and effect sites, effect value typing,
+-- @CreateEntity@ initializer completeness and value typing, result
+-- typing, and guarantee well-typedness all belong to the next stage,
+-- the static typechecker ("Mithril.Core.Typing"), while policy
+-- evaluation, guarantee truth, and normalization remain unimplemented
+-- beyond it.  A structurally valid document can therefore resolve
+-- successfully and still fail the typechecker.  A @'CoreDocument'
+-- 'Resolved'@ is an attestation about names only — /not/ typed
+-- normalized Core, and no semantic or security property.
 --
 -- == Failure classification
 --

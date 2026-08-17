@@ -3,11 +3,16 @@
 
 -- | White-box checks over the real resolved model.
 --
--- These checks run the complete production pipeline — the same
--- @validateCoreFile@ any consumer calls — over the full-coverage
--- fixture, then unwrap the @'CoreDocument' 'Resolved'@ through the
--- package-private @core-internal@ sublibrary and inspect the model it
--- actually carries.
+-- These checks run the production pipeline through its public stage
+-- functions — parse, structural validation against the compiled-in
+-- schema, and name resolution, the same calls any consumer makes —
+-- over the full-coverage fixture, then unwrap the @'CoreDocument'
+-- 'Resolved'@ through the package-private @core-internal@ sublibrary
+-- and inspect the model it actually carries.  (The file-level
+-- boundary @validateCoreFile@ now continues into static typing,
+-- which deliberately rejects this fixture; the resolved model under
+-- inspection here is the typechecker's input, so these checks stop
+-- at the resolution stage the fixture is built for.)
 --
 -- The expected values are an independent oracle.  Every declaration
 -- represented by the coverage fixture — every entity, enum, relation,
@@ -39,14 +44,20 @@ module Mithril.CoreModelTests
   ( tests
   ) where
 
+import qualified Data.ByteString as ByteString
 import Data.Foldable (toList)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import qualified Data.Text as Text
 
-import Mithril.Command.Validate (validateCoreFile)
 import Mithril.Core.Internal.Document (CoreDocument (..))
+import Mithril.Core.Resolution (Resolved, resolveCoreDocument)
+import Mithril.Core.Validation
+  ( bundledCoreSchema
+  , parseCoreDocument
+  , validateCoreDocument
+  )
 import Mithril.Core.Internal.Resolved
 import Mithril.Core.Internal.SourcePath
   ( SourcePath
@@ -67,10 +78,10 @@ coveragePath = "test/fixtures/coverage.mir.json"
 -- | All white-box model checks.
 tests :: IO [Check]
 tests = do
-  firstOutcome <- validateCoreFile coveragePath
-  secondOutcome <- validateCoreFile coveragePath
+  firstOutcome <- resolveCoverageFile
+  secondOutcome <- resolveCoverageFile
   pure $ case (firstOutcome, secondOutcome) of
-    (Right (CoreDocument firstModel), Right (CoreDocument secondModel)) ->
+    (Just (CoreDocument firstModel), Just (CoreDocument secondModel)) ->
       check
         "two independent full pipeline runs produce equal resolved models"
         (firstModel == secondModel)
@@ -80,6 +91,25 @@ tests = do
           "the coverage fixture resolves twice through the public pipeline (prerequisite)"
           False
       ]
+
+-- | One complete production run up to the stage under inspection: a
+-- fresh file read pushed through the public parse, structural
+-- validation, and resolution functions.  Each call performs its own
+-- read, parse, validation, and resolution, so two calls are two
+-- independent pipeline runs.
+resolveCoverageFile :: IO (Maybe (CoreDocument Resolved))
+resolveCoverageFile = do
+  bytes <- ByteString.readFile coveragePath
+  pure $ case bundledCoreSchema of
+    Left _ -> Nothing
+    Right schema ->
+      case parseCoreDocument bytes of
+        Left _ -> Nothing
+        Right document ->
+          case validateCoreDocument schema document of
+            Left _ -> Nothing
+            Right validDocument ->
+              either (const Nothing) Just (resolveCoreDocument validDocument)
 
 --------------------------------------------------------------------
 -- The path oracle

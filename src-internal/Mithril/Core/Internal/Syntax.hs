@@ -40,7 +40,10 @@
 --
 -- Nothing here is typed or normalized: the syntax records what was
 -- authored, resolution establishes names, and every deeper judgment
--- remains with the unimplemented typechecker.
+-- belongs to the later stages — static typing to
+-- "Mithril.Core.Internal.Typecheck" (over the resolved model, never
+-- over this symbolic syntax), everything beyond it to stages that do
+-- not exist yet.
 module Mithril.Core.Internal.Syntax
   ( -- * Actor availability
     ActorAvailability (..)
@@ -178,8 +181,8 @@ data AttributeType
 -- | An enum declaration.  The value list is structurally non-empty
 -- and its members structurally unique; the optional order is
 -- structurally non-empty when present.  Whether an order is a
--- complete permutation of the values is a fact for the future
--- typechecker, not encoded here.
+-- complete permutation of the values is a fact for the typechecker
+-- (over the resolved model), not encoded here.
 data EnumDeclaration = EnumDeclaration
   { enumDeclarationPath :: SourcePath
   , enumDeclarationName :: Sourced Text

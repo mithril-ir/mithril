@@ -8,18 +8,22 @@ description:
   @mithril validate FILE@: JSON parsing, structural validation of a
   Mithril Core v0 document against the canonical @core/schema.json@
   — compiled into the tool at build time, so no runtime file or
-  environment lookup selects the grammar — and complete Core v0 name
+  environment lookup selects the grammar — complete Core v0 name
   resolution: declaration-name uniqueness in every global and
   owner-local namespace, and resolution of every name reference in
-  its correct namespace.  A successfully resolved document is carried
-  as an explicit internal decoded and name-resolved Core
-  representation (identifier-based references with JSON source paths;
-  generic JSON ends at the internal decode boundary), but the
-  resolved stage remains an opaque attestation about names only, not
-  typed normalized Core; no static typechecker, normalizer, verifier,
-  proof generator or checker, runtime enforcement, or target
-  generator is implemented yet, and acceptance neither verifies a
-  model nor establishes any guarantee.
+  its correct namespace — and complete Core v0 static typing of the
+  resolved document: term, policy, effect, and result types, operand
+  and relation-endpoint compatibility, enum-order permutation
+  validity, CreateEntity initializer completeness, and guarantee
+  well-typedness.  A successfully resolved document is carried as an
+  explicit internal decoded and name-resolved Core representation
+  (identifier-based references with JSON source paths; generic JSON
+  ends at the internal decode boundary), and the typechecker consumes
+  exactly that representation; the typed stage remains an opaque
+  attestation of well-typedness only, not typed normalized Core: no
+  normalizer, verifier, proof generator or checker, runtime
+  enforcement, or target generator is implemented yet, and acceptance
+  neither verifies a model nor establishes any guarantee.
 homepage:           https://github.com/mithril-ir/mithril
 bug-reports:        https://github.com/mithril-ir/mithril/issues
 license:            Apache-2.0
@@ -122,23 +126,27 @@ library
     Mithril.CLI
     Mithril.Command.Validate
     Mithril.Core.Resolution
+    Mithril.Core.Typing
     Mithril.Core.Validation
 
   -- Mithril.Core.Internal.BundledSchema owns the compile-time-embedded
   -- bytes of core/schema.json; Report owns the frontend's diagnostic
   -- vocabulary; Decode owns the one JSON reading that produces the
-  -- decoded representation.  The representation itself sits in the
-  -- private core-internal sublibrary above.  None of these modules
-  -- may ever move to exposed-modules (nor the sublibrary to public
-  -- visibility): hiding them is what keeps external code from
-  -- constructing documents or resolved nodes, minting or coercing
-  -- identifiers, extracting the underlying payload, coercing one
-  -- pipeline stage into another, or validating against anything but
-  -- the canonical schema.
+  -- decoded representation; Typecheck owns the Core v0 static-typing
+  -- judgment over that representation.  The representation itself
+  -- sits in the private core-internal sublibrary above.  None of
+  -- these modules may ever move to exposed-modules (nor the
+  -- sublibrary to public visibility): hiding them is what keeps
+  -- external code from constructing documents or resolved nodes,
+  -- minting or coercing identifiers, extracting the underlying
+  -- payload, coercing one pipeline stage into another, reaching the
+  -- typechecker's internals, or validating against anything but the
+  -- canonical schema.
   other-modules:
     Mithril.Core.Internal.BundledSchema
     Mithril.Core.Internal.Decode
     Mithril.Core.Internal.Report
+    Mithril.Core.Internal.Typecheck
 
   -- template-haskell serves exactly one purpose: embedding
   -- core/schema.json into the library at compile time, so that no
@@ -175,6 +183,7 @@ test-suite mithril-ir-test
     Mithril.CoreModelTests
     Mithril.CoreRepresentationTests
     Mithril.CoreResolutionTests
+    Mithril.CoreTypingTests
     Mithril.CoreValidationTests
     Mithril.Test
     Mithril.TestEnv

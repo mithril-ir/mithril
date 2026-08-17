@@ -12,20 +12,22 @@
 -- it, while the package's own test suite and in-package probes can —
 -- that sublibrary is the one deliberate white-box seam.  The public
 -- surface consists exclusively of the abstract re-exports from
--- "Mithril.Core.Validation" and "Mithril.Core.Resolution".
+-- "Mithril.Core.Validation", "Mithril.Core.Resolution", and
+-- "Mithril.Core.Typing".
 --
 -- Keeping the constructor here — importable by the frontend stage
 -- modules, invisible to everything else — is what lets structural
--- validation and name resolution each perform their stage transition
--- while external code can neither construct a 'CoreDocument', nor
--- extract its underlying payload, nor coerce one stage index into
--- another.
+-- validation, name resolution, and static typing each perform their
+-- stage transition while external code can neither construct a
+-- 'CoreDocument', nor extract its underlying payload, nor coerce one
+-- stage index into another.
 module Mithril.Core.Internal.Document
   ( CoreDocument (..)
   , StagePayload
   , Parsed
   , StructurallyValid
   , Resolved
+  , Typed
   ) where
 
 import Data.Aeson (Value)
@@ -52,15 +54,30 @@ data StructurallyValid
 -- semantic or security property beyond name resolution.
 data Resolved
 
+-- | Type-level stage index: the resolved document additionally
+-- satisfies every Core v0 static-typing judgment — term, policy,
+-- effect, and result typing, operand compatibility, enum-order
+-- permutation validity, relation endpoint and payload compatibility,
+-- @CreateEntity@ initializer completeness and value typing, and
+-- guarantee well-typedness ("Mithril.Core.Typing" states the exact
+-- judgment).  This is an attestation about static types only: a
+-- @'CoreDocument' 'Typed'@ is /not/ normalized, not verified, and
+-- carries no semantic or security property beyond well-typedness —
+-- in particular no guarantee is established by it.
+data Typed
+
 -- | What a document at each stage carries.  The two syntactic stages
--- still hold the opaque parsed JSON value; the resolved stage holds
--- the explicit decoded and name-resolved Core representation — the
--- raw JSON is discarded at that boundary, so no later compiler stage
--- can be written over generic JSON.
+-- still hold the opaque parsed JSON value; the resolved and typed
+-- stages hold the explicit decoded and name-resolved Core
+-- representation — the raw JSON is discarded at the resolution
+-- boundary, so no later compiler stage can be written over generic
+-- JSON, and the typechecker adds a judgment over that same explicit
+-- model, not a second representation.
 type family StagePayload stage where
   StagePayload Parsed = Value
   StagePayload StructurallyValid = Value
   StagePayload Resolved = Model
+  StagePayload Typed = Model
 
 -- | A Mithril Core v0 document at a pipeline stage, opaque by design.
 --
@@ -72,9 +89,11 @@ type family StagePayload stage where
 -- value, or mint identifiers.  The only public producer of a
 -- @'CoreDocument' 'StructurallyValid'@ is structural validation
 -- against the compiled-in gated schema
--- ('Mithril.Core.Validation.validateCoreDocument'), and the only
--- public producer of a @'CoreDocument' 'Resolved'@ is
--- 'Mithril.Core.Resolution.resolveCoreDocument'.
+-- ('Mithril.Core.Validation.validateCoreDocument'), the only public
+-- producer of a @'CoreDocument' 'Resolved'@ is
+-- 'Mithril.Core.Resolution.resolveCoreDocument', and the only public
+-- producer of a @'CoreDocument' 'Typed'@ is
+-- 'Mithril.Core.Typing.typecheckCoreDocument'.
 newtype CoreDocument stage = CoreDocument (StagePayload stage)
 
 -- The stage index only appears under the 'StagePayload' family, which

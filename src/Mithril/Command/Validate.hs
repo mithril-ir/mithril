@@ -9,9 +9,10 @@
 -- stays a thin dispatcher.
 --
 -- The command establishes structural Core v0 validity plus complete
--- Core v0 name resolution — nothing more (see
--- "Mithril.Core.Validation" and "Mithril.Core.Resolution" for the
--- exact non-claims).
+-- Core v0 name resolution plus complete Core v0 static typing —
+-- nothing more (see "Mithril.Core.Validation",
+-- "Mithril.Core.Resolution", and "Mithril.Core.Typing" for the exact
+-- non-claims).
 module Mithril.Command.Validate
   ( ValidateFileError (..)
   , validateCoreFile
@@ -34,9 +35,15 @@ import System.IO.Error (ioeGetErrorString)
 import Mithril.Core.Resolution
   ( ResolutionFailure (..)
   , ResolutionViolation (..)
-  , Resolved
   , ResolverInvariantViolation (..)
   , resolveCoreDocument
+  )
+import Mithril.Core.Typing
+  ( TypeViolation (..)
+  , TypecheckerInvariantViolation (..)
+  , Typed
+  , TypingFailure (..)
+  , typecheckCoreDocument
   )
 import Mithril.Core.Validation
   ( CoreDocument
@@ -61,6 +68,9 @@ data ValidateFileError
   | -- | The user's file is structurally valid but has Core v0 name
     -- problems; violations are sorted and deduplicated.
     FileResolutionViolations FilePath (NonEmpty ResolutionViolation)
+  | -- | The user's file resolves but has Core v0 static-typing
+    -- problems; violations are sorted and deduplicated.
+    FileTypeViolations FilePath (NonEmpty TypeViolation)
   | -- | The schema compiled into the tool failed to parse or fell
     -- outside the supported profile — possible only when the
     -- @core/schema.json@ embedded at build time was itself broken.
@@ -70,22 +80,28 @@ data ValidateFileError
     -- document (schema\/resolver drift or a resolver bug).  This is
     -- an internal error of the tool, never a user-document problem.
     InternalResolverError (NonEmpty ResolverInvariantViolation)
+  | -- | The typechecker could not interpret the resolved
+    -- representation (frontend drift or a resolver\/typechecker
+    -- bug).  This is an internal error of the tool, never a
+    -- user-document problem.
+    InternalTypecheckerError (NonEmpty TypecheckerInvariantViolation)
   deriving (Eq, Show)
 
 -- | Read FILE, parse it as JSON, validate it structurally against the
--- compiled-in canonical Core v0 schema, and resolve every Core v0
--- name.
+-- compiled-in canonical Core v0 schema, resolve every Core v0 name,
+-- and typecheck the resolved document.
 --
 -- Expected failures — an unreadable file, malformed JSON, structural
--- violations, name-resolution violations, a broken compiled-in
--- schema, or a resolver-invariant failure — are returned in 'Left';
+-- violations, name-resolution violations, static-typing violations,
+-- a broken compiled-in schema, or a resolver- or
+-- typechecker-invariant failure — are returned in 'Left';
 -- 'IOException's from reading the user file are caught and
 -- classified.  The schema itself involves no run-time I\/O
 -- ('bundledCoreSchema' is pure), so no environment override can
 -- substitute it.
 validateCoreFile
   :: FilePath
-  -> IO (Either ValidateFileError (CoreDocument Resolved))
+  -> IO (Either ValidateFileError (CoreDocument Typed))
 validateCoreFile file =
   case bundledCoreSchema of
     Left schemaError -> pure (Left (InternalSchemaError schemaError))
@@ -111,12 +127,18 @@ validateCoreFile file =
                       Left (FileResolutionViolations file violations)
                     Left (ResolverInvariantViolations problems) ->
                       Left (InternalResolverError problems)
-                    Right resolvedDocument -> Right resolvedDocument
+                    Right resolvedDocument ->
+                      case typecheckCoreDocument resolvedDocument of
+                        Left (TypeViolations violations) ->
+                          Left (FileTypeViolations file violations)
+                        Left (TypecheckerInvariantViolations problems) ->
+                          Left (InternalTypecheckerError problems)
+                        Right typedDocument -> Right typedDocument
 
 -- | The single success line, for stdout.
 renderValidateSuccess :: FilePath -> Text
 renderValidateSuccess file =
-  displayPath file <> ": valid Mithril Core v0 through name resolution"
+  displayPath file <> ": valid Mithril Core v0 through static typing"
 
 -- | Render a failure for stderr.  The result has no trailing newline;
 -- print it with a newline-appending writer.  Rendering is pure and
@@ -150,6 +172,17 @@ renderValidateFailure failure =
               | violation <- NonEmpty.toList violations
               ]
         )
+    FileTypeViolations file violations ->
+      Text.intercalate
+        "\n"
+        ( (displayPath file <> ": invalid Mithril Core v0 static typing")
+            : [ "  "
+                  <> renderJsonPointer (typeViolationPath violation)
+                  <> ": "
+                  <> escapeControlChars (typeViolationMessage violation)
+              | violation <- NonEmpty.toList violations
+              ]
+        )
     InternalSchemaError schemaError ->
       case schemaError of
         SchemaParseError reason ->
@@ -178,22 +211,39 @@ renderValidateFailure failure =
               | problem <- NonEmpty.toList problems
               ]
         )
+    InternalTypecheckerError problems ->
+      Text.intercalate
+        "\n"
+        ( ( internalTypecheckerPrefix
+              <> "the name-resolved document does not match the"
+              <> " typechecker's Core v0 interpretation"
+          )
+            : [ "  "
+                  <> renderJsonPointer (typecheckerInvariantPath problem)
+                  <> ": "
+                  <> escapeControlChars (typecheckerInvariantMessage problem)
+              | problem <- NonEmpty.toList problems
+              ]
+        )
   where
     internalSchemaPrefix = "mithril: internal Core schema error: "
     internalResolverPrefix = "mithril: internal Core resolver error: "
+    internalTypecheckerPrefix = "mithril: internal Core typechecker error: "
 
 -- | Exit classification: user-input failures exit @1@; internal
--- compiled-in-schema and resolver failures exit @2@.  (Success exits
--- @0@ and is not a 'ValidateFileError'.)
+-- compiled-in-schema, resolver, and typechecker failures exit @2@.
+-- (Success exits @0@ and is not a 'ValidateFileError'.)
 failureExitCode :: ValidateFileError -> ExitCode
 failureExitCode failure =
   case failure of
     InternalSchemaError _ -> ExitFailure 2
     InternalResolverError _ -> ExitFailure 2
+    InternalTypecheckerError _ -> ExitFailure 2
     FileReadError _ _ -> ExitFailure 1
     FileParseError _ _ -> ExitFailure 1
     FileStructuralViolations _ _ -> ExitFailure 1
     FileResolutionViolations _ _ -> ExitFailure 1
+    FileTypeViolations _ _ -> ExitFailure 1
 
 -- | Deterministic rendering of a file path inside diagnostics.
 --

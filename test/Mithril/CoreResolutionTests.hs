@@ -61,6 +61,7 @@ import Mithril.Core.Resolution
   , normalizeResolutionViolations
   , resolveCoreDocument
   )
+import Mithril.Core.Typing (Typed)
 import Mithril.Core.Validation
   ( CoreDocument
   , CoreSchema
@@ -142,7 +143,7 @@ normalizationChecks =
 acmeResolutionChecks
   :: CoreSchema
   -> ByteString
-  -> Either ValidateFileError (CoreDocument Resolved)
+  -> Either ValidateFileError (CoreDocument Typed)
   -> [Check]
 acmeResolutionChecks schema acmeBytes acmeFileOutcome =
   [ check
@@ -159,12 +160,12 @@ acmeResolutionChecks schema acmeBytes acmeFileOutcome =
                   (resolveCoreDocument validDocument)
       )
   , check
-      "validateCoreFile resolves the Acme example"
-      (either (const False) hasResolvedStage acmeFileOutcome)
+      "validateCoreFile resolves (and then typechecks) the Acme example"
+      (either (const False) hasTypedStage acmeFileOutcome)
   , check
       "the success line is exactly as specified"
       ( renderValidateSuccess acmePath
-          == "examples/acme/acme.mir.json: valid Mithril Core v0 through name resolution"
+          == "examples/acme/acme.mir.json: valid Mithril Core v0 through static typing"
       )
   ]
 
@@ -173,6 +174,12 @@ acmeResolutionChecks schema acmeBytes acmeFileOutcome =
 -- typecheck.
 hasResolvedStage :: CoreDocument Resolved -> Bool
 hasResolvedStage _ = True
+
+-- | Compile-time witness that the file boundary now ends at the
+-- 'Typed' stage; using it on a merely resolved document does not
+-- typecheck.
+hasTypedStage :: CoreDocument Typed -> Bool
+hasTypedStage _ = True
 
 --------------------------------------------------------------------
 -- Name reuse that must be accepted
@@ -612,8 +619,10 @@ noCascadeChecks schema acme =
 
 -- | Structurally valid documents with no missing or ambiguous names
 -- that are intentionally ill-typed: resolution must accept every one
--- of them, because the checks they violate belong to the future
--- static typechecker.
+-- of them, because the checks they violate belong to the static
+-- typechecker — a separate later stage.  The paired regressions in
+-- "Mithril.CoreTypingTests" pin that the typechecker then rejects
+-- each of these same mutants, with exact paths and messages.
 separationChecks :: CoreSchema -> Value -> [Check]
 separationChecks schema acme =
   [ separationCheck

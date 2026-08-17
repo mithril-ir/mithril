@@ -12,9 +12,11 @@
 -- invalid documents stored as files are the deliberate fixtures under
 -- @test\/fixtures\/@ (shared with the process-level CLI tests), and
 -- the normative schema and example are never modified.
--- 'validateCoreFile' continues through name resolution, so its
--- successful outcomes here carry the 'Resolved' stage; the resolution
--- boundary itself is covered by "Mithril.CoreResolutionTests".
+-- 'validateCoreFile' continues through name resolution and static
+-- typing, so its successful outcomes here carry the 'Typed' stage;
+-- the resolution boundary itself is covered by
+-- "Mithril.CoreResolutionTests" and the typing boundary by
+-- "Mithril.CoreTypingTests".
 --
 -- The schema-provenance regressions at the end pin the review's
 -- substitution attack shut: pointing the Cabal data-directory
@@ -57,7 +59,7 @@ import Mithril.Command.Validate
   , renderValidateSuccess
   , validateCoreFile
   )
-import Mithril.Core.Resolution (Resolved)
+import Mithril.Core.Typing (Typed)
 import Mithril.Core.Validation
   ( CoreDocument
   , CoreSchema
@@ -464,7 +466,7 @@ schemaProfileChecks schemaOutcome =
 acmeChecks
   :: CoreSchema
   -> ByteString
-  -> Either ValidateFileError (CoreDocument Resolved)
+  -> Either ValidateFileError (CoreDocument Typed)
   -> [Check]
 acmeChecks schema acmeBytes acmeFileOutcome =
   [ check
@@ -488,7 +490,7 @@ acmeChecks schema acmeBytes acmeFileOutcome =
       )
   , check
       "validateCoreFile accepts the Acme example"
-      (either (const False) hasResolvedStage acmeFileOutcome)
+      (either (const False) hasTypedStage acmeFileOutcome)
   ]
 
 -- | Compile-time witness that a value sits at the
@@ -498,9 +500,9 @@ hasStructurallyValidStage :: CoreDocument StructurallyValid -> Bool
 hasStructurallyValidStage _ = True
 
 -- | Compile-time witness that a 'validateCoreFile' success now sits
--- at the 'Resolved' stage.
-hasResolvedStage :: CoreDocument Resolved -> Bool
-hasResolvedStage _ = True
+-- at the 'Typed' stage.
+hasTypedStage :: CoreDocument Typed -> Bool
+hasTypedStage _ = True
 
 --------------------------------------------------------------------
 -- Targeted invalid mutations (built in memory from pristine Acme)
@@ -754,14 +756,14 @@ diagnosticsChecks schema acme =
 --------------------------------------------------------------------
 
 commandChecks
-  :: Either ValidateFileError (CoreDocument Resolved)
-  -> Either ValidateFileError (CoreDocument Resolved)
+  :: Either ValidateFileError (CoreDocument Typed)
+  -> Either ValidateFileError (CoreDocument Typed)
   -> [Check]
 commandChecks missingFileOutcome readmeOutcome =
   [ check
       "the success line is exactly as specified"
       ( renderValidateSuccess acmePath
-          == "examples/acme/acme.mir.json: valid Mithril Core v0 through name resolution"
+          == "examples/acme/acme.mir.json: valid Mithril Core v0 through static typing"
       )
   , check
       "a missing file is classified as a read error"
@@ -853,12 +855,13 @@ commandChecks missingFileOutcome readmeOutcome =
 
 -- | The near-Core fixture must be rejected structurally — for the
 -- missing canonical root requirements @format@, @formatVersion@, and
--- @name@ — and can therefore never reach the resolver, let alone a
--- @'CoreDocument' 'Resolved'@, through the public pipeline.
+-- @name@ — and can therefore never reach the resolver or the
+-- typechecker, let alone a @'CoreDocument' 'Typed'@, through the
+-- public pipeline.
 nearCoreChecks
   :: CoreSchema
   -> ByteString
-  -> Either ValidateFileError (CoreDocument Resolved)
+  -> Either ValidateFileError (CoreDocument Typed)
   -> [Check]
 nearCoreChecks schema nearCoreBytes nearCoreOutcome =
   [ check
