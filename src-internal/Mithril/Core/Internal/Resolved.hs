@@ -5,8 +5,10 @@
 -- | __Internal module — never expose.__
 --
 -- The explicit resolved Core v0 representation: the payload of a
--- @'Mithril.Core.Validation.CoreDocument' 'Resolved'@ and the input
--- of the future typechecker.  It mirrors the decoded surface syntax
+-- @'Mithril.Core.Validation.CoreDocument' 'Resolved'@, the input of
+-- the static typechecker ("Mithril.Core.Internal.Typecheck"), and —
+-- unchanged, under the @Typed@ stage index — the payload the
+-- typechecker's judgment is about.  It mirrors the decoded surface syntax
 -- of "Mithril.Core.Internal.Syntax" construct for construct, with one
 -- systematic difference: every semantically meaningful name reference
 -- is a 'Ref' to a namespace-specific opaque identifier instead of
@@ -47,8 +49,9 @@
 -- again.
 --
 -- Every node and reference retains the 'SourcePath' it was decoded
--- from, so the future typechecker can report a problem at the
--- originating JSON location without rereading the raw JSON.
+-- from, so the typechecker (and every later stage) can report a
+-- problem at the originating JSON location without rereading the raw
+-- JSON.
 --
 -- Every model type has structural equality ('Eq') over exactly this
 -- content — identifiers, paths, and name metadata — which is what the
@@ -58,8 +61,11 @@
 -- A value of this model attests names only: declarations unique in
 -- their namespaces, every reference resolved in its correct
 -- namespace, and the narrow declared-type lookup behind @Attribute@
--- members.  It is untyped, unnormalized, unverified, and is not typed
--- normalized Core; it supports no security claim.
+-- members.  Whether it also satisfies the Core v0 typing judgment is
+-- carried by the document's stage index, never by the model value —
+-- the typechecker's verdict mints @Typed@ around this same model.
+-- Under either index it is unnormalized and unverified, is not typed
+-- normalized Core, and supports no security claim.
 module Mithril.Core.Internal.Resolved
   ( -- * Identifiers
     EntityId (..)
@@ -213,7 +219,7 @@ data AttributeType
 
 -- | A resolved enum declaration.  The optional order references the
 -- enum's own values by identifier; whether it is a complete
--- permutation remains a typechecker question.
+-- permutation is the typechecker's question, not resolution's.
 data EnumDefinition = EnumDefinition
   { enumDefinitionId :: EnumId
   , enumDefinitionPath :: SourcePath
@@ -315,8 +321,8 @@ deriving instance Eq (ActionShape availability)
 -- | A resolved @CreateEntity@ effect: the target entity and the
 -- initializers with their keys resolved against that entity's
 -- attribute namespace (in ascending key order; see the module
--- header).  Initializer completeness and value typing remain
--- typechecker questions.
+-- header).  Initializer completeness and value typing are the
+-- typechecker's questions, not resolution's.
 data CreateEntityEffect (availability :: ActorAvailability) =
   CreateEntityEffect
     { createEntityEffectPath :: SourcePath

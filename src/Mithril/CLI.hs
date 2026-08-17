@@ -7,8 +7,8 @@
 --
 -- The tool understands the self-describing invocations plus one real
 -- command: @validate FILE@, JSON parsing plus structural Core v0
--- validation plus complete name resolution.  No later compiler stage
--- exists yet.
+-- validation plus complete name resolution plus complete static
+-- typing.  No later compiler stage exists yet.
 module Mithril.CLI
   ( Command (..)
   , parseCommand
@@ -26,7 +26,8 @@ data Command
   | -- | Print the package version and exit successfully.
     ShowVersion
   | -- | Parse FILE, validate it structurally against the compiled-in
-    -- Core v0 schema, and resolve every Core v0 name.
+    -- Core v0 schema, resolve every Core v0 name, and typecheck the
+    -- resolved document.
     Validate FilePath
   deriving (Eq, Show)
 
@@ -114,16 +115,22 @@ renderHelp =
     , "  mithril -h             Print this help text."
     , "  mithril --version      Print the package version."
     , "  mithril validate FILE  Parse FILE as JSON, check it against the"
-    , "                         compiled-in Mithril Core v0 schema, and"
-    , "                         resolve every Core v0 name."
+    , "                         compiled-in Mithril Core v0 schema,"
+    , "                         resolve every Core v0 name, and typecheck"
+    , "                         the resolved document."
     , ""
     , "validate performs JSON parsing, structural Core v0 validation"
     , "against the supported profile of core/schema.json (compiled into"
-    , "the tool at build time), and complete Core v0 name resolution:"
+    , "the tool at build time), complete Core v0 name resolution:"
     , "declaration-name uniqueness in every namespace and resolution"
-    , "of every name reference in its namespace. It is"
+    , "of every name reference in its namespace, and complete Core v0"
+    , "static typing of the resolved document: term, policy, effect and"
+    , "result types, operand and relation-endpoint compatibility,"
+    , "enum-order permutation validity, initializer completeness, and"
+    , "guarantee well-typedness. It is"
     , "not semantic verification and not proof checking; it does not"
-    , "typecheck, normalize, verify guarantees, or generate anything."
+    , "normalize, evaluate policies, verify guarantees, or generate"
+    , "anything."
     , "No other compiler stage is implemented yet."
     ]
 

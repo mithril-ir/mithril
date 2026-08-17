@@ -8,7 +8,7 @@
 # cabal.project.probes, so hidden modules (including the private
 # core-internal sublibrary), abstract types, and nominal roles are
 # enforced exactly as any downstream consumer would experience them.
-# All nine downstream components carry the repository warning set
+# All twelve downstream components carry the repository warning set
 # with -Werror; this script verifies that from the generated build
 # plan, from probe.cabal, from every downstream probe source (no
 # module-level OPTIONS_GHC pragma may sidestep the command line),
@@ -77,7 +77,7 @@ fail() {
 
 # --- Downstream warning-policy verification ----------------------
 #
-# All nine downstream components — the control plus the eight attacks
+# All twelve downstream components — the control plus the eleven attacks
 # — must compile under the repository warning set with an EFFECTIVE
 # -Werror.  Four cooperating executable checks, using POSIX awk and
 # grep only (no optional tooling).  Three run once, right after the
@@ -174,7 +174,7 @@ if [ ! -f "$plan" ]; then
   fail "the downstream build plan was not generated at $plan"
 fi
 
-probe_components='probe-control probe-hidden-import probe-constructor-use probe-coerce-parsed probe-coerce-valid probe-coerce-value probe-hidden-resolved probe-hidden-syntax probe-extract-value'
+probe_components='probe-control probe-hidden-import probe-constructor-use probe-coerce-parsed probe-coerce-valid probe-coerce-value probe-hidden-resolved probe-hidden-syntax probe-extract-value probe-coerce-typed probe-hidden-typecheck probe-forge-typed'
 
 if ! awk -v names="$probe_components" '
   { buffer = buffer $0 }
@@ -229,7 +229,7 @@ echo "ok: the downstream plan and probe.cabal give every probe component the wer
 # command-line arguments, so a probe source could weaken the warning
 # policy invisibly to verify_policy.  Every downstream probe source —
 # all *.hs in test/api-probes/probe, the one shared hs-source-dirs of
-# all nine components — is therefore checked structurally before any
+# all twelve components — is therefore checked structurally before any
 # probe is accepted: the pragma's presence is rejected outright, with
 # no attempt to reconstruct GHC's post-pragma warning state.  Only a
 # real pragma opener ("{-#", then the pragma name, case-insensitive,
@@ -323,6 +323,18 @@ expect probe-extract-value \
   "match representation of type .{1,3}CoreDocument Resolved" \
   "with that of .{1,3}Value" \
   "newtype .{1,3}CoreDocument.{1,3} is not in scope"
+
+expect probe-coerce-typed \
+  "match type .{1,3}Resolved.{1,3} with .{1,3}Typed" \
+  "arising from a use of .{1,3}coerce"
+
+expect probe-hidden-typecheck \
+  "Could not load module" \
+  "Mithril\.Core\.Internal\.Typecheck" \
+  "it is a hidden module in the package .{1,3}mithril-ir-[0-9.]+"
+
+expect probe-forge-typed \
+  "Illegal term-level use of the type constructor .{1,3}CoreDocument"
 
 # --- In-package identifier non-coercion probes -------------------
 #

@@ -7,7 +7,7 @@ description:
   exactly as an external package would write them (depending on
   mithril-ir as an external package, never by adding its src/ to a
   module search path).  One executable — probe-control — is the
-  legitimate external-consumer control and must COMPILE; the eight
+  legitimate external-consumer control and must COMPILE; the eleven
   attack executables must each FAIL to compile for their intended
   boundary reason.  The driver test/api-probes/run-api-probes.sh
   builds them one by one and treats a failing control, a compiling
@@ -27,10 +27,11 @@ flag werror
   manual:      True
   default:     False
 
--- Every probe component — the control and the eight attacks —
--- imports this stanza, so all nine compile under the same warning set
--- as the repository's own components, with -Werror active; the driver
--- verifies both from the generated build plan and from this file.
+-- Every probe component — the control and the eleven attacks —
+-- imports this stanza, so all twelve compile under the same warning
+-- set as the repository's own components, with -Werror active; the
+-- driver verifies both from the generated build plan and from this
+-- file.
 common probe
   default-language: GHC2021
   hs-source-dirs:   .
@@ -106,3 +107,21 @@ executable probe-hidden-syntax
 executable probe-extract-value
   import:  probe
   main-is: ExtractValue.hs
+
+-- Attack 9: coerce a Resolved document to Typed, bypassing the
+-- static typechecker.
+executable probe-coerce-typed
+  import:  probe
+  main-is: CoerceTyped.hs
+
+-- Attack 10: import the hidden module that owns the Core v0 static
+-- typechecker.
+executable probe-hidden-typecheck
+  import:  probe
+  main-is: HiddenTypecheck.hs
+
+-- Attack 11: forge a Typed document with the CoreDocument
+-- constructor.
+executable probe-forge-typed
+  import:  probe
+  main-is: ForgeTyped.hs

@@ -102,8 +102,9 @@ expectationChecks expectation = do
 -- write only to stdout; every user-input failure exits 1 and writes
 -- only to stderr.  (The internal-error exit 2 does not appear here:
 -- with the schema compiled in and gated at build time, no public
--- invocation can construct an internal schema or resolver error, so
--- that classification stays pinned by unit tests over its pure seam.)
+-- invocation can construct an internal schema, resolver, or
+-- typechecker error, so those classifications stay pinned by unit
+-- tests over their pure seams.)
 expectations :: [CliExpectation]
 expectations =
   [ CliExpectation
@@ -142,7 +143,7 @@ expectations =
       , cliArgs = ["validate", acmePath]
       , cliExit = ExitSuccess
       , cliStdout =
-          "examples/acme/acme.mir.json: valid Mithril Core v0 through name resolution\n"
+          "examples/acme/acme.mir.json: valid Mithril Core v0 through static typing\n"
       , cliStderr = ""
       }
   , CliExpectation
@@ -172,6 +173,17 @@ expectations =
       , cliStderr =
           "test/fixtures/unknown-name.mir.json: invalid Mithril Core v0 name resolution\n\
           \  /guarantees/2/authority/payloadOrder: unknown enum \"Ghost\"\n"
+      }
+  , CliExpectation
+      { -- The deliberately ill-typed (but resolvable) coverage
+        -- fixture: rejected by the static-typing stage with exactly
+        -- its independent type violations — sorted, deduplicated,
+        -- and free of dependent cascades — never as a name problem.
+        cliName = "validate rejects the ill-typed coverage fixture at static typing"
+      , cliArgs = ["validate", "test/fixtures/coverage.mir.json"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr = coverageTypingStderr
       }
   , CliExpectation
       { cliName = "validate reports a nonexistent input"
@@ -255,6 +267,23 @@ nearCoreStderr =
   \  /: Missing required property: formatVersion\n\
   \  /: Missing required property: name\n"
 
+-- | The exact static-typing rejection of the coverage fixture: every
+-- deliberately ill-typed construct it carries — an operand mismatch
+-- in each principal-mode family, a lookup arity mismatch (with no
+-- cascaded per-endpoint errors), a non-entity Observe term, a
+-- missing guarantee scope term, and the doubly incompatible
+-- payload-order enum — sorted by path then message, nothing else.
+coverageTypingStderr :: String
+coverageTypingStderr =
+  "test/fixtures/coverage.mir.json: invalid Mithril Core v0 static typing\n\
+  \  /actions/0/allow/right/right: the operands of \"Equal\" have incompatible types: Optional Unit and Bool\n\
+  \  /actions/6/allow/anonymous/left/right/value/value: relation \"Flagged\" declares 1 endpoint, but 2 endpoint terms are given\n\
+  \  /actions/6/allow/anonymous/right: the operands of \"Equal\" have incompatible types: Optional (Enum \"Level\") and Optional Unit\n\
+  \  /actions/6/result/entity: an \"Observe\" result must observe an entity reference, but this term has type Bool\n\
+  \  /guarantees/2/cases/1: this case names no scope term, but the authority declares the scope endpoint \"organization\"\n\
+  \  /guarantees/3/authority/payloadOrder: enum \"Badge\" declares no order, so it cannot rank authority levels\n\
+  \  /guarantees/3/authority/payloadOrder: relation \"Flagged\" has a Unit payload, so enum \"Badge\" cannot rank its authority levels\n"
+
 -- | The substitution attack against the real process: a hostile
 -- @mithril_ir_datadir@ pointing at an in-profile permissive schema
 -- must change nothing — the Acme document still validates, and the
@@ -278,7 +307,7 @@ datadirOverrideChecks = do
           "hostile datadir override: Acme still validates with exit 0"
           ( acmeTriple
               == ( ExitSuccess
-                 , "examples/acme/acme.mir.json: valid Mithril Core v0 through name resolution\n"
+                 , "examples/acme/acme.mir.json: valid Mithril Core v0 through static typing\n"
                  , ""
                  )
           )

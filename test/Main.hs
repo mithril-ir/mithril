@@ -6,7 +6,8 @@
 -- "Mithril.CoreRepresentationTests" (the explicit resolved
 -- representation through the public pipeline),
 -- "Mithril.CoreModelTests" (white-box inspection of the real resolved
--- model through the package-private sublibrary), and
+-- model through the package-private sublibrary),
+-- "Mithril.CoreTypingTests" (static-typing boundary), and
 -- "Mithril.CLIProcessTests" (the real executable as a process).
 module Main
   ( main
@@ -17,6 +18,7 @@ import qualified Mithril.CLITests
 import qualified Mithril.CoreModelTests
 import qualified Mithril.CoreRepresentationTests
 import qualified Mithril.CoreResolutionTests
+import qualified Mithril.CoreTypingTests
 import qualified Mithril.CoreValidationTests
 import Mithril.Test (runGroups)
 
@@ -28,5 +30,6 @@ main =
     , ("Core resolution", Mithril.CoreResolutionTests.tests)
     , ("Core representation", Mithril.CoreRepresentationTests.tests)
     , ("Core model", Mithril.CoreModelTests.tests)
+    , ("Core typing", Mithril.CoreTypingTests.tests)
     , ("CLI process", Mithril.CLIProcessTests.tests)
     ]
