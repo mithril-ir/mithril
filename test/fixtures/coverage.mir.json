@@ -1,0 +1,796 @@
+{
+  "format": "mithril-core",
+  "formatVersion": "0",
+  "name": "Coverage",
+  "schema": {
+    "entities": [
+      {
+        "name": "User",
+        "attributes": [
+          {
+            "name": "active",
+            "type": {
+              "kind": "Bool"
+            }
+          },
+          {
+            "name": "level",
+            "type": {
+              "kind": "Enum",
+              "enum": "Level"
+            }
+          },
+          {
+            "name": "sponsor",
+            "type": {
+              "kind": "EntityRef",
+              "entity": "User"
+            }
+          }
+        ]
+      },
+      {
+        "name": "Organization",
+        "attributes": [
+          {
+            "name": "owner",
+            "type": {
+              "kind": "EntityRef",
+              "entity": "User"
+            }
+          }
+        ]
+      },
+      {
+        "name": "Project",
+        "attributes": [
+          {
+            "name": "organization",
+            "type": {
+              "kind": "EntityRef",
+              "entity": "Organization"
+            }
+          }
+        ]
+      }
+    ],
+    "enums": [
+      {
+        "name": "Level",
+        "values": [
+          "Low",
+          "High"
+        ],
+        "order": [
+          "Low",
+          "High"
+        ]
+      },
+      {
+        "name": "Badge",
+        "values": [
+          "Star"
+        ]
+      }
+    ],
+    "relations": [
+      {
+        "name": "Membership",
+        "endpoints": [
+          {
+            "name": "user",
+            "entity": "User"
+          },
+          {
+            "name": "organization",
+            "entity": "Organization"
+          }
+        ],
+        "payload": {
+          "kind": "Enum",
+          "enum": "Level"
+        }
+      },
+      {
+        "name": "Flagged",
+        "endpoints": [
+          {
+            "name": "subject",
+            "entity": "User"
+          }
+        ],
+        "payload": {
+          "kind": "Unit"
+        }
+      }
+    ]
+  },
+  "actions": [
+    {
+      "name": "Project.read",
+      "parameters": [
+        {
+          "name": "project",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Project"
+          }
+        },
+        {
+          "name": "flag",
+          "type": {
+            "kind": "Bool"
+          }
+        },
+        {
+          "name": "token",
+          "type": {
+            "kind": "Unit"
+          }
+        },
+        {
+          "name": "level",
+          "type": {
+            "kind": "Enum",
+            "enum": "Level"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Read",
+      "allow": {
+        "kind": "And",
+        "left": {
+          "kind": "Or",
+          "left": {
+            "kind": "Equal",
+            "left": {
+              "kind": "Argument",
+              "name": "flag"
+            },
+            "right": {
+              "kind": "Bool",
+              "value": true
+            }
+          },
+          "right": {
+            "kind": "Not",
+            "value": {
+              "kind": "IsSome",
+              "value": {
+                "kind": "Lookup",
+                "relation": "Flagged",
+                "endpoints": [
+                  {
+                    "kind": "Actor"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "right": {
+          "kind": "And",
+          "left": {
+            "kind": "LessOrEqual",
+            "left": {
+              "kind": "Some",
+              "value": {
+                "kind": "Enum",
+                "enum": "Level",
+                "value": "Low"
+              }
+            },
+            "right": {
+              "kind": "Lookup",
+              "relation": "Membership",
+              "endpoints": [
+                {
+                  "kind": "Actor"
+                },
+                {
+                  "kind": "Attribute",
+                  "source": {
+                    "kind": "Argument",
+                    "name": "project"
+                  },
+                  "attribute": "organization"
+                }
+              ]
+            }
+          },
+          "right": {
+            "kind": "Equal",
+            "left": {
+              "kind": "None",
+              "payloadType": {
+                "kind": "Unit"
+              }
+            },
+            "right": {
+              "kind": "Equal",
+              "left": {
+                "kind": "Unit"
+              },
+              "right": {
+                "kind": "Argument",
+                "name": "token"
+              }
+            }
+          }
+        }
+      },
+      "effect": {
+        "kind": "NoChange"
+      },
+      "result": {
+        "kind": "Observe",
+        "entity": {
+          "kind": "Attribute",
+          "source": {
+            "kind": "Attribute",
+            "source": {
+              "kind": "Argument",
+              "name": "project"
+            },
+            "attribute": "organization"
+          },
+          "attribute": "owner"
+        }
+      }
+    },
+    {
+      "name": "User.invite",
+      "parameters": [
+        {
+          "name": "level",
+          "type": {
+            "kind": "Enum",
+            "enum": "Level"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "Bool",
+        "value": true
+      },
+      "effect": {
+        "kind": "CreateEntity",
+        "entity": "User",
+        "attributes": {
+          "active": {
+            "kind": "Bool",
+            "value": true
+          },
+          "level": {
+            "kind": "Argument",
+            "name": "level"
+          },
+          "sponsor": {
+            "kind": "Actor"
+          }
+        }
+      },
+      "result": {
+        "kind": "Created"
+      }
+    },
+    {
+      "name": "User.purge",
+      "parameters": [
+        {
+          "name": "target",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "Not",
+        "value": {
+          "kind": "Equal",
+          "left": {
+            "kind": "Actor"
+          },
+          "right": {
+            "kind": "Argument",
+            "name": "target"
+          }
+        }
+      },
+      "effect": {
+        "kind": "DeleteEntity",
+        "target": {
+          "kind": "Argument",
+          "name": "target"
+        }
+      },
+      "result": {
+        "kind": "Done"
+      }
+    },
+    {
+      "name": "Membership.set",
+      "parameters": [
+        {
+          "name": "target",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        },
+        {
+          "name": "organization",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Organization"
+          }
+        },
+        {
+          "name": "level",
+          "type": {
+            "kind": "Enum",
+            "enum": "Level"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "IsSome",
+        "value": {
+          "kind": "Lookup",
+          "relation": "Membership",
+          "endpoints": [
+            {
+              "kind": "Actor"
+            },
+            {
+              "kind": "Argument",
+              "name": "organization"
+            }
+          ]
+        }
+      },
+      "effect": {
+        "kind": "SetRelation",
+        "relation": "Membership",
+        "endpoints": [
+          {
+            "kind": "Argument",
+            "name": "target"
+          },
+          {
+            "kind": "Argument",
+            "name": "organization"
+          }
+        ],
+        "payload": {
+          "kind": "Argument",
+          "name": "level"
+        }
+      },
+      "result": {
+        "kind": "Done"
+      }
+    },
+    {
+      "name": "User.unflag",
+      "parameters": [
+        {
+          "name": "target",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "Bool",
+        "value": true
+      },
+      "effect": {
+        "kind": "RemoveRelation",
+        "relation": "Flagged",
+        "endpoints": [
+          {
+            "kind": "Argument",
+            "name": "target"
+          }
+        ]
+      },
+      "result": {
+        "kind": "Done"
+      }
+    },
+    {
+      "name": "User.touch",
+      "parameters": [],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "Bool",
+        "value": true
+      },
+      "effect": {
+        "kind": "NoChange"
+      },
+      "result": {
+        "kind": "Done"
+      }
+    },
+    {
+      "name": "Status.ping",
+      "parameters": [
+        {
+          "name": "flag",
+          "type": {
+            "kind": "Bool"
+          }
+        }
+      ],
+      "principalMode": "AnyPrincipal",
+      "classification": "Read",
+      "allow": {
+        "anonymous": {
+          "kind": "Or",
+          "left": {
+            "kind": "And",
+            "left": {
+              "kind": "LessOrEqual",
+              "left": {
+                "kind": "Enum",
+                "enum": "Level",
+                "value": "Low"
+              },
+              "right": {
+                "kind": "Enum",
+                "enum": "Level",
+                "value": "High"
+              }
+            },
+            "right": {
+              "kind": "Not",
+              "value": {
+                "kind": "IsSome",
+                "value": {
+                  "kind": "Lookup",
+                  "relation": "Flagged",
+                  "endpoints": [
+                    {
+                      "kind": "Argument",
+                      "name": "flag"
+                    },
+                    {
+                      "kind": "Bool",
+                      "value": false
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "right": {
+            "kind": "Equal",
+            "left": {
+              "kind": "None",
+              "payloadType": {
+                "kind": "Enum",
+                "enum": "Level"
+              }
+            },
+            "right": {
+              "kind": "Some",
+              "value": {
+                "kind": "Unit"
+              }
+            }
+          }
+        },
+        "authenticated": {
+          "kind": "IsSome",
+          "value": {
+            "kind": "Lookup",
+            "relation": "Flagged",
+            "endpoints": [
+              {
+                "kind": "Actor"
+              }
+            ]
+          }
+        }
+      },
+      "effect": {
+        "kind": "NoChange"
+      },
+      "result": {
+        "kind": "Observe",
+        "entity": {
+          "kind": "Argument",
+          "name": "flag"
+        }
+      }
+    },
+    {
+      "name": "Organization.register",
+      "parameters": [
+        {
+          "name": "founder",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        }
+      ],
+      "principalMode": "AnyPrincipal",
+      "classification": "Mutation",
+      "allow": {
+        "anonymous": {
+          "kind": "Bool",
+          "value": true
+        },
+        "authenticated": {
+          "kind": "Bool",
+          "value": true
+        }
+      },
+      "effect": {
+        "kind": "CreateEntity",
+        "entity": "Organization",
+        "attributes": {
+          "owner": {
+            "kind": "Argument",
+            "name": "founder"
+          }
+        }
+      },
+      "result": {
+        "kind": "Created"
+      }
+    },
+    {
+      "name": "Membership.expire",
+      "parameters": [
+        {
+          "name": "target",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        },
+        {
+          "name": "organization",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Organization"
+          }
+        }
+      ],
+      "principalMode": "AnyPrincipal",
+      "classification": "Mutation",
+      "allow": {
+        "anonymous": {
+          "kind": "Bool",
+          "value": true
+        },
+        "authenticated": {
+          "kind": "Bool",
+          "value": true
+        }
+      },
+      "effect": {
+        "kind": "SetRelation",
+        "relation": "Membership",
+        "endpoints": [
+          {
+            "kind": "Argument",
+            "name": "target"
+          },
+          {
+            "kind": "Argument",
+            "name": "organization"
+          }
+        ],
+        "payload": {
+          "kind": "Enum",
+          "enum": "Level",
+          "value": "Low"
+        }
+      },
+      "result": {
+        "kind": "Done"
+      }
+    },
+    {
+      "name": "User.forget",
+      "parameters": [
+        {
+          "name": "target",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        }
+      ],
+      "principalMode": "AnyPrincipal",
+      "classification": "Mutation",
+      "allow": {
+        "anonymous": {
+          "kind": "Bool",
+          "value": true
+        },
+        "authenticated": {
+          "kind": "Bool",
+          "value": true
+        }
+      },
+      "effect": {
+        "kind": "DeleteEntity",
+        "target": {
+          "kind": "Argument",
+          "name": "target"
+        }
+      },
+      "result": {
+        "kind": "Done"
+      }
+    },
+    {
+      "name": "User.unmark",
+      "parameters": [
+        {
+          "name": "target",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        }
+      ],
+      "principalMode": "AnyPrincipal",
+      "classification": "Mutation",
+      "allow": {
+        "anonymous": {
+          "kind": "Bool",
+          "value": true
+        },
+        "authenticated": {
+          "kind": "Bool",
+          "value": true
+        }
+      },
+      "effect": {
+        "kind": "RemoveRelation",
+        "relation": "Flagged",
+        "endpoints": [
+          {
+            "kind": "Argument",
+            "name": "target"
+          }
+        ]
+      },
+      "result": {
+        "kind": "Done"
+      }
+    },
+    {
+      "name": "Status.noop",
+      "parameters": [],
+      "principalMode": "AnyPrincipal",
+      "classification": "Mutation",
+      "allow": {
+        "anonymous": {
+          "kind": "Bool",
+          "value": true
+        },
+        "authenticated": {
+          "kind": "Bool",
+          "value": true
+        }
+      },
+      "effect": {
+        "kind": "NoChange"
+      },
+      "result": {
+        "kind": "Done"
+      }
+    }
+  ],
+  "guarantees": [
+    {
+      "kind": "AuthenticatedMutation",
+      "target": {
+        "classification": "Mutation"
+      }
+    },
+    {
+      "kind": "TenantIsolation",
+      "cases": [
+        {
+          "action": "Project.read",
+          "tenant": {
+            "kind": "Attribute",
+            "source": {
+              "kind": "Argument",
+              "name": "project"
+            },
+            "attribute": "organization"
+          },
+          "protected": {
+            "kind": "Bool",
+            "value": true
+          },
+          "tenantAccess": {
+            "kind": "IsSome",
+            "value": {
+              "kind": "Lookup",
+              "relation": "Membership",
+              "endpoints": [
+                {
+                  "kind": "Actor"
+                },
+                {
+                  "kind": "Attribute",
+                  "source": {
+                    "kind": "Argument",
+                    "name": "project"
+                  },
+                  "attribute": "organization"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "NoSelfPrivilegeEscalation",
+      "authority": {
+        "relation": "Membership",
+        "subjectEndpoint": "user",
+        "scopeEndpoints": [
+          "organization"
+        ],
+        "absenceLevel": "Bottom",
+        "payloadOrder": "Level"
+      },
+      "cases": [
+        {
+          "action": "Membership.set",
+          "scope": [
+            {
+              "kind": "Argument",
+              "name": "organization"
+            }
+          ]
+        },
+        {
+          "action": "User.touch",
+          "scope": []
+        }
+      ]
+    },
+    {
+      "kind": "NoSelfPrivilegeEscalation",
+      "authority": {
+        "relation": "Flagged",
+        "subjectEndpoint": "subject",
+        "scopeEndpoints": [],
+        "absenceLevel": "Bottom",
+        "payloadOrder": "Badge"
+      },
+      "cases": [
+        {
+          "action": "User.unflag",
+          "scope": []
+        }
+      ]
+    }
+  ]
+}

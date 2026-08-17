@@ -1,7 +1,10 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | The second deterministic frontend boundary for Mithril Core v0:
--- complete name resolution.
+-- complete name resolution, producing the explicit internal resolved
+-- representation.
 --
 -- > structurally-valid opaque document
 -- >   -> complete name resolution          ('resolveCoreDocument')
@@ -28,6 +31,17 @@
 --    result terms, and every guarantee reference (case actions and
 --    their action-scoped terms, and the @NoSelfPrivilegeEscalation@
 --    authority relation, endpoints, and payload-order enum).
+--
+-- Internally the stage is one frontend interpretation in two passes:
+-- "Mithril.Core.Internal.Decode" decodes the structurally valid JSON
+-- into the explicit surface syntax (source paths and symbolic
+-- references; the only place that reads JSON), and this module builds
+-- the namespaces over that syntax and resolves every symbolic
+-- reference, producing the identifier-based resolved model of
+-- "Mithril.Core.Internal.Resolved".  On success the raw JSON value is
+-- discarded: a @'CoreDocument' 'Resolved'@ carries the resolved model,
+-- not an Aeson @Value@, so no later compiler stage can reinterpret
+-- raw JSON or rebuild name resolution.
 --
 -- The only typing-like work in this stage is the narrow declared-type
 -- lookup needed to select the entity-local namespace of an
@@ -63,13 +77,12 @@
 -- cascade.
 --
 -- Shapes that structural validation cannot produce indicate
--- schema\/resolver drift or a resolver bug, never a user error.  They
--- are 'ResolverInvariantViolation's, kept separate from semantic
--- violations, and they dominate: if any invariant violation is
--- observed, the resolver no longer trusts its interpretation of the
--- document and reports 'ResolverInvariantViolations' even when
--- ordinary name problems were also seen.  The resolver never throws
--- for either failure kind.
+-- schema\/frontend drift or a decoder\/resolver bug, never a user
+-- error.  They are 'ResolverInvariantViolation's, kept separate from
+-- semantic violations, and they dominate: if the decoder cannot
+-- interpret the document, the frontend no longer trusts its reading
+-- and reports 'ResolverInvariantViolations' without attempting name
+-- resolution.  Neither pass ever throws.
 module Mithril.Core.Resolution
   ( -- * Pipeline stage
     Resolved
@@ -86,84 +99,102 @@ module Mithril.Core.Resolution
   , normalizeResolutionViolations
   ) where
 
-import Data.Aeson (Value (..))
-import qualified Data.Aeson.Key as Key
-import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Foldable (toList)
 import Data.List (sort)
-import Data.List.NonEmpty (NonEmpty)
+import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
-import qualified Data.Text as Text
 
+import Mithril.Core.Internal.Decode (decodeCoreValue)
 import Mithril.Core.Internal.Document
   ( CoreDocument (..)
   , Resolved
   , StructurallyValid
   )
+import Mithril.Core.Internal.Report
+  ( Collect
+  , ResolutionViolation (..)
+  , ResolverInvariantViolation (..)
+  , quoted
+  , refuse
+  , reporting
+  , runCollect
+  , suppressed
+  , violationAt
+  )
+import qualified Mithril.Core.Internal.Resolved as Resolved
+import Mithril.Core.Internal.SourcePath
+  ( SourcePath
+  , Sourced (..)
+  , sourcePathSegments
+  )
+import Mithril.Core.Internal.Syntax
+  ( OneOrTwo (..)
+  , distinguishedUserEntity
+  )
+import qualified Mithril.Core.Internal.Syntax as Syntax
 import Mithril.Core.Validation (renderJsonPointer)
-
--- | One name-resolution violation in the user's document: a duplicate
--- declaration name or an unresolvable name reference.
-data ResolutionViolation = ResolutionViolation
-  { resolutionViolationPath :: [Text]
-    -- ^ Instance path of the failing name site, as raw (unescaped)
-    -- segments; render with 'renderJsonPointer'.
-  , resolutionViolationMessage :: Text
-    -- ^ Description of the violation, with every referenced name
-    -- quoted.
-  }
-  deriving (Eq, Ord, Show)
-
--- | One resolver-invariant violation: a shape the resolver cannot
--- interpret even though the document passed structural validation.
--- This is evidence of schema\/resolver drift or a resolver bug — an
--- internal error of the @mithril@ tool, never a problem with the
--- user's document.
-data ResolverInvariantViolation = ResolverInvariantViolation
-  { resolverInvariantPath :: [Text]
-    -- ^ Instance path of the uninterpretable shape, as raw segments;
-    -- render with 'renderJsonPointer'.
-  , resolverInvariantMessage :: Text
-    -- ^ Description of the expectation that failed.
-  }
-  deriving (Eq, Ord, Show)
 
 -- | Why 'resolveCoreDocument' refused the stage transition.
 data ResolutionFailure
   = -- | The document has name problems.  The violations are sorted
     -- and deduplicated ('normalizeResolutionViolations').
     ResolutionViolations (NonEmpty ResolutionViolation)
-  | -- | The resolver hit shapes it cannot interpret.  This
-    -- classification dominates: it is reported even if ordinary name
-    -- problems were also observed, because the resolver can no longer
-    -- trust its interpretation of the document.  The violations are
-    -- sorted and deduplicated.
+  | -- | The frontend hit shapes it cannot interpret.  This
+    -- classification dominates: when the decoder cannot trust its
+    -- interpretation of the document, no ordinary name verdict is
+    -- reported.  The violations are sorted and deduplicated.
     ResolverInvariantViolations (NonEmpty ResolverInvariantViolation)
   deriving (Eq, Show)
 
--- | Resolve every Core v0 name site of a structurally valid document.
+-- | Resolve every Core v0 name site of a structurally valid document
+-- and construct the explicit resolved representation.
 --
 -- Pure and deterministic: the same document always produces the same
--- result, with violations aggregated across independent sites, sorted,
--- and deduplicated.  On success the document — its JSON value
--- unchanged — is attested as 'Resolved'; this function is the only
+-- result, with violations aggregated across independent sites,
+-- sorted, and deduplicated.  On success the document is carried as
+-- the internal decoded and name-resolved Core model — the raw JSON
+-- value is discarded at this boundary — and this function is the only
 -- public producer of a @'CoreDocument' 'Resolved'@.
 resolveCoreDocument
   :: CoreDocument StructurallyValid
   -> Either ResolutionFailure (CoreDocument Resolved)
 resolveCoreDocument (CoreDocument documentValue) =
-  case NonEmpty.nonEmpty (normalizeInvariantViolations invariants) of
-    Just someInvariants -> Left (ResolverInvariantViolations someInvariants)
-    Nothing ->
-      case NonEmpty.nonEmpty (normalizeResolutionViolations violations) of
-        Just someViolations -> Left (ResolutionViolations someViolations)
-        Nothing -> Right (CoreDocument documentValue)
-  where
-    (violations, invariants) = resolveDocumentValue documentValue
+  case runCollect (decodeCoreValue documentValue) of
+    (invariantProblems, decodedDocument) ->
+      case NonEmpty.nonEmpty (normalizeInvariantViolations invariantProblems) of
+        Just someInvariants -> Left (ResolverInvariantViolations someInvariants)
+        Nothing ->
+          case decodedDocument of
+            Nothing -> Left (internalCompletenessFailure "schema decoder")
+            Just document ->
+              case runCollect (resolveDocument document) of
+                (violations, resolvedModel) ->
+                  case NonEmpty.nonEmpty (normalizeResolutionViolations violations) of
+                    Just someViolations ->
+                      Left (ResolutionViolations someViolations)
+                    Nothing ->
+                      case resolvedModel of
+                        Nothing -> Left (internalCompletenessFailure "name resolver")
+                        Just model -> Right (CoreDocument model)
+
+-- | The totality net: a pass that produced neither a result nor a
+-- diagnostic is an implementation bug, classified as an internal
+-- invariant failure rather than swallowed or thrown.  Unreachable
+-- when decoder and resolver uphold their contract that every missing
+-- result traces to a reported problem.
+internalCompletenessFailure :: Text -> ResolutionFailure
+internalCompletenessFailure passName =
+  ResolverInvariantViolations
+    ( ResolverInvariantViolation
+        []
+        ("the " <> passName <> " produced neither a result nor a diagnostic")
+        :| []
+    )
 
 -- | Deterministically sort resolution violations (by path, then
 -- message) and remove duplicates.  This is the exact normalization
@@ -177,124 +208,21 @@ normalizeInvariantViolations
 normalizeInvariantViolations = map NonEmpty.head . NonEmpty.group . sort
 
 --------------------------------------------------------------------
--- Internal: report accumulation
+-- Internal: resolution computations
 --------------------------------------------------------------------
 
--- | Accumulated reports of one walk: semantic violations and
--- invariant violations, in traversal order (normalized at the end).
-type Reports = ([ResolutionViolation], [ResolverInvariantViolation])
+-- | A resolution step: aggregates name violations while building a
+-- resolved node.  'suppressed' marks a dependent site whose root
+-- problem is already reported elsewhere.
+type Resolve a = Collect ResolutionViolation a
 
--- | One semantic violation as a report.
-violationAt :: [Text] -> Text -> Reports
-violationAt path message = ([ResolutionViolation path message], [])
+-- | Fail with one violation at a source path.
+refuseAt :: SourcePath -> Text -> Resolve a
+refuseAt path message = refuse (violationAt path message)
 
--- | One invariant violation as a report.
-invariantAt :: [Text] -> Text -> Reports
-invariantAt path message = ([], [ResolverInvariantViolation path message])
-
--- | Quote a document-supplied name for a diagnostic.  'show' on
--- 'Text' renders a double-quoted string literal with any unusual
--- character escaped, so no name can smuggle line breaks or terminal
--- controls into a message.
-quoted :: Text -> Text
-quoted = Text.pack . show
-
--- | Array index as a raw path segment.
-showIndex :: Int -> Text
-showIndex = Text.pack . show
-
---------------------------------------------------------------------
--- Internal: total shape access (failures are invariant violations)
---------------------------------------------------------------------
-
--- | The JSON type of a value, for invariant messages.
-jsonTypeName :: Value -> Text
-jsonTypeName value =
-  case value of
-    Object _ -> "an object"
-    Array _ -> "an array"
-    String _ -> "a string"
-    Number _ -> "a number"
-    Bool _ -> "a boolean"
-    Null -> "null"
-
-requireObject :: [Text] -> Value -> Either Reports (KeyMap.KeyMap Value)
-requireObject path value =
-  case value of
-    Object members -> Right members
-    _ ->
-      Left
-        ( invariantAt
-            path
-            ("expected a JSON object, found " <> jsonTypeName value)
-        )
-
-requireArray :: [Text] -> Value -> Either Reports [(Int, Value)]
-requireArray path value =
-  case value of
-    Array items -> Right (zip [0 ..] (foldr (:) [] items))
-    _ ->
-      Left
-        ( invariantAt
-            path
-            ("expected a JSON array, found " <> jsonTypeName value)
-        )
-
-requireText :: [Text] -> Value -> Either Reports Text
-requireText path value =
-  case value of
-    String text -> Right text
-    _ ->
-      Left
-        ( invariantAt
-            path
-            ("expected a JSON string, found " <> jsonTypeName value)
-        )
-
-requireMember
-  :: [Text] -> KeyMap.KeyMap Value -> Text -> Either Reports Value
-requireMember path members name =
-  case KeyMap.lookup (Key.fromText name) members of
-    Just value -> Right value
-    Nothing ->
-      Left
-        ( invariantAt
-            (path <> [name])
-            ("required member " <> quoted name <> " is missing")
-        )
-
--- | A required member that must be a string.
-textMember :: [Text] -> KeyMap.KeyMap Value -> Text -> Either Reports Text
-textMember path members name =
-  requireMember path members name >>= requireText (path <> [name])
-
--- | Continue with an object, or report the shape invariant.
-withObject_ :: [Text] -> Value -> (KeyMap.KeyMap Value -> Reports) -> Reports
-withObject_ path value continue = either id continue (requireObject path value)
-
--- | Continue with a required member, or report the shape invariant.
-withMember_
-  :: [Text] -> KeyMap.KeyMap Value -> Text -> (Value -> Reports) -> Reports
-withMember_ path members name continue =
-  either id continue (requireMember path members name)
-
--- | Continue with a required string member, or report the invariant.
-withTextMember
-  :: [Text] -> KeyMap.KeyMap Value -> Text -> (Text -> Reports) -> Reports
-withTextMember path members name continue =
-  either id continue (textMember path members name)
-
--- | Continue with a required array member (items indexed), or report
--- the invariant.
-withArrayMember
-  :: [Text]
-  -> KeyMap.KeyMap Value
-  -> Text
-  -> ([(Int, Value)] -> Reports)
-  -> Reports
-withArrayMember path members name continue =
-  withMember_ path members name $ \value ->
-    either id continue (requireArray (path <> [name]) value)
+-- | Render a source path as a JSON pointer for duplicate messages.
+renderPointer :: SourcePath -> Text
+renderPointer = renderJsonPointer . sourcePathSegments
 
 --------------------------------------------------------------------
 -- Internal: namespaces
@@ -330,15 +258,15 @@ buildNamespace
   :: (Text -> Text -> Text)
   -- ^ Duplicate message: the name and the rendered pointer of the
   -- first declaration's name field.
-  -> [(Text, [Text], a)]
-  -- ^ (name, path of the name field, payload) in declaration order.
-  -> (Reports, Namespace a)
-buildNamespace duplicateMessage = go mempty Map.empty emptyNamespace
+  -> [(Sourced Text, a)]
+  -- ^ (located name, payload) in declaration order.
+  -> ([ResolutionViolation], Namespace a)
+buildNamespace duplicateMessage = go [] Map.empty emptyNamespace
   where
     go reports firsts namespace entries =
       case entries of
         [] -> (reports, namespace)
-        (name, namePath, payload) : rest ->
+        (Sourced namePath name, payload) : rest ->
           case Map.lookup name firsts of
             Nothing ->
               go
@@ -352,9 +280,10 @@ buildNamespace duplicateMessage = go mempty Map.empty emptyNamespace
             Just firstPath ->
               go
                 ( reports
-                    <> violationAt
-                      namePath
-                      (duplicateMessage name (renderJsonPointer firstPath))
+                    <> [ violationAt
+                          namePath
+                          (duplicateMessage name (renderPointer firstPath))
+                       ]
                 )
                 firsts
                 namespace
@@ -363,1089 +292,884 @@ buildNamespace duplicateMessage = go mempty Map.empty emptyNamespace
                   }
                 rest
 
+-- | The duplicate message of a global namespace.
+globalDuplicateMessage :: Text -> Text -> Text -> Text
+globalDuplicateMessage namespaceLabel name firstPointer =
+  "duplicate "
+    <> namespaceLabel
+    <> " name "
+    <> quoted name
+    <> " (first declared at "
+    <> firstPointer
+    <> ")"
+
+-- | The duplicate message of an owner-local namespace.
+ownedDuplicateMessage :: Text -> Text -> Text -> Text -> Text -> Text
+ownedDuplicateMessage memberLabel ownerLabel ownerName name firstPointer =
+  "duplicate "
+    <> memberLabel
+    <> " name "
+    <> quoted name
+    <> " in "
+    <> ownerLabel
+    <> " "
+    <> quoted ownerName
+    <> " (first declared at "
+    <> firstPointer
+    <> ")"
+
 --------------------------------------------------------------------
 -- Internal: declaration indexes
 --------------------------------------------------------------------
 
--- | A declared Core v0 type, as far as name resolution needs it.
-data DeclaredType
-  = DeclaredBool
-  | DeclaredUnit
-  | DeclaredEnum Text
-  | DeclaredEntityRef Text
+-- | An attribute entry: its identifier and its declared type, which
+-- drives the narrow entity-denotation lookup.
+data AttributeEntry = AttributeEntry Resolved.AttributeId Syntax.AttributeType
 
--- | An entity declaration: its attribute namespace.  A 'Nothing'
--- payload marks an attribute whose type could not be interpreted (an
--- invariant violation was reported for it).
-newtype EntityInfo = EntityInfo
-  { entityAttributes :: Namespace (Maybe DeclaredType)
+-- | An entity entry: its identifier, its name (for diagnostics), and
+-- its attribute namespace.
+data EntityEntry = EntityEntry
+  { entityEntryId :: Resolved.EntityId
+  , entityEntryName :: Text
+  , entityEntryAttributes :: Namespace AttributeEntry
   }
 
--- | An enum declaration: its value namespace.  Value uniqueness is
--- already structural (@uniqueItems@), so no duplicate tracking is
--- needed here.
-newtype EnumInfo = EnumInfo
-  { enumValues :: Set Text
+-- | An enum entry: the enum's identifier, its members — the one
+-- place its 'Resolved.EnumValueId's are assigned — and the one
+-- name-keyed lookup table over exactly those members.  Enum terms
+-- (via the enum namespace) and the enum's own order resolution (via
+-- the positional entry) share this table; no equivalent map is
+-- rebuilt elsewhere.  Value uniqueness is already structural
+-- (@uniqueItems@), so no duplicate tracking is needed here.
+data EnumEntry = EnumEntry
+  { enumEntryId :: Resolved.EnumId
+  , enumEntryMembers :: NonEmpty Resolved.EnumMember
+  , enumEntryValues :: Map Text Resolved.EnumValueId
   }
 
--- | A relation declaration: its endpoint namespace.
-newtype RelationInfo = RelationInfo
-  { relationEndpoints :: Namespace ()
-  }
+-- | A relation entry: its identifier and its endpoint namespace.
+data RelationEntry = RelationEntry Resolved.RelationId (Namespace Resolved.EndpointId)
 
--- | An action declaration: its name (for diagnostics) and parameter
--- namespace.
-data ActionInfo = ActionInfo
-  { actionName :: Text
-  , actionParameters :: Namespace (Maybe DeclaredType)
+-- | A parameter entry: its identifier and its declared type.
+data ParameterEntry = ParameterEntry Resolved.ParameterId Syntax.ParameterType
+
+-- | An action entry: its identifier, its name (for diagnostics), and
+-- its parameter namespace.
+data ActionEntry = ActionEntry
+  { actionEntryId :: Resolved.ActionId
+  , actionEntryName :: Text
+  , actionEntryParameters :: Namespace ParameterEntry
   }
 
 -- | The four global namespaces of a Core v0 document.
 data Indexes = Indexes
-  { entityIndex :: Namespace EntityInfo
-  , enumIndex :: Namespace EnumInfo
-  , relationIndex :: Namespace RelationInfo
-  , actionIndex :: Namespace ActionInfo
+  { entityIndex :: Namespace EntityEntry
+  , enumIndex :: Namespace EnumEntry
+  , relationIndex :: Namespace RelationEntry
+  , actionIndex :: Namespace ActionEntry
   }
 
--- | Parse a declared type's shape.  Reference existence is checked
--- separately by 'walkDeclaredType'; this only interprets the
--- constructor, reporting an invariant violation (and 'Nothing') for
--- shapes structural validation cannot produce.
-parseDeclaredType :: [Text] -> Value -> (Reports, Maybe DeclaredType)
-parseDeclaredType path value =
-  case requireObject path value of
-    Left broken -> (broken, Nothing)
-    Right members ->
-      case textMember path members "kind" of
-        Left broken -> (broken, Nothing)
-        Right kind ->
-          case kind of
-            "Bool" -> (mempty, Just DeclaredBool)
-            "Unit" -> (mempty, Just DeclaredUnit)
-            "Enum" ->
-              case textMember path members "enum" of
-                Left broken -> (broken, Nothing)
-                Right enumName -> (mempty, Just (DeclaredEnum enumName))
-            "EntityRef" ->
-              case textMember path members "entity" of
-                Left broken -> (broken, Nothing)
-                Right entityName -> (mempty, Just (DeclaredEntityRef entityName))
-            _ ->
-              ( invariantAt
-                  (path <> ["kind"])
-                  ("unexpected type constructor " <> quoted kind)
-              , Nothing
-              )
-
--- | Walk a type position: interpret its shape and check its enum or
--- entity reference, reporting an unknown reference at the @enum@ or
--- @entity@ member.
-walkDeclaredType :: Indexes -> [Text] -> Value -> Reports
-walkDeclaredType indexes path value =
-  shapeReports <> referenceReports
+-- | Build every namespace, reporting all duplicate declarations, and
+-- return the positional enum and action entries so each enum's order
+-- is resolved against its own value table and each action's body is
+-- resolved in its own parameter environment even when its name is
+-- duplicated.
+buildIndexes
+  :: Syntax.Document
+  -> ([ResolutionViolation], Indexes, [EnumEntry], [ActionEntry])
+buildIndexes document =
+  ( concat (map entityMemberReports entityPreparations)
+      <> entityReports
+      <> enumReports
+      <> concat (map relationMemberReports relationPreparations)
+      <> relationReports
+      <> concat (map actionMemberReports actionPreparations)
+      <> actionReports
+  , Indexes
+      { entityIndex = entityNamespace
+      , enumIndex = enumNamespace
+      , relationIndex = relationNamespace
+      , actionIndex = actionNamespace
+      }
+  , map snd enumPreparations
+  , map preparedActionEntry actionPreparations
+  )
   where
-    (shapeReports, declaredType) = parseDeclaredType path value
-    referenceReports =
-      case declaredType of
-        Just (DeclaredEnum enumName) ->
-          checkEnumReference indexes (path <> ["enum"]) enumName
-        Just (DeclaredEntityRef entityName) ->
-          checkEntityReference indexes (path <> ["entity"]) entityName
-        _ -> mempty
-
--- | Report an unknown enum reference.  An ambiguous (duplicated) name
--- is already reported at its declaration sites and produces nothing
--- here.
-checkEnumReference :: Indexes -> [Text] -> Text -> Reports
-checkEnumReference indexes path name =
-  case lookupName (enumIndex indexes) name of
-    NameMissing -> violationAt path ("unknown enum " <> quoted name)
-    _ -> mempty
-
--- | Report an unknown entity reference; see 'checkEnumReference'.
-checkEntityReference :: Indexes -> [Text] -> Text -> Reports
-checkEntityReference indexes path name =
-  case lookupName (entityIndex indexes) name of
-    NameMissing -> violationAt path ("unknown entity " <> quoted name)
-    _ -> mempty
-
--- | Report an unknown relation reference; see 'checkEnumReference'.
-checkRelationReference :: Indexes -> [Text] -> Text -> Reports
-checkRelationReference indexes path name =
-  case lookupName (relationIndex indexes) name of
-    NameMissing -> violationAt path ("unknown relation " <> quoted name)
-    _ -> mempty
-
---------------------------------------------------------------------
--- Internal: building the indexes (pass 1)
---------------------------------------------------------------------
-
--- | Build the entity namespace, reporting duplicate entity names,
--- duplicate attribute names within each entity, and shape invariants.
-buildEntities :: [(Int, Value)] -> (Reports, Namespace EntityInfo)
-buildEntities items =
-  let outcomes = map parseEntity items
-      itemReports = mconcat (map fst outcomes)
-      entries = [entry | (_, Just entry) <- outcomes]
-      (duplicateReports, namespace) =
-        buildNamespace
-          ( \name firstPointer ->
-              "duplicate entity name "
-                <> quoted name
-                <> " (first declared at "
-                <> firstPointer
-                <> ")"
-          )
-          entries
-   in (itemReports <> duplicateReports, namespace)
-
-parseEntity :: (Int, Value) -> (Reports, Maybe (Text, [Text], EntityInfo))
-parseEntity (index, value) =
-  case requireObject path value of
-    Left broken -> (broken, Nothing)
-    Right members ->
-      case textMember path members "name" of
-        Left broken -> (broken, Nothing)
-        Right name ->
-          let (attributeReports, attributeNamespace) =
-                case requireMember path members "attributes"
-                  >>= requireArray (path <> ["attributes"]) of
-                  Left broken -> (broken, emptyNamespace)
-                  Right attributeItems ->
-                    buildAttributes path name attributeItems
-           in ( attributeReports
-              , Just (name, path <> ["name"], EntityInfo attributeNamespace)
-              )
-  where
-    path = ["schema", "entities", showIndex index]
-
-buildAttributes
-  :: [Text] -> Text -> [(Int, Value)] -> (Reports, Namespace (Maybe DeclaredType))
-buildAttributes ownerPath ownerName items =
-  let outcomes = map parseAttribute items
-      itemReports = mconcat (map fst outcomes)
-      entries = [entry | (_, Just entry) <- outcomes]
-      (duplicateReports, namespace) =
-        buildNamespace
-          ( \name firstPointer ->
-              "duplicate attribute name "
-                <> quoted name
-                <> " in entity "
-                <> quoted ownerName
-                <> " (first declared at "
-                <> firstPointer
-                <> ")"
-          )
-          entries
-   in (itemReports <> duplicateReports, namespace)
-  where
-    parseAttribute (index, value) =
-      let path = ownerPath <> ["attributes", showIndex index]
-       in case requireObject path value of
-            Left broken -> (broken, Nothing)
-            Right members ->
-              case textMember path members "name" of
-                Left broken -> (broken, Nothing)
-                Right name ->
-                  let (typeReports, declaredType) =
-                        case requireMember path members "type" of
-                          Left broken -> (broken, Nothing)
-                          Right typeValue ->
-                            parseDeclaredType (path <> ["type"]) typeValue
-                   in (typeReports, Just (name, path <> ["name"], declaredType))
-
--- | Build the enum namespace, reporting duplicate enum names, shape
--- invariants, and unknown members of each enum's optional @order@
--- against that enum's own values.  Only member existence is checked:
--- whether an order is a complete permutation of the values remains a
--- static-typing check.
-buildEnums :: [(Int, Value)] -> (Reports, Namespace EnumInfo)
-buildEnums items =
-  let outcomes = map parseEnum items
-      itemReports = mconcat (map fst outcomes)
-      entries = [entry | (_, Just entry) <- outcomes]
-      (duplicateReports, namespace) =
-        buildNamespace
-          ( \name firstPointer ->
-              "duplicate enum name "
-                <> quoted name
-                <> " (first declared at "
-                <> firstPointer
-                <> ")"
-          )
-          entries
-   in (itemReports <> duplicateReports, namespace)
-
-parseEnum :: (Int, Value) -> (Reports, Maybe (Text, [Text], EnumInfo))
-parseEnum (index, value) =
-  case requireObject path value of
-    Left broken -> (broken, Nothing)
-    Right members ->
-      case textMember path members "name" of
-        Left broken -> (broken, Nothing)
-        Right name ->
-          let (valueReports, values) =
-                case requireMember path members "values"
-                  >>= requireArray (path <> ["values"]) of
-                  Left broken -> (broken, Set.empty)
-                  Right valueItems -> collectEnumValues valueItems
-              orderReports =
-                case KeyMap.lookup "order" members of
-                  Nothing -> mempty
-                  Just orderValue ->
-                    checkEnumOrder name values orderValue
-           in ( valueReports <> orderReports
-              , Just (name, path <> ["name"], EnumInfo values)
-              )
-  where
-    path = ["schema", "enums", showIndex index]
-    collectEnumValues valueItems =
-      mconcat
-        [ case requireText (path <> ["values", showIndex valueIndex]) item of
-            Left broken -> (broken, Set.empty)
-            Right valueName -> (mempty, Set.singleton valueName)
-        | (valueIndex, item) <- valueItems
-        ]
-    checkEnumOrder name values orderValue =
-      case requireArray (path <> ["order"]) orderValue of
-        Left broken -> broken
-        Right orderItems ->
-          mconcat
-            [ case requireText itemPath item of
-                Left broken -> broken
-                Right memberName
-                  | Set.member memberName values -> mempty
-                  | otherwise ->
-                      violationAt
-                        itemPath
-                        ( "unknown value "
-                            <> quoted memberName
-                            <> " in enum "
-                            <> quoted name
-                        )
-            | (orderIndex, item) <- orderItems
-            , let itemPath = path <> ["order", showIndex orderIndex]
-            ]
-
--- | Build the relation namespace, reporting duplicate relation names,
--- duplicate endpoint names within each relation, and shape
--- invariants.  Endpoint entity references and payload enums are
--- checked by 'checkSchemaDeclarations'.
-buildRelations :: [(Int, Value)] -> (Reports, Namespace RelationInfo)
-buildRelations items =
-  let outcomes = map parseRelation items
-      itemReports = mconcat (map fst outcomes)
-      entries = [entry | (_, Just entry) <- outcomes]
-      (duplicateReports, namespace) =
-        buildNamespace
-          ( \name firstPointer ->
-              "duplicate relation name "
-                <> quoted name
-                <> " (first declared at "
-                <> firstPointer
-                <> ")"
-          )
-          entries
-   in (itemReports <> duplicateReports, namespace)
-
-parseRelation :: (Int, Value) -> (Reports, Maybe (Text, [Text], RelationInfo))
-parseRelation (index, value) =
-  case requireObject path value of
-    Left broken -> (broken, Nothing)
-    Right members ->
-      case textMember path members "name" of
-        Left broken -> (broken, Nothing)
-        Right name ->
-          let (endpointReports, endpointNamespace) =
-                case requireMember path members "endpoints"
-                  >>= requireArray (path <> ["endpoints"]) of
-                  Left broken -> (broken, emptyNamespace)
-                  Right endpointItems ->
-                    buildEndpoints path name endpointItems
-           in ( endpointReports
-              , Just (name, path <> ["name"], RelationInfo endpointNamespace)
-              )
-  where
-    path = ["schema", "relations", showIndex index]
-
-buildEndpoints :: [Text] -> Text -> [(Int, Value)] -> (Reports, Namespace ())
-buildEndpoints ownerPath ownerName items =
-  let outcomes = map parseEndpoint items
-      itemReports = mconcat (map fst outcomes)
-      entries = [entry | (_, Just entry) <- outcomes]
-      (duplicateReports, namespace) =
-        buildNamespace
-          ( \name firstPointer ->
-              "duplicate endpoint name "
-                <> quoted name
-                <> " in relation "
-                <> quoted ownerName
-                <> " (first declared at "
-                <> firstPointer
-                <> ")"
-          )
-          entries
-   in (itemReports <> duplicateReports, namespace)
-  where
-    parseEndpoint (index, value) =
-      let path = ownerPath <> ["endpoints", showIndex index]
-       in case requireObject path value of
-            Left broken -> (broken, Nothing)
-            Right members ->
-              case textMember path members "name" of
-                Left broken -> (broken, Nothing)
-                Right name -> (mempty, Just (name, path <> ["name"], ()))
-
--- | Build the action namespace and the positional action list for the
--- body walk, reporting duplicate action names, duplicate parameter
--- names within each action, and shape invariants.  Parameter type
--- references are checked positionally by 'walkAction'.
-buildActions
-  :: [(Int, Value)]
-  -> (Reports, Namespace ActionInfo, [(Int, Value, Maybe ActionInfo)])
-buildActions items =
-  let outcomes = map parseAction items
-      itemReports = mconcat [reports | (reports, _, _) <- outcomes]
-      entries = [entry | (_, Just entry, _) <- outcomes]
-      positional = [position | (_, _, position) <- outcomes]
-      (duplicateReports, namespace) =
-        buildNamespace
-          ( \name firstPointer ->
-              "duplicate action name "
-                <> quoted name
-                <> " (first declared at "
-                <> firstPointer
-                <> ")"
-          )
-          entries
-   in (itemReports <> duplicateReports, namespace, positional)
-  where
-    parseAction (index, value) =
-      let path = ["actions", showIndex index]
-       in case requireObject path value of
-            Left broken -> (broken, Nothing, (index, value, Nothing))
-            Right members ->
-              case textMember path members "name" of
-                Left broken -> (broken, Nothing, (index, value, Nothing))
-                Right name ->
-                  let (parameterReports, parameterNamespace) =
-                        case requireMember path members "parameters"
-                          >>= requireArray (path <> ["parameters"]) of
-                          Left broken -> (broken, emptyNamespace)
-                          Right parameterItems ->
-                            buildParameters path name parameterItems
-                      info = ActionInfo name parameterNamespace
-                   in ( parameterReports
-                      , Just (name, path <> ["name"], info)
-                      , (index, value, Just info)
-                      )
-
-buildParameters
-  :: [Text] -> Text -> [(Int, Value)] -> (Reports, Namespace (Maybe DeclaredType))
-buildParameters ownerPath ownerName items =
-  let outcomes = map parseParameter items
-      itemReports = mconcat (map fst outcomes)
-      entries = [entry | (_, Just entry) <- outcomes]
-      (duplicateReports, namespace) =
-        buildNamespace
-          ( \name firstPointer ->
-              "duplicate parameter name "
-                <> quoted name
-                <> " in action "
-                <> quoted ownerName
-                <> " (first declared at "
-                <> firstPointer
-                <> ")"
-          )
-          entries
-   in (itemReports <> duplicateReports, namespace)
-  where
-    parseParameter (index, value) =
-      let path = ownerPath <> ["parameters", showIndex index]
-       in case requireObject path value of
-            Left broken -> (broken, Nothing)
-            Right members ->
-              case textMember path members "name" of
-                Left broken -> (broken, Nothing)
-                Right name ->
-                  let (typeReports, declaredType) =
-                        case requireMember path members "type" of
-                          Left broken -> (broken, Nothing)
-                          Right typeValue ->
-                            parseDeclaredType (path <> ["type"]) typeValue
-                   in (typeReports, Just (name, path <> ["name"], declaredType))
-
---------------------------------------------------------------------
--- Internal: schema declaration references (pass 2)
---------------------------------------------------------------------
-
--- | Check every reference inside the schema declarations against the
--- complete indexes: attribute types, endpoint entities, and payload
--- enums.  Runs positionally, so every occurrence of a duplicated
--- declaration is checked against its own body.
-checkSchemaDeclarations :: Indexes -> Value -> Reports
-checkSchemaDeclarations indexes schemaValue =
-  withObject_ ["schema"] schemaValue $ \schemaMembers ->
-    withArrayMember ["schema"] schemaMembers "entities" (mconcat . map entityReferences)
-      <> withArrayMember
-        ["schema"]
-        schemaMembers
-        "relations"
-        (mconcat . map relationReferences)
-  where
-    entityReferences (index, value) =
-      let path = ["schema", "entities", showIndex index]
-       in withObject_ path value $ \members ->
-            withArrayMember path members "attributes" $ \attributeItems ->
-              mconcat
-                [ withObject_ attributePath attributeValue $ \attributeMembers ->
-                    withMember_ attributePath attributeMembers "type" $
-                      walkDeclaredType indexes (attributePath <> ["type"])
-                | (attributeIndex, attributeValue) <- attributeItems
-                , let attributePath =
-                        path <> ["attributes", showIndex attributeIndex]
+    entityPreparations =
+      [ (declaration, EntityEntry owner name attributeNamespace, attributeReports)
+      | (position, declaration) <-
+          withPositions (Syntax.documentEntities document)
+      , let owner = Resolved.EntityId position
+            name = sourcedValue (Syntax.entityDeclarationName declaration)
+            (attributeReports, attributeNamespace) =
+              buildNamespace
+                (ownedDuplicateMessage "attribute" "entity" name)
+                [ ( Syntax.attributeDeclarationName attribute
+                  , AttributeEntry
+                      (Resolved.AttributeId owner attributePosition)
+                      (Syntax.attributeDeclarationType attribute)
+                  )
+                | (attributePosition, attribute) <-
+                    withPositions (Syntax.entityDeclarationAttributes declaration)
                 ]
-    relationReferences (index, value) =
-      let path = ["schema", "relations", showIndex index]
-       in withObject_ path value $ \members ->
-            withArrayMember path members "endpoints" (mconcat . map (endpointReferences path))
-              <> withMember_ path members "payload" (walkDeclaredType indexes (path <> ["payload"]))
-    endpointReferences relationPath (index, value) =
-      let path = relationPath <> ["endpoints", showIndex index]
-       in withObject_ path value $ \members ->
-            withTextMember path members "entity" $
-              checkEntityReference indexes (path <> ["entity"])
+      ]
+    entityMemberReports (_, _, reports) = reports
+    (entityReports, entityNamespace) =
+      buildNamespace
+        (globalDuplicateMessage "entity")
+        [ (Syntax.entityDeclarationName declaration, entry)
+        | (declaration, entry, _) <- entityPreparations
+        ]
+
+    -- One preparation per declaration, in authored order: the single
+    -- assignment of each enum's member identifiers and its single
+    -- lookup table.  The name-keyed namespace below indexes these same
+    -- entries (first declaration wins); nothing rebuilds them.
+    enumPreparations =
+      [ (declaration, EnumEntry enumId members (memberLookup members))
+      | (position, declaration) <-
+          withPositions (Syntax.documentEnums document)
+      , let enumId = Resolved.EnumId position
+            members =
+              NonEmpty.zipWith
+                ( \valuePosition member ->
+                    Resolved.EnumMember
+                      (Resolved.EnumValueId enumId valuePosition)
+                      member
+                )
+                (0 :| [1 ..])
+                (Syntax.enumDeclarationValues declaration)
+      ]
+    (enumReports, enumNamespace) =
+      buildNamespace
+        (globalDuplicateMessage "enum")
+        [ (Syntax.enumDeclarationName declaration, entry)
+        | (declaration, entry) <- enumPreparations
+        ]
+
+    relationPreparations =
+      [ (declaration, RelationEntry owner endpointNamespace, endpointReports)
+      | (position, declaration) <-
+          withPositions (Syntax.documentRelations document)
+      , let owner = Resolved.RelationId position
+            name = sourcedValue (Syntax.relationDeclarationName declaration)
+            (endpointReports, endpointNamespace) =
+              buildNamespace
+                (ownedDuplicateMessage "endpoint" "relation" name)
+                [ ( Syntax.endpointDeclarationName endpoint
+                  , Resolved.EndpointId owner endpointPosition
+                  )
+                | (endpointPosition, endpoint) <-
+                    withPositions
+                      (toList (Syntax.relationDeclarationEndpoints declaration))
+                ]
+      ]
+    relationMemberReports (_, _, reports) = reports
+    (relationReports, relationNamespace) =
+      buildNamespace
+        (globalDuplicateMessage "relation")
+        [ (Syntax.relationDeclarationName declaration, entry)
+        | (declaration, entry, _) <- relationPreparations
+        ]
+
+    actionPreparations =
+      [ (declaration, ActionEntry actionId name parameterNamespace, parameterReports)
+      | (position, declaration) <-
+          withPositions (Syntax.documentActions document)
+      , let actionId = Resolved.ActionId position
+            name = sourcedValue (Syntax.actionDeclarationName declaration)
+            (parameterReports, parameterNamespace) =
+              buildNamespace
+                (ownedDuplicateMessage "parameter" "action" name)
+                [ ( Syntax.parameterDeclarationName parameter
+                  , ParameterEntry
+                      (Resolved.ParameterId actionId parameterPosition)
+                      (Syntax.parameterDeclarationType parameter)
+                  )
+                | (parameterPosition, parameter) <-
+                    withPositions (Syntax.actionDeclarationParameters declaration)
+                ]
+      ]
+    actionMemberReports (_, _, reports) = reports
+    preparedActionEntry (_, entry, _) = entry
+    (actionReports, actionNamespace) =
+      buildNamespace
+        (globalDuplicateMessage "action")
+        [ (Syntax.actionDeclarationName declaration, entry)
+        | (declaration, entry, _) <- actionPreparations
+        ]
+
+-- | The name-keyed lookup table over an enum's members, derived once
+-- from the member list that assigned their identifiers.
+memberLookup :: NonEmpty Resolved.EnumMember -> Map Text Resolved.EnumValueId
+memberLookup members =
+  Map.fromList
+    [ ( sourcedValue (Resolved.enumMemberName member)
+      , Resolved.enumMemberId member
+      )
+    | member <- NonEmpty.toList members
+    ]
+
+withPositions :: [a] -> [(Int, a)]
+withPositions = zip [0 ..]
+
+withPositionsOneOrTwo :: OneOrTwo a -> OneOrTwo (Int, a)
+withPositionsOneOrTwo shape =
+  case shape of
+    One only -> One (0, only)
+    Two first' second' -> Two (0, first') (1, second')
+
+--------------------------------------------------------------------
+-- Internal: reference resolution
+--------------------------------------------------------------------
+
+-- | Resolve an enum reference.  An ambiguous (duplicated) name is
+-- already reported at its declaration sites and is suppressed here.
+resolveEnumReference
+  :: Indexes -> Sourced Text -> Resolve (Resolved.Ref Resolved.EnumId)
+resolveEnumReference indexes (Sourced path name) =
+  case lookupName (enumIndex indexes) name of
+    NameMissing -> refuseAt path ("unknown enum " <> quoted name)
+    NameAmbiguous -> suppressed
+    NameFound entry -> pure (Resolved.Ref path (enumEntryId entry))
+
+-- | Resolve an entity reference; see 'resolveEnumReference'.
+resolveEntityReference
+  :: Indexes -> Sourced Text -> Resolve (Resolved.Ref Resolved.EntityId)
+resolveEntityReference indexes (Sourced path name) =
+  case lookupName (entityIndex indexes) name of
+    NameMissing -> refuseAt path ("unknown entity " <> quoted name)
+    NameAmbiguous -> suppressed
+    NameFound entry -> pure (Resolved.Ref path (entityEntryId entry))
+
+-- | Resolve a relation reference; see 'resolveEnumReference'.
+resolveRelationReference
+  :: Indexes -> Sourced Text -> Resolve (Resolved.Ref Resolved.RelationId)
+resolveRelationReference indexes (Sourced path name) =
+  case lookupName (relationIndex indexes) name of
+    NameMissing -> refuseAt path ("unknown relation " <> quoted name)
+    NameAmbiguous -> suppressed
+    NameFound (RelationEntry relationId _) -> pure (Resolved.Ref path relationId)
+
+--------------------------------------------------------------------
+-- Internal: declared types
+--------------------------------------------------------------------
+
+resolveAttributeType
+  :: Indexes -> Syntax.AttributeType -> Resolve Resolved.AttributeType
+resolveAttributeType indexes attributeType =
+  case attributeType of
+    Syntax.BoolAttributeType path -> pure (Resolved.BoolAttributeType path)
+    Syntax.EnumAttributeType path reference ->
+      Resolved.EnumAttributeType path <$> resolveEnumReference indexes reference
+    Syntax.EntityRefAttributeType path reference ->
+      Resolved.EntityRefAttributeType path
+        <$> resolveEntityReference indexes reference
+
+resolveParameterType
+  :: Indexes -> Syntax.ParameterType -> Resolve Resolved.ParameterType
+resolveParameterType indexes parameterType =
+  case parameterType of
+    Syntax.BoolParameterType path -> pure (Resolved.BoolParameterType path)
+    Syntax.UnitParameterType path -> pure (Resolved.UnitParameterType path)
+    Syntax.EnumParameterType path reference ->
+      Resolved.EnumParameterType path <$> resolveEnumReference indexes reference
+    Syntax.EntityRefParameterType path reference ->
+      Resolved.EntityRefParameterType path
+        <$> resolveEntityReference indexes reference
+
+resolvePayloadType
+  :: Indexes -> Syntax.PayloadType -> Resolve Resolved.PayloadType
+resolvePayloadType indexes payloadType =
+  case payloadType of
+    Syntax.UnitPayloadType path -> pure (Resolved.UnitPayloadType path)
+    Syntax.EnumPayloadType path reference ->
+      Resolved.EnumPayloadType path <$> resolveEnumReference indexes reference
 
 --------------------------------------------------------------------
 -- Internal: terms
 --------------------------------------------------------------------
 
 -- | The context a term is resolved in: the global indexes plus the
--- action-local parameter environment.  'Nothing' parameters mean the
--- environment could not be determined (the enclosing guarantee case
--- names an unknown or duplicated action, or the action's shape was
--- uninterpretable): @Argument@ checks are suppressed rather than
--- guessed, while every environment-independent check still runs.
-data TermContext = TermContext
-  { contextIndexes :: Indexes
-  , contextParameters :: Maybe ActionInfo
+-- action-local parameter environment.  A 'Nothing' environment means
+-- it could not be determined (the enclosing guarantee case names an
+-- unknown or duplicated action): @Argument@ checks are suppressed
+-- rather than guessed, while every environment-independent check
+-- still runs.
+data TermScope = TermScope
+  { scopeIndexes :: Indexes
+  , scopeParameters :: Maybe ActionEntry
   }
 
 -- | What a value term denotes, as far as attribute-namespace
 -- selection needs to know.  This is deliberately the only
 -- typing-shaped judgment in this stage.
-data SourceDenotation
-  = -- | The term denotes a reference to the named entity.
-    DenotesEntity Text
+data Denotation
+  = -- | The term denotes a reference to this entity.
+    DenotesEntity EntityEntry
   | -- | The term is known not to denote an entity reference.
     DenotesNonEntity
   | -- | The denotation could not be determined because a prerequisite
-    -- name is unknown, ambiguous, or uninterpretable; dependent
-    -- checks are suppressed.
+    -- name is unknown or ambiguous; dependent checks are suppressed.
     DenotesUnknown
 
--- | The denotation of a declared type.
-typeDenotation :: Maybe DeclaredType -> SourceDenotation
-typeDenotation declaredType =
-  case declaredType of
-    Just (DeclaredEntityRef entityName) -> DenotesEntity entityName
-    Just DeclaredBool -> DenotesNonEntity
-    Just DeclaredUnit -> DenotesNonEntity
-    Just (DeclaredEnum _) -> DenotesNonEntity
-    Nothing -> DenotesUnknown
+-- | The entity denotation of a declared-type entity name.  The
+-- reference itself is checked (and any problem reported) where the
+-- declared type is resolved; an unknown or ambiguous name here only
+-- suppresses dependent member checks.
+entityDenotation :: Indexes -> Text -> Denotation
+entityDenotation indexes entityName =
+  case lookupName (entityIndex indexes) entityName of
+    NameFound entry -> DenotesEntity entry
+    NameMissing -> DenotesUnknown
+    NameAmbiguous -> DenotesUnknown
 
--- | The value-term constructors (the family allowed as an @Attribute@
--- source and in every value position).
-valueTermKinds :: [Text]
-valueTermKinds = ["Bool", "Unit", "Enum", "Argument", "Actor", "Attribute"]
+parameterTypeDenotation :: Indexes -> Syntax.ParameterType -> Denotation
+parameterTypeDenotation indexes parameterType =
+  case parameterType of
+    Syntax.EntityRefParameterType _ (Sourced _ entityName) ->
+      entityDenotation indexes entityName
+    Syntax.BoolParameterType _ -> DenotesNonEntity
+    Syntax.UnitParameterType _ -> DenotesNonEntity
+    Syntax.EnumParameterType _ _ -> DenotesNonEntity
 
--- | Walk a value term, returning its reports and its denotation.
-walkValueTerm :: TermContext -> [Text] -> Value -> (Reports, SourceDenotation)
-walkValueTerm context path value =
-  case requireObject path value of
-    Left broken -> (broken, DenotesUnknown)
-    Right members ->
-      case textMember path members "kind" of
-        Left broken -> (broken, DenotesUnknown)
-        Right kind -> walkValueTermKind context path members kind
+attributeTypeDenotation :: Indexes -> Syntax.AttributeType -> Denotation
+attributeTypeDenotation indexes attributeType =
+  case attributeType of
+    Syntax.EntityRefAttributeType _ (Sourced _ entityName) ->
+      entityDenotation indexes entityName
+    Syntax.BoolAttributeType _ -> DenotesNonEntity
+    Syntax.EnumAttributeType _ _ -> DenotesNonEntity
 
--- | Walk a value term whose members and constructor are known.
-walkValueTermKind
-  :: TermContext
-  -> [Text]
-  -> KeyMap.KeyMap Value
-  -> Text
-  -> (Reports, SourceDenotation)
-walkValueTermKind context path members kind =
-  case kind of
-    "Bool" -> (mempty, DenotesNonEntity)
-    "Unit" -> (mempty, DenotesNonEntity)
-    "Enum" -> (enumTermReports context path members, DenotesNonEntity)
-    "Argument" -> argumentTerm
-    "Actor" -> (mempty, DenotesEntity distinguishedUserEntity)
-    "Attribute" -> attributeTerm
-    _ ->
-      ( invariantAt
-          (path <> ["kind"])
-          ("unexpected value-term constructor " <> quoted kind)
-      , DenotesUnknown
+-- | Resolve a value term, returning its resolved node and its
+-- denotation.  The two are independent: a term whose references
+-- resolve may still have an unknown denotation (and vice versa the
+-- denotation of @Bool@\/@Unit@\/@Enum@ terms is known even when a
+-- reference inside them is not).
+resolveValueTerm
+  :: TermScope
+  -> Syntax.ValueTerm availability
+  -> (Resolve (Resolved.ValueTerm availability), Denotation)
+resolveValueTerm scope term =
+  case term of
+    Syntax.BoolTerm path flag ->
+      (pure (Resolved.BoolTerm path flag), DenotesNonEntity)
+    Syntax.UnitTerm path -> (pure (Resolved.UnitTerm path), DenotesNonEntity)
+    Syntax.EnumTerm path enumReference valueReference ->
+      ( resolveEnumTerm (scopeIndexes scope) path enumReference valueReference
+      , DenotesNonEntity
       )
-  where
-    indexes = contextIndexes context
-    argumentTerm =
-      case textMember path members "name" of
-        Left broken -> (broken, DenotesUnknown)
-        Right parameterName ->
-          case contextParameters context of
-            Nothing -> (mempty, DenotesUnknown)
-            Just action ->
-              case lookupName (actionParameters action) parameterName of
-                NameMissing ->
-                  ( violationAt
-                      (path <> ["name"])
-                      ( "unknown parameter "
-                          <> quoted parameterName
-                          <> " in action "
-                          <> quoted (actionName action)
-                      )
-                  , DenotesUnknown
-                  )
-                NameAmbiguous -> (mempty, DenotesUnknown)
-                NameFound declaredType -> (mempty, typeDenotation declaredType)
-    attributeTerm =
-      let (sourceReports, sourceDenotation) =
-            case requireMember path members "source" of
-              Left broken -> (broken, DenotesUnknown)
-              Right sourceValue ->
-                walkValueTerm context (path <> ["source"]) sourceValue
-          (memberReports, resultDenotation) =
-            case textMember path members "attribute" of
-              Left broken -> (broken, DenotesUnknown)
-              Right attributeName ->
-                resolveAttributeMember indexes path attributeName sourceDenotation
-       in (sourceReports <> memberReports, resultDenotation)
+    Syntax.ArgumentTerm path nameReference ->
+      resolveArgumentTerm scope path nameReference
+    Syntax.ActorTerm path -> resolveActorTerm (scopeIndexes scope) path
+    Syntax.AttributeTerm path source memberReference ->
+      resolveAttributeTerm scope path source memberReference
 
--- | Resolve an @Attribute@ member name against the namespace selected
--- by its source's denotation.
-resolveAttributeMember
-  :: Indexes -> [Text] -> Text -> SourceDenotation -> (Reports, SourceDenotation)
-resolveAttributeMember indexes path attributeName sourceDenotation =
-  case sourceDenotation of
-    DenotesUnknown -> (mempty, DenotesUnknown)
-    DenotesNonEntity ->
-      ( violationAt
-          (path <> ["attribute"])
-          ( "cannot select an attribute namespace for "
-              <> quoted attributeName
-              <> ": the source term does not denote an entity reference"
-          )
-      , DenotesUnknown
-      )
-    DenotesEntity entityName ->
-      case lookupName (entityIndex indexes) entityName of
-        -- An unknown or duplicated source entity is already reported
-        -- at its declaration site; do not cascade here.
-        NameMissing -> (mempty, DenotesUnknown)
-        NameAmbiguous -> (mempty, DenotesUnknown)
-        NameFound entity ->
-          case lookupName (entityAttributes entity) attributeName of
-            NameMissing ->
-              ( violationAt
-                  (path <> ["attribute"])
-                  ( "unknown attribute "
-                      <> quoted attributeName
-                      <> " in entity "
-                      <> quoted entityName
-                  )
-              , DenotesUnknown
-              )
-            NameAmbiguous -> (mempty, DenotesUnknown)
-            NameFound declaredType -> (mempty, typeDenotation declaredType)
+-- | Resolve a value term when only the node is needed.
+valueOnly
+  :: TermScope
+  -> Syntax.ValueTerm availability
+  -> Resolve (Resolved.ValueTerm availability)
+valueOnly scope term = fst (resolveValueTerm scope term)
 
 -- | The @Enum@ term: the enum reference, then — only when the enum is
 -- unique and known — its value against that enum's own values.
-enumTermReports :: TermContext -> [Text] -> KeyMap.KeyMap Value -> Reports
-enumTermReports context path members =
-  case textMember path members "enum" of
-    Left broken -> broken
-    Right enumName ->
-      case lookupName (enumIndex (contextIndexes context)) enumName of
+resolveEnumTerm
+  :: Indexes
+  -> SourcePath
+  -> Sourced Text
+  -> Sourced Text
+  -> Resolve (Resolved.ValueTerm availability)
+resolveEnumTerm indexes path (Sourced enumPath enumName) (Sourced valuePath valueName) =
+  case lookupName (enumIndex indexes) enumName of
+    NameMissing -> refuseAt enumPath ("unknown enum " <> quoted enumName)
+    NameAmbiguous -> suppressed
+    NameFound entry ->
+      case Map.lookup valueName (enumEntryValues entry) of
+        Nothing ->
+          refuseAt
+            valuePath
+            ( "unknown value "
+                <> quoted valueName
+                <> " in enum "
+                <> quoted enumName
+            )
+        Just valueId ->
+          pure
+            ( Resolved.EnumTerm
+                path
+                (Resolved.Ref enumPath (enumEntryId entry))
+                (Resolved.Ref valuePath valueId)
+            )
+
+resolveArgumentTerm
+  :: TermScope
+  -> SourcePath
+  -> Sourced Text
+  -> (Resolve (Resolved.ValueTerm availability), Denotation)
+resolveArgumentTerm scope path (Sourced namePath parameterName) =
+  case scopeParameters scope of
+    Nothing -> (suppressed, DenotesUnknown)
+    Just entry ->
+      case lookupName (actionEntryParameters entry) parameterName of
         NameMissing ->
-          violationAt (path <> ["enum"]) ("unknown enum " <> quoted enumName)
-        NameAmbiguous -> mempty
-        NameFound info ->
-          withTextMember path members "value" $ \valueName ->
-            if Set.member valueName (enumValues info)
-              then mempty
-              else
-                violationAt
-                  (path <> ["value"])
-                  ( "unknown value "
-                      <> quoted valueName
-                      <> " in enum "
-                      <> quoted enumName
-                  )
+          ( refuseAt
+              namePath
+              ( "unknown parameter "
+                  <> quoted parameterName
+                  <> " in action "
+                  <> quoted (actionEntryName entry)
+              )
+          , DenotesUnknown
+          )
+        NameAmbiguous -> (suppressed, DenotesUnknown)
+        NameFound (ParameterEntry parameterId parameterType) ->
+          ( pure (Resolved.ArgumentTerm path (Resolved.Ref namePath parameterId))
+          , parameterTypeDenotation (scopeIndexes scope) parameterType
+          )
 
--- | The distinguished entity the @Actor@ term denotes; its presence
--- is structurally required, and 'resolveDocumentValue' reports an
--- invariant violation when it is absent.
-distinguishedUserEntity :: Text
-distinguishedUserEntity = "User"
+-- | The @Actor@ term denotes the distinguished @User@ entity.  A
+-- duplicated @User@ suppresses dependent uses (the duplicate is
+-- reported at its declaration); a missing @User@ is impossible after
+-- the decoder's check, and suppression keeps the resolver total —
+-- the completeness net in 'resolveCoreDocument' classifies such an
+-- outcome as internal.
+resolveActorTerm
+  :: Indexes -> SourcePath -> (Resolve (Resolved.ValueTerm 'Syntax.ActorAvailable), Denotation)
+resolveActorTerm indexes path =
+  case lookupName (entityIndex indexes) distinguishedUserEntity of
+    NameFound entry ->
+      (pure (Resolved.ActorTerm path (entityEntryId entry)), DenotesEntity entry)
+    NameAmbiguous -> (suppressed, DenotesUnknown)
+    NameMissing -> (suppressed, DenotesUnknown)
 
--- | Walk a policy term: every value-term constructor plus the lookup,
--- option, comparison, and boolean constructors.  The schema already
--- fixes where the Actor-free families apply; this walk adds no second
+-- | Resolve an @Attribute@ projection: its source, then its member
+-- against the namespace selected by the source's denotation.
+resolveAttributeTerm
+  :: TermScope
+  -> SourcePath
+  -> Syntax.ValueTerm availability
+  -> Sourced Text
+  -> (Resolve (Resolved.ValueTerm availability), Denotation)
+resolveAttributeTerm scope path source (Sourced attributeSitePath attributeName) =
+  case sourceDenotation of
+    DenotesUnknown -> (sourceResolve *> suppressed, DenotesUnknown)
+    DenotesNonEntity ->
+      ( sourceResolve
+          *> refuseAt
+            attributeSitePath
+            ( "cannot select an attribute namespace for "
+                <> quoted attributeName
+                <> ": the source term does not denote an entity reference"
+            )
+      , DenotesUnknown
+      )
+    DenotesEntity entry ->
+      case lookupName (entityEntryAttributes entry) attributeName of
+        NameMissing ->
+          ( sourceResolve
+              *> refuseAt
+                attributeSitePath
+                ( "unknown attribute "
+                    <> quoted attributeName
+                    <> " in entity "
+                    <> quoted (entityEntryName entry)
+                )
+          , DenotesUnknown
+          )
+        NameAmbiguous -> (sourceResolve *> suppressed, DenotesUnknown)
+        NameFound (AttributeEntry attributeId attributeType) ->
+          ( ( \resolvedSource ->
+                Resolved.AttributeTerm
+                  path
+                  resolvedSource
+                  (Resolved.Ref attributeSitePath attributeId)
+            )
+              <$> sourceResolve
+          , attributeTypeDenotation (scopeIndexes scope) attributeType
+          )
+  where
+    (sourceResolve, sourceDenotation) = resolveValueTerm scope source
+
+-- | Resolve a policy term: every value-term constructor plus the
+-- lookup, option, comparison, and boolean constructors.  Actor
+-- availability is carried by the type index; this walk adds no second
 -- interpretation of that distinction.
-walkPolicyTerm :: TermContext -> [Text] -> Value -> Reports
-walkPolicyTerm context path value =
-  case requireObject path value of
-    Left broken -> broken
-    Right members ->
-      case textMember path members "kind" of
-        Left broken -> broken
-        Right kind
-          | kind `elem` valueTermKinds ->
-              fst (walkValueTermKind context path members kind)
-          | otherwise -> policyOnlyTerm members kind
-  where
-    indexes = contextIndexes context
-    valueAt segment termValue =
-      fst (walkValueTerm context (path <> [segment]) termValue)
-    policyAt segment = walkPolicyTerm context (path <> [segment])
-    bothOperands members =
-      withMember_ path members "left" (policyAt "left")
-        <> withMember_ path members "right" (policyAt "right")
-    policyOnlyTerm members kind =
-      case kind of
-        "Lookup" ->
-          withTextMember
-            path
-            members
-            "relation"
-            (checkRelationReference indexes (path <> ["relation"]))
-            <> withArrayMember path members "endpoints" (mconcat . map endpointTerm)
-        "None" ->
-          withMember_
-            path
-            members
-            "payloadType"
-            (walkDeclaredType indexes (path <> ["payloadType"]))
-        "Some" -> withMember_ path members "value" (valueAt "value")
-        "IsSome" -> withMember_ path members "value" (policyAt "value")
-        "Equal" -> bothOperands members
-        "LessOrEqual" -> bothOperands members
-        "And" -> bothOperands members
-        "Or" -> bothOperands members
-        "Not" -> withMember_ path members "value" (policyAt "value")
-        _ ->
-          invariantAt
-            (path <> ["kind"])
-            ("unexpected policy-term constructor " <> quoted kind)
-    endpointTerm (index, termValue) =
-      fst
-        ( walkValueTerm
-            context
-            (path <> ["endpoints", showIndex index])
-            termValue
-        )
+resolvePolicyTerm
+  :: TermScope
+  -> Syntax.PolicyTerm availability
+  -> Resolve (Resolved.PolicyTerm availability)
+resolvePolicyTerm scope term =
+  case term of
+    Syntax.ValuePolicyTerm valueTerm ->
+      Resolved.ValuePolicyTerm <$> valueOnly scope valueTerm
+    Syntax.LookupTerm path relationReference endpoints ->
+      Resolved.LookupTerm path
+        <$> resolveRelationReference (scopeIndexes scope) relationReference
+        <*> traverse (valueOnly scope) endpoints
+    Syntax.NoneTerm path payloadType ->
+      Resolved.NoneTerm path
+        <$> resolvePayloadType (scopeIndexes scope) payloadType
+    Syntax.SomeTerm path value -> Resolved.SomeTerm path <$> valueOnly scope value
+    Syntax.IsSomeTerm path value ->
+      Resolved.IsSomeTerm path <$> resolvePolicyTerm scope value
+    Syntax.EqualTerm path left right ->
+      Resolved.EqualTerm path
+        <$> resolvePolicyTerm scope left
+        <*> resolvePolicyTerm scope right
+    Syntax.LessOrEqualTerm path left right ->
+      Resolved.LessOrEqualTerm path
+        <$> resolvePolicyTerm scope left
+        <*> resolvePolicyTerm scope right
+    Syntax.AndTerm path left right ->
+      Resolved.AndTerm path
+        <$> resolvePolicyTerm scope left
+        <*> resolvePolicyTerm scope right
+    Syntax.OrTerm path left right ->
+      Resolved.OrTerm path
+        <$> resolvePolicyTerm scope left
+        <*> resolvePolicyTerm scope right
+    Syntax.NotTerm path value ->
+      Resolved.NotTerm path <$> resolvePolicyTerm scope value
 
 --------------------------------------------------------------------
--- Internal: actions (pass 3)
+-- Internal: schema declarations
 --------------------------------------------------------------------
 
--- | Walk one action positionally: parameter type references, the
--- allow policy (both branches for @AnyPrincipal@), the effect, and
--- the result, all in the action's own parameter environment.
-walkAction :: Indexes -> (Int, Value, Maybe ActionInfo) -> Reports
-walkAction indexes (index, value, ownInfo) =
-  withObject_ path value $ \members ->
-    parameterTypes members
-      <> allowPolicy members
-      <> withMember_ path members "effect" (walkEffect context (path <> ["effect"]))
-      <> withMember_ path members "result" (walkResult context (path <> ["result"]))
+resolveEntity
+  :: Indexes -> Int -> Syntax.EntityDeclaration -> Resolve Resolved.Entity
+resolveEntity indexes position declaration =
+  Resolved.Entity
+    owner
+    (Syntax.entityDeclarationPath declaration)
+    (Syntax.entityDeclarationName declaration)
+    <$> traverse
+      resolveAttribute
+      (withPositions (Syntax.entityDeclarationAttributes declaration))
   where
-    path = ["actions", showIndex index]
-    context = TermContext indexes ownInfo
-    parameterTypes members =
-      withArrayMember path members "parameters" $ \parameterItems ->
-        mconcat
-          [ withObject_ parameterPath parameterValue $ \parameterMembers ->
-              withMember_ parameterPath parameterMembers "type" $
-                walkDeclaredType indexes (parameterPath <> ["type"])
-          | (parameterIndex, parameterValue) <- parameterItems
-          , let parameterPath = path <> ["parameters", showIndex parameterIndex]
-          ]
-    allowPolicy members =
-      withTextMember path members "principalMode" $ \mode ->
-        case mode of
-          "AuthenticatedOnly" ->
-            withMember_
-              path
-              members
-              "allow"
-              (walkPolicyTerm context (path <> ["allow"]))
-          "AnyPrincipal" ->
-            withMember_ path members "allow" $ \allowValue ->
-              withObject_ allowPath allowValue $ \allowMembers ->
-                withMember_
-                  allowPath
-                  allowMembers
-                  "anonymous"
-                  (walkPolicyTerm context (allowPath <> ["anonymous"]))
-                  <> withMember_
-                    allowPath
-                    allowMembers
-                    "authenticated"
-                    (walkPolicyTerm context (allowPath <> ["authenticated"]))
-          _ ->
-            invariantAt
-              (path <> ["principalMode"])
-              ("unexpected principal mode " <> quoted mode)
-      where
-        allowPath = path <> ["allow"]
+    owner = Resolved.EntityId position
+    resolveAttribute (attributePosition, attribute) =
+      Resolved.Attribute
+        (Resolved.AttributeId owner attributePosition)
+        (Syntax.attributeDeclarationPath attribute)
+        (Syntax.attributeDeclarationName attribute)
+        <$> resolveAttributeType indexes (Syntax.attributeDeclarationType attribute)
 
--- | Walk an effect.  Only names are resolved: initializer
--- completeness, endpoint arity and types, payload types, and mutation
--- semantics all remain for later stages.
-walkEffect :: TermContext -> [Text] -> Value -> Reports
-walkEffect context path value =
-  withObject_ path value $ \members ->
-    case textMember path members "kind" of
-      Left broken -> broken
-      Right kind ->
-        case kind of
-          "NoChange" -> mempty
-          "CreateEntity" -> createEntity members
-          "DeleteEntity" ->
-            withMember_ path members "target" (valueAt "target")
-          "SetRelation" ->
-            relationEffect members
-              <> withMember_ path members "payload" (valueAt "payload")
-          "RemoveRelation" -> relationEffect members
-          _ ->
-            invariantAt
-              (path <> ["kind"])
-              ("unexpected effect constructor " <> quoted kind)
+-- | Resolve one enum from its own positional entry: the members (and
+-- their identifiers) come from the entry unchanged, and the optional
+-- order resolves against the same value table enum terms use — even
+-- when the enum's name is duplicated, each declaration keeps its own
+-- entry.
+resolveEnum
+  :: EnumEntry -> Syntax.EnumDeclaration -> Resolve Resolved.EnumDefinition
+resolveEnum entry declaration =
+  Resolved.EnumDefinition
+    (enumEntryId entry)
+    (Syntax.enumDeclarationPath declaration)
+    (Syntax.enumDeclarationName declaration)
+    (enumEntryMembers entry)
+    <$> resolvedOrder
   where
-    indexes = contextIndexes context
-    valueAt segment termValue =
-      fst (walkValueTerm context (path <> [segment]) termValue)
-    relationEffect members =
-      withTextMember
-        path
-        members
-        "relation"
-        (checkRelationReference indexes (path <> ["relation"]))
-        <> withArrayMember path members "endpoints" (mconcat . map endpointTerm)
-    endpointTerm (index, termValue) =
-      fst
-        ( walkValueTerm
-            context
-            (path <> ["endpoints", showIndex index])
-            termValue
-        )
-    createEntity members =
-      case textMember path members "entity" of
-        Left broken -> broken <> initializers members Nothing
-        Right entityName ->
-          checkEntityReference indexes (path <> ["entity"]) entityName
-            <> initializers members (initializerOwner entityName)
-    initializerOwner entityName =
-      case lookupName (entityIndex indexes) entityName of
-        -- Unknown or duplicated target entity: the root problem is
-        -- reported once, and the initializer keys — which cannot be
-        -- resolved without a unique target — are suppressed.  The
-        -- initializer value terms are still walked.
-        NameFound entity -> Just (entityName, entity)
+    enumName = sourcedValue (Syntax.enumDeclarationName declaration)
+    -- Only member existence is checked: whether an order is a
+    -- complete permutation of the values remains a static-typing
+    -- check.
+    resolvedOrder =
+      case Syntax.enumDeclarationOrder declaration of
+        Nothing -> pure Nothing
+        Just orderMembers -> Just <$> traverse resolveOrderMember orderMembers
+    resolveOrderMember (Sourced orderMemberPath memberName) =
+      case Map.lookup memberName (enumEntryValues entry) of
+        Just valueId -> pure (Resolved.Ref orderMemberPath valueId)
+        Nothing ->
+          refuseAt
+            orderMemberPath
+            ( "unknown value "
+                <> quoted memberName
+                <> " in enum "
+                <> quoted enumName
+            )
+
+resolveRelation
+  :: Indexes -> Int -> Syntax.RelationDeclaration -> Resolve Resolved.Relation
+resolveRelation indexes position declaration =
+  Resolved.Relation
+    owner
+    (Syntax.relationDeclarationPath declaration)
+    (Syntax.relationDeclarationName declaration)
+    <$> traverse
+      resolveEndpoint
+      (withPositionsOneOrTwo (Syntax.relationDeclarationEndpoints declaration))
+    <*> resolvePayloadType indexes (Syntax.relationDeclarationPayload declaration)
+  where
+    owner = Resolved.RelationId position
+    resolveEndpoint (endpointPosition, endpoint) =
+      Resolved.Endpoint
+        (Resolved.EndpointId owner endpointPosition)
+        (Syntax.endpointDeclarationPath endpoint)
+        (Syntax.endpointDeclarationName endpoint)
+        <$> resolveEntityReference indexes (Syntax.endpointDeclarationEntity endpoint)
+
+--------------------------------------------------------------------
+-- Internal: actions
+--------------------------------------------------------------------
+
+-- | Resolve one action in its own positional parameter environment,
+-- so every occurrence of a duplicated action name is checked against
+-- its own body.
+resolveAction
+  :: Indexes -> ActionEntry -> Syntax.ActionDeclaration -> Resolve Resolved.Action
+resolveAction indexes entry declaration =
+  Resolved.Action
+    (actionEntryId entry)
+    (Syntax.actionDeclarationPath declaration)
+    (Syntax.actionDeclarationName declaration)
+    <$> traverse
+      resolveParameter
+      (withPositions (Syntax.actionDeclarationParameters declaration))
+    <*> resolveBody (Syntax.actionDeclarationBody declaration)
+  where
+    scope = TermScope indexes (Just entry)
+    resolveParameter (parameterPosition, parameter) =
+      Resolved.Parameter
+        (Resolved.ParameterId (actionEntryId entry) parameterPosition)
+        (Syntax.parameterDeclarationPath parameter)
+        (Syntax.parameterDeclarationName parameter)
+        <$> resolveParameterType indexes (Syntax.parameterDeclarationType parameter)
+    resolveBody body =
+      case body of
+        Syntax.AuthenticatedOnlyBody allow shape ->
+          Resolved.AuthenticatedOnlyBody
+            <$> resolvePolicyTerm scope allow
+            <*> resolveShape scope shape
+        Syntax.AnyPrincipalBody allow shape ->
+          Resolved.AnyPrincipalBody
+            <$> ( Resolved.AnyPrincipalAllow
+                    <$> resolvePolicyTerm scope (Syntax.anyPrincipalAnonymous allow)
+                    <*> resolvePolicyTerm
+                      scope
+                      (Syntax.anyPrincipalAuthenticated allow)
+                )
+            <*> resolveShape scope shape
+
+resolveShape
+  :: TermScope
+  -> Syntax.ActionShape availability
+  -> Resolve (Resolved.ActionShape availability)
+resolveShape scope shape =
+  case shape of
+    Syntax.ReadShape effectPath resultPath observed ->
+      Resolved.ReadShape effectPath resultPath <$> valueOnly scope observed
+    Syntax.CreateShape effect resultPath ->
+      Resolved.CreateShape
+        <$> resolveCreateEntityEffect scope effect
+        <*> pure resultPath
+    Syntax.MutationShape effect resultPath ->
+      Resolved.MutationShape
+        <$> resolveDoneEffect scope effect
+        <*> pure resultPath
+
+-- | Resolve a @CreateEntity@ effect.  Only names are resolved:
+-- initializer completeness and value typing remain for later stages.
+resolveCreateEntityEffect
+  :: TermScope
+  -> Syntax.CreateEntityEffect availability
+  -> Resolve (Resolved.CreateEntityEffect availability)
+resolveCreateEntityEffect scope (Syntax.CreateEntityEffect path entityReference initializers) =
+  Resolved.CreateEntityEffect path
+    <$> entityResolve
+    <*> traverse resolveInitializer initializers
+  where
+    Sourced entitySitePath entityName = entityReference
+    entityLookup = lookupName (entityIndex (scopeIndexes scope)) entityName
+    entityResolve =
+      case entityLookup of
+        NameMissing -> refuseAt entitySitePath ("unknown entity " <> quoted entityName)
+        NameAmbiguous -> suppressed
+        NameFound entry -> pure (Resolved.Ref entitySitePath (entityEntryId entry))
+    -- Unknown or duplicated target entity: the root problem is
+    -- reported once, and the initializer keys — which cannot be
+    -- resolved without a unique target — are suppressed.  The
+    -- initializer value terms are still resolved.
+    targetEntity =
+      case entityLookup of
+        NameFound entry -> Just entry
         NameMissing -> Nothing
         NameAmbiguous -> Nothing
-    initializers members owner =
-      withMember_ path members "attributes" $ \attributesValue ->
-        withObject_ (path <> ["attributes"]) attributesValue $ \attributeMembers ->
-          mconcat
-            [ initializerKey owner keyName keyPath
-                <> fst (walkValueTerm context keyPath termValue)
-            | (key, termValue) <- KeyMap.toList attributeMembers
-            , let keyName = Key.toText key
-                  keyPath = path <> ["attributes", keyName]
-            ]
-    initializerKey owner keyName keyPath =
-      case owner of
-        Nothing -> mempty
-        Just (entityName, entity) ->
-          case lookupName (entityAttributes entity) keyName of
-            NameMissing ->
-              violationAt
-                keyPath
-                ( "unknown attribute "
-                    <> quoted keyName
-                    <> " in entity "
-                    <> quoted entityName
-                )
-            _ -> mempty
+    resolveInitializer (Sourced keyPath keyName, valueTerm) =
+      Resolved.Initializer <$> keyResolve <*> valueOnly scope valueTerm
+      where
+        keyResolve =
+          case targetEntity of
+            Nothing -> suppressed
+            Just entry ->
+              case lookupName (entityEntryAttributes entry) keyName of
+                NameMissing ->
+                  refuseAt
+                    keyPath
+                    ( "unknown attribute "
+                        <> quoted keyName
+                        <> " in entity "
+                        <> quoted (entityEntryName entry)
+                    )
+                NameAmbiguous -> suppressed
+                NameFound (AttributeEntry attributeId _) ->
+                  pure (Resolved.Ref keyPath attributeId)
 
--- | Walk a result.  Whether an @Observe@ term denotes an entity is a
--- static-typing question, not checked here.
-walkResult :: TermContext -> [Text] -> Value -> Reports
-walkResult context path value =
-  withObject_ path value $ \members ->
-    case textMember path members "kind" of
-      Left broken -> broken
-      Right kind ->
-        case kind of
-          "Observe" ->
-            withMember_ path members "entity" $ \termValue ->
-              fst (walkValueTerm context (path <> ["entity"]) termValue)
-          "Created" -> mempty
-          "Done" -> mempty
-          _ ->
-            invariantAt
-              (path <> ["kind"])
-              ("unexpected result constructor " <> quoted kind)
+resolveDoneEffect
+  :: TermScope
+  -> Syntax.DoneEffect availability
+  -> Resolve (Resolved.DoneEffect availability)
+resolveDoneEffect scope effect =
+  case effect of
+    Syntax.NoChangeEffect path -> pure (Resolved.NoChangeEffect path)
+    Syntax.DeleteEntityEffect path target ->
+      Resolved.DeleteEntityEffect path <$> valueOnly scope target
+    Syntax.SetRelationEffect path relationReference endpoints payload ->
+      Resolved.SetRelationEffect path
+        <$> resolveRelationReference (scopeIndexes scope) relationReference
+        <*> traverse (valueOnly scope) endpoints
+        <*> valueOnly scope payload
+    Syntax.RemoveRelationEffect path relationReference endpoints ->
+      Resolved.RemoveRelationEffect path
+        <$> resolveRelationReference (scopeIndexes scope) relationReference
+        <*> traverse (valueOnly scope) endpoints
 
 --------------------------------------------------------------------
--- Internal: guarantees (pass 4)
+-- Internal: guarantees
 --------------------------------------------------------------------
 
--- | Walk one guarantee.  @AuthenticatedMutation@ carries no
--- declaration-name reference beyond its structural target selector;
--- the other two families resolve their case actions, resolve their
--- terms in the referenced action's parameter environment, and — for
--- @NoSelfPrivilegeEscalation@ — resolve the authority relation, its
--- endpoints, and the payload-order enum.
-walkGuarantee :: Indexes -> (Int, Value) -> Reports
-walkGuarantee indexes (index, value) =
-  withObject_ path value $ \members ->
-    case textMember path members "kind" of
-      Left broken -> broken
-      Right kind ->
-        case kind of
-          "AuthenticatedMutation" -> mempty
-          "TenantIsolation" ->
-            withArrayMember path members "cases" (mconcat . map tenantIsolationCase)
-          "NoSelfPrivilegeEscalation" ->
-            withMember_ path members "authority" (authority (path <> ["authority"]))
-              <> withArrayMember path members "cases" (mconcat . map escalationCase)
-          _ ->
-            invariantAt
-              (path <> ["kind"])
-              ("unexpected guarantee constructor " <> quoted kind)
+resolveGuarantee :: Indexes -> Syntax.Guarantee -> Resolve Resolved.Guarantee
+resolveGuarantee indexes guarantee =
+  case guarantee of
+    Syntax.AuthenticatedMutationGuarantee path ->
+      -- No declaration-name reference beyond the structural target
+      -- selector.
+      pure (Resolved.AuthenticatedMutationGuarantee path)
+    Syntax.TenantIsolationGuarantee path cases ->
+      Resolved.TenantIsolationGuarantee path
+        <$> traverse (resolveTenantIsolationCase indexes) cases
+    Syntax.NoSelfPrivilegeEscalationGuarantee path authority cases ->
+      Resolved.NoSelfPrivilegeEscalationGuarantee path
+        <$> resolveAuthority indexes authority
+        <*> traverse (resolveEscalationCase indexes) cases
+
+resolveTenantIsolationCase
+  :: Indexes -> Syntax.TenantIsolationCase -> Resolve Resolved.TenantIsolationCase
+resolveTenantIsolationCase indexes tenantCase =
+  Resolved.TenantIsolationCase
+    (Syntax.tenantIsolationCasePath tenantCase)
+    <$> actionResolve
+    <*> valueOnly scope (Syntax.tenantIsolationCaseTenant tenantCase)
+    <*> resolvePolicyTerm scope (Syntax.tenantIsolationCaseProtected tenantCase)
+    <*> resolvePolicyTerm scope (Syntax.tenantIsolationCaseTenantAccess tenantCase)
   where
-    path = ["guarantees", showIndex index]
-    tenantIsolationCase (caseIndex, caseValue) =
-      let casePath = path <> ["cases", showIndex caseIndex]
-       in withObject_ casePath caseValue $ \caseMembers ->
-            let (actionReports, context) =
-                  caseActionContext indexes casePath caseMembers
-             in actionReports
-                  <> withMember_ casePath caseMembers "tenant" (\termValue ->
-                       fst (walkValueTerm context (casePath <> ["tenant"]) termValue))
-                  <> withMember_
-                    casePath
-                    caseMembers
-                    "protected"
-                    (walkPolicyTerm context (casePath <> ["protected"]))
-                  <> withMember_
-                    casePath
-                    caseMembers
-                    "tenantAccess"
-                    (walkPolicyTerm context (casePath <> ["tenantAccess"]))
-    escalationCase (caseIndex, caseValue) =
-      let casePath = path <> ["cases", showIndex caseIndex]
-       in withObject_ casePath caseValue $ \caseMembers ->
-            let (actionReports, context) =
-                  caseActionContext indexes casePath caseMembers
-             in actionReports
-                  <> withArrayMember casePath caseMembers "scope" (\scopeItems ->
-                       mconcat
-                         [ fst
-                             ( walkValueTerm
-                                 context
-                                 (casePath <> ["scope", showIndex scopeIndex])
-                                 termValue
-                             )
-                         | (scopeIndex, termValue) <- scopeItems
-                         ])
-    authority authorityPath authorityValue =
-      withObject_ authorityPath authorityValue $ \authorityMembers ->
-        authorityRelation authorityPath authorityMembers
-          <> withTextMember
-            authorityPath
-            authorityMembers
-            "payloadOrder"
-            (checkEnumReference indexes (authorityPath <> ["payloadOrder"]))
-    authorityRelation authorityPath authorityMembers =
-      case textMember authorityPath authorityMembers "relation" of
-        Left broken -> broken
-        Right relationName ->
-          let endpointOwner =
-                case lookupName (relationIndex indexes) relationName of
-                  -- An unknown or duplicated authority relation is
-                  -- reported once (below, or at its declaration
-                  -- sites); its endpoint names cannot be resolved and
-                  -- are suppressed.
-                  NameFound relation -> Just relation
-                  NameMissing -> Nothing
-                  NameAmbiguous -> Nothing
-              endpointCheck endpointPath endpointName =
-                case endpointOwner of
-                  Nothing -> mempty
-                  Just relation ->
-                    case lookupName (relationEndpoints relation) endpointName of
-                      NameMissing ->
-                        violationAt
-                          endpointPath
-                          ( "unknown endpoint "
-                              <> quoted endpointName
-                              <> " in relation "
-                              <> quoted relationName
-                          )
-                      _ -> mempty
-           in checkRelationReference
-                indexes
-                (authorityPath <> ["relation"])
-                relationName
-                <> withTextMember
-                  authorityPath
-                  authorityMembers
-                  "subjectEndpoint"
-                  (endpointCheck (authorityPath <> ["subjectEndpoint"]))
-                <> withArrayMember
-                  authorityPath
-                  authorityMembers
-                  "scopeEndpoints"
-                  ( \endpointItems ->
-                      mconcat
-                        [ either id (endpointCheck endpointPath) (requireText endpointPath item)
-                        | (endpointIndex, item) <- endpointItems
-                        , let endpointPath =
-                                authorityPath
-                                  <> ["scopeEndpoints", showIndex endpointIndex]
-                        ]
-                  )
+    (actionResolve, scope) =
+      caseActionScope indexes (Syntax.tenantIsolationCaseAction tenantCase)
+
+resolveEscalationCase
+  :: Indexes -> Syntax.EscalationCase -> Resolve Resolved.EscalationCase
+resolveEscalationCase indexes escalationCase =
+  Resolved.EscalationCase
+    (Syntax.escalationCasePath escalationCase)
+    <$> actionResolve
+    <*> traverse (valueOnly scope) (Syntax.escalationCaseScope escalationCase)
+  where
+    (actionResolve, scope) =
+      caseActionScope indexes (Syntax.escalationCaseAction escalationCase)
 
 -- | Resolve a guarantee case's @action@ reference and produce the
--- term context its terms are resolved in.  An unknown action is
+-- term scope its terms are resolved in.  An unknown action is
 -- reported once at the reference; an unknown or duplicated action
 -- yields a suppressed parameter environment, so the case's terms
 -- produce no dependent parameter errors.
-caseActionContext
-  :: Indexes -> [Text] -> KeyMap.KeyMap Value -> (Reports, TermContext)
-caseActionContext indexes casePath caseMembers =
-  case textMember casePath caseMembers "action" of
-    Left broken -> (broken, TermContext indexes Nothing)
-    Right name ->
-      case lookupName (actionIndex indexes) name of
-        NameMissing ->
-          ( violationAt
-              (casePath <> ["action"])
-              ("unknown action " <> quoted name)
-          , TermContext indexes Nothing
-          )
-        NameAmbiguous -> (mempty, TermContext indexes Nothing)
-        NameFound info -> (mempty, TermContext indexes (Just info))
+caseActionScope
+  :: Indexes -> Sourced Text -> (Resolve (Resolved.Ref Resolved.ActionId), TermScope)
+caseActionScope indexes (Sourced path name) =
+  case lookupName (actionIndex indexes) name of
+    NameMissing ->
+      ( refuseAt path ("unknown action " <> quoted name)
+      , TermScope indexes Nothing
+      )
+    NameAmbiguous -> (suppressed, TermScope indexes Nothing)
+    NameFound entry ->
+      ( pure (Resolved.Ref path (actionEntryId entry))
+      , TermScope indexes (Just entry)
+      )
 
---------------------------------------------------------------------
--- Internal: the document walk
---------------------------------------------------------------------
-
--- | Resolve every name site of the document value, producing raw
--- (unnormalized) reports.
-resolveDocumentValue :: Value -> Reports
-resolveDocumentValue documentValue =
-  case requireObject [] documentValue of
-    Left broken -> broken
-    Right rootMembers ->
-      let schemaPart = requireMember [] rootMembers "schema"
-          actionsPart =
-            requireMember [] rootMembers "actions"
-              >>= requireArray ["actions"]
-          guaranteesPart =
-            requireMember [] rootMembers "guarantees"
-              >>= requireArray ["guarantees"]
-
-          (schemaReports, schemaNamespaces) =
-            case schemaPart of
-              Left broken -> (broken, emptySchemaNamespaces)
-              Right schemaValue -> buildSchemaNamespaces schemaValue
-
-          (actionReports, actionNamespace, positionalActions) =
-            case actionsPart of
-              Left broken -> (broken, emptyNamespace, [])
-              Right actionItems -> buildActions actionItems
-
-          (entityNamespace, enumNamespace, relationNamespace) =
-            schemaNamespaces
-          indexes =
-            Indexes
-              { entityIndex = entityNamespace
-              , enumIndex = enumNamespace
-              , relationIndex = relationNamespace
-              , actionIndex = actionNamespace
-              }
-
-          -- The schema structurally requires an entity named User
-          -- ('contains'); its absence after successful structural
-          -- validation is drift, and Actor terms silently denote it.
-          userEntityReports =
-            case schemaPart of
-              Left _ -> mempty
-              Right _ ->
-                case lookupName entityNamespace distinguishedUserEntity of
-                  NameMissing ->
-                    invariantAt
-                      ["schema", "entities"]
-                      ( "no entity named "
-                          <> quoted distinguishedUserEntity
-                          <> " is declared after structural validation"
-                      )
-                  _ -> mempty
-
-          declarationReports =
-            case schemaPart of
-              Left _ -> mempty
-              Right schemaValue -> checkSchemaDeclarations indexes schemaValue
-
-          actionBodyReports =
-            mconcat (map (walkAction indexes) positionalActions)
-
-          guaranteeReports =
-            case guaranteesPart of
-              Left broken -> broken
-              Right guaranteeItems ->
-                mconcat (map (walkGuarantee indexes) guaranteeItems)
-       in schemaReports
-            <> actionReports
-            <> userEntityReports
-            <> declarationReports
-            <> actionBodyReports
-            <> guaranteeReports
-
-emptySchemaNamespaces
-  :: (Namespace EntityInfo, Namespace EnumInfo, Namespace RelationInfo)
-emptySchemaNamespaces = (emptyNamespace, emptyNamespace, emptyNamespace)
-
--- | Build the three schema namespaces from the raw @schema@ value.
-buildSchemaNamespaces
-  :: Value
-  -> (Reports, (Namespace EntityInfo, Namespace EnumInfo, Namespace RelationInfo))
-buildSchemaNamespaces schemaValue =
-  case requireObject ["schema"] schemaValue of
-    Left broken -> (broken, emptySchemaNamespaces)
-    Right schemaMembers ->
-      let (entityReports, entityNamespace) =
-            buildPart schemaMembers "entities" buildEntities
-          (enumReports, enumNamespace) =
-            buildPart schemaMembers "enums" buildEnums
-          (relationReports, relationNamespace) =
-            buildPart schemaMembers "relations" buildRelations
-       in ( entityReports <> enumReports <> relationReports
-          , (entityNamespace, enumNamespace, relationNamespace)
-          )
+-- | Resolve the @NoSelfPrivilegeEscalation@ authority.  An unknown or
+-- duplicated authority relation is reported once (or at its
+-- declaration sites); its endpoint names cannot be resolved and are
+-- suppressed.  The payload-order enum is independent.
+resolveAuthority :: Indexes -> Syntax.Authority -> Resolve Resolved.Authority
+resolveAuthority indexes authority =
+  Resolved.Authority
+    (Syntax.authorityPath authority)
+    <$> relationResolve
+    <*> resolveEndpoint (Syntax.authoritySubjectEndpoint authority)
+    <*> traverse resolveEndpoint (Syntax.authorityScopeEndpoint authority)
+    <*> pure (Syntax.authorityAbsenceLevel authority)
+    <*> resolveEnumReference indexes (Syntax.authorityPayloadOrder authority)
   where
-    buildPart schemaMembers name build =
-      case requireMember ["schema"] schemaMembers name
-        >>= requireArray ["schema", name] of
-        Left broken -> (broken, emptyNamespace)
-        Right items -> build items
+    Sourced relationSitePath relationName = Syntax.authorityRelation authority
+    relationLookup = lookupName (relationIndex indexes) relationName
+    relationResolve =
+      case relationLookup of
+        NameMissing ->
+          refuseAt relationSitePath ("unknown relation " <> quoted relationName)
+        NameAmbiguous -> suppressed
+        NameFound (RelationEntry relationId _) ->
+          pure (Resolved.Ref relationSitePath relationId)
+    endpointNamespace =
+      case relationLookup of
+        NameFound (RelationEntry _ endpoints) -> Just endpoints
+        NameMissing -> Nothing
+        NameAmbiguous -> Nothing
+    resolveEndpoint (Sourced endpointSitePath endpointName) =
+      case endpointNamespace of
+        Nothing -> suppressed
+        Just endpoints ->
+          case lookupName endpoints endpointName of
+            NameMissing ->
+              refuseAt
+                endpointSitePath
+                ( "unknown endpoint "
+                    <> quoted endpointName
+                    <> " in relation "
+                    <> quoted relationName
+                )
+            NameAmbiguous -> suppressed
+            NameFound endpointId ->
+              pure (Resolved.Ref endpointSitePath endpointId)
+
+--------------------------------------------------------------------
+-- Internal: the document
+--------------------------------------------------------------------
+
+-- | Resolve a decoded document: build every namespace (reporting all
+-- duplicates), then resolve every declaration, action, and guarantee
+-- into the identifier-based model.  Violations aggregate across the
+-- whole document; the model exists only when every part resolved.
+resolveDocument :: Syntax.Document -> Resolve Resolved.Model
+resolveDocument document =
+  reporting duplicateReports
+    *> ( Resolved.Model (Syntax.documentName document)
+           <$> traverse
+             (uncurry (resolveEntity indexes))
+             (withPositions (Syntax.documentEntities document))
+           <*> traverse
+             (uncurry resolveEnum)
+             (zip positionalEnums (Syntax.documentEnums document))
+           <*> traverse
+             (uncurry (resolveRelation indexes))
+             (withPositions (Syntax.documentRelations document))
+           <*> traverse
+             (uncurry (resolveAction indexes))
+             (zip positionalActions (Syntax.documentActions document))
+           <*> traverse
+             (resolveGuarantee indexes)
+             (Syntax.documentGuarantees document)
+       )
+  where
+    (duplicateReports, indexes, positionalEnums, positionalActions) =
+      buildIndexes document

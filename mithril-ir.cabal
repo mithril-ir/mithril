@@ -11,11 +11,15 @@ description:
   environment lookup selects the grammar — and complete Core v0 name
   resolution: declaration-name uniqueness in every global and
   owner-local namespace, and resolution of every name reference in
-  its correct namespace.  The resolved stage is an opaque attestation
-  about names only, not typed normalized Core; no static typechecker,
-  normalizer, verifier, proof generator or checker, runtime
-  enforcement, or target generator is implemented yet, and acceptance
-  neither verifies a model nor establishes any guarantee.
+  its correct namespace.  A successfully resolved document is carried
+  as an explicit internal decoded and name-resolved Core
+  representation (identifier-based references with JSON source paths;
+  generic JSON ends at the internal decode boundary), but the
+  resolved stage remains an opaque attestation about names only, not
+  typed normalized Core; no static typechecker, normalizer, verifier,
+  proof generator or checker, runtime enforcement, or target
+  generator is implemented yet, and acceptance neither verifies a
+  model nor establishes any guarantee.
 homepage:           https://github.com/mithril-ir/mithril
 bug-reports:        https://github.com/mithril-ir/mithril/issues
 license:            Apache-2.0
@@ -41,9 +45,11 @@ extra-source-files:
     cabal.project.probes
     core/schema.json
     examples/acme/acme.mir.json
+    test/api-probes/internal/*.hs
     test/api-probes/probe/*.hs
     test/api-probes/probe/probe.cabal
     test/api-probes/run-api-probes.sh
+    test/fixtures/coverage.mir.json
     test/fixtures/malformed.mir.json
     test/fixtures/near-core.mir.json
     test/fixtures/unknown-name.mir.json
@@ -57,6 +63,14 @@ source-repository head
 -- cabal.project switches on for every local and CI build.
 flag werror
   description: Treat GHC warnings as errors.
+  manual:      True
+  default:     False
+
+-- Gates the expected-to-fail in-package non-coercion probe
+-- executables at the end of this file; see the comment there.  Must
+-- stay off (the default) for every canonical build.
+flag internal-probes
+  description: Build the in-package identifier non-coercion probes (expected-to-fail compilations driven by test/api-probes/run-api-probes.sh).
   manual:      True
   default:     False
 
@@ -75,6 +89,32 @@ common shared
   if flag(werror)
     ghc-options: -Werror
 
+-- The stage machinery and the explicit decoded and name-resolved Core
+-- representation (Document, Resolved, SourcePath, Syntax) live in
+-- this package-private named sublibrary.  That is an internal
+-- testability and encapsulation mechanism, not a packaging or
+-- distribution decision: visibility: private means no other package
+-- can depend on it or import its modules — the downstream
+-- compile-fail probes pin exactly that — while this package's own
+-- test suite can inspect the real production model and the
+-- in-package probes can prove the identifier namespaces
+-- non-coercible.  Never make it public, never add it to a downstream
+-- package's dependencies, and never re-export its modules from the
+-- public library.
+library core-internal
+  import:          shared
+  visibility:      private
+  hs-source-dirs:  src-internal
+  exposed-modules:
+    Mithril.Core.Internal.Document
+    Mithril.Core.Internal.Resolved
+    Mithril.Core.Internal.SourcePath
+    Mithril.Core.Internal.Syntax
+
+  build-depends:
+    , aeson >= 2.2 && < 2.3
+    , text >= 2.1 && < 2.2
+
 library
   import:          shared
   hs-source-dirs:  src
@@ -84,16 +124,21 @@ library
     Mithril.Core.Resolution
     Mithril.Core.Validation
 
-  -- Mithril.Core.Internal.Document owns the opaque CoreDocument
-  -- representation and its stage indexes; Mithril.Core.Internal.BundledSchema
-  -- owns the compile-time-embedded bytes of core/schema.json.  Neither
-  -- must ever move to exposed-modules: hiding them is what keeps
-  -- external code from constructing documents, extracting their JSON,
-  -- coercing one pipeline stage into another, or validating against
-  -- anything but the canonical schema.
+  -- Mithril.Core.Internal.BundledSchema owns the compile-time-embedded
+  -- bytes of core/schema.json; Report owns the frontend's diagnostic
+  -- vocabulary; Decode owns the one JSON reading that produces the
+  -- decoded representation.  The representation itself sits in the
+  -- private core-internal sublibrary above.  None of these modules
+  -- may ever move to exposed-modules (nor the sublibrary to public
+  -- visibility): hiding them is what keeps external code from
+  -- constructing documents or resolved nodes, minting or coercing
+  -- identifiers, extracting the underlying payload, coercing one
+  -- pipeline stage into another, or validating against anything but
+  -- the canonical schema.
   other-modules:
     Mithril.Core.Internal.BundledSchema
-    Mithril.Core.Internal.Document
+    Mithril.Core.Internal.Decode
+    Mithril.Core.Internal.Report
 
   -- template-haskell serves exactly one purpose: embedding
   -- core/schema.json into the library at compile time, so that no
@@ -104,6 +149,7 @@ library
     , bytestring >= 0.12 && < 0.13
     , containers >= 0.7 && < 0.8
     , jsonschema >= 0.3.0.1 && < 0.4
+    , mithril-ir:core-internal
     , regex-tdfa >= 1.3.1 && < 1.4
     , template-haskell >= 2.23 && < 2.24
     , text >= 2.1 && < 2.2
@@ -126,6 +172,8 @@ test-suite mithril-ir-test
   other-modules:
     Mithril.CLIProcessTests
     Mithril.CLITests
+    Mithril.CoreModelTests
+    Mithril.CoreRepresentationTests
     Mithril.CoreResolutionTests
     Mithril.CoreValidationTests
     Mithril.Test
@@ -135,14 +183,56 @@ test-suite mithril-ir-test
   -- PATH by build-tool-depends) for the process-level CLI regression
   -- tests; directory and filepath exist only so the schema-override
   -- regressions can build and reliably remove a collision-safe
-  -- scratch data directory.  No test framework is used.
+  -- scratch data directory.  The private core-internal sublibrary is
+  -- the deliberate white-box seam: it lets Mithril.CoreModelTests
+  -- inspect the real resolved model produced by the public pipeline
+  -- without exposing any internal module to code outside this
+  -- package.  No test framework is used.
   build-depends:
     , aeson >= 2.2 && < 2.3
     , bytestring >= 0.12 && < 0.13
     , directory >= 1.3 && < 1.4
     , filepath >= 1.5 && < 1.6
     , mithril-ir
+    , mithril-ir:core-internal
     , process >= 1.6 && < 1.7
     , text >= 2.1 && < 2.2
   build-tool-depends:
     mithril-ir:mithril
+
+-- The in-package identifier non-coercion probes: executables of this
+-- package (so they legitimately depend on the private core-internal
+-- sublibrary and import the real internal identifier definitions),
+-- driven by test/api-probes/run-api-probes.sh alongside the
+-- downstream probes.  The control must compile; the two attack
+-- executables must FAIL to compile — GHC refusing the cross-namespace
+-- coercion is the point — so the manual internal-probes flag
+-- (declared next to werror above) stays off for every canonical
+-- build, and the probe script enables it with a solver constraint
+-- inside its own build directory.
+executable probe-internal-control
+  import:          shared
+  hs-source-dirs:  test/api-probes/internal
+  main-is:         InternalControl.hs
+  build-depends:   mithril-ir:core-internal
+
+  if !flag(internal-probes)
+    buildable: False
+
+executable probe-internal-coerce-entity-enum
+  import:          shared
+  hs-source-dirs:  test/api-probes/internal
+  main-is:         CoerceEntityEnum.hs
+  build-depends:   mithril-ir:core-internal
+
+  if !flag(internal-probes)
+    buildable: False
+
+executable probe-internal-coerce-relation-action
+  import:          shared
+  hs-source-dirs:  test/api-probes/internal
+  main-is:         CoerceRelationAction.hs
+  build-depends:   mithril-ir:core-internal
+
+  if !flag(internal-probes)
+    buildable: False
