@@ -115,6 +115,26 @@
 -- What this stage does /not/ establish: no policy evaluation, no
 -- guarantee truth, no normalization, no verification.  A well-typed
 -- document is not typed /normalized/ Core and proves no property.
+--
+-- == The shared type-query facility
+--
+-- Besides the checking pass, this module exposes — to this package
+-- only — the total elaboration/type-query facility the normalizer
+-- ("Mithril.Core.Internal.Normalize") consumes: the model
+-- 'Signature', the term-checking 'Env', the 'inferValue' and
+-- 'inferPolicy' judgments, and the ordered-operand classification
+-- 'orderedVerdict' (built on the shared 'orderedPolicyType' shape and
+-- yielding the 'Mithril.Core.Internal.StaticType.OrderedType'
+-- evidence a normalized comparison stores), plus the signature
+-- lookups and term-path projections the normalizer's walk needs.
+-- Together with the declared-type projections of
+-- "Mithril.Core.Internal.StaticType" this is the one statement of the
+-- Core v0 typing judgment: the normalizer calls these functions to
+-- obtain every determined type and every ordered reading and never
+-- restates an inference or classification rule, and on a document
+-- that already passed 'checkModel' the queries report no user
+-- violation — any problem they do report there is reclassified by the
+-- normalizer as an internal error.
 module Mithril.Core.Internal.Typecheck
   ( -- * Violations
     TypeViolation (..)
@@ -123,6 +143,22 @@ module Mithril.Core.Internal.Typecheck
 
     -- * The checking pass
   , checkModel
+
+    -- * The shared type-query facility
+  , Check
+  , Signature
+  , buildSignature
+  , Env (..)
+  , inferValue
+  , inferPolicy
+  , OrderedVerdict (..)
+  , orderedVerdict
+  , entitySig
+  , relationSig
+  , enumSigAt
+  , caseEnv
+  , valueTermPath
+  , policyTermPath
   ) where
 
 import Data.Foldable (toList, traverse_)
@@ -145,6 +181,16 @@ import Mithril.Core.Internal.SourcePath
   ( SourcePath
   , Sourced (..)
   , sourcePathSegments
+  )
+import Mithril.Core.Internal.StaticType
+  ( OrderedType
+  , PolicyType (..)
+  , ValueType (..)
+  , attributeStaticType
+  , orderedPolicyType
+  , orderedTypeEnum
+  , parameterStaticType
+  , payloadStaticType
   )
 import Mithril.Core.Internal.Syntax
   ( OneOrTwo (..)
@@ -219,49 +265,17 @@ invariant path message =
 -- The type language
 --------------------------------------------------------------------
 
--- | The Core v0 value types: the types of value terms and of
--- attribute, parameter, and payload declarations.
-data ValueType
-  = BoolType
-  | UnitType
-  | EnumType EnumId
-  | EntityRefType EntityId
-  deriving (Eq)
-
--- | The Core v0 policy types: every value type plus the optional
--- types that model relation-payload presence.  Optionals nest one
--- level by construction ('SomeTerm' wraps a value term).
-data PolicyType
-  = ValuePolicyType ValueType
-  | OptionalPolicyType ValueType
-  deriving (Eq)
+-- The Core v0 type language — 'ValueType' and 'PolicyType' — lives in
+-- "Mithril.Core.Internal.StaticType" (package-private sublibrary), so
+-- this judgment and the normalized representation that carries its
+-- results share one definition.  The same module holds the one
+-- statement of each declared-type projection ('attributeStaticType',
+-- 'parameterStaticType', 'payloadStaticType') and of the ordered
+-- operand shape ('orderedPolicyType'); this checker consumes those
+-- definitions and restates none of their cases.
 
 boolPolicyType :: PolicyType
 boolPolicyType = ValuePolicyType BoolType
-
--- | The value type of a declared attribute type.
-attributeValueType :: AttributeType -> ValueType
-attributeValueType declared =
-  case declared of
-    BoolAttributeType _ -> BoolType
-    EnumAttributeType _ ref -> EnumType (refTarget ref)
-    EntityRefAttributeType _ ref -> EntityRefType (refTarget ref)
-
--- | The value type of a declared parameter type.
-parameterValueType :: ParameterType -> ValueType
-parameterValueType declared =
-  case declared of
-    BoolParameterType _ -> BoolType
-    UnitParameterType _ -> UnitType
-    EnumParameterType _ ref -> EnumType (refTarget ref)
-    EntityRefParameterType _ ref -> EntityRefType (refTarget ref)
-
--- | The value type of a declared relation payload type.
-payloadValueType :: PayloadType -> ValueType
-payloadValueType declared =
-  case declared of
-    UnitPayloadType _ -> UnitType
-    EnumPayloadType _ ref -> EnumType (refTarget ref)
 
 --------------------------------------------------------------------
 -- The signature
@@ -487,7 +501,7 @@ inferValue env term =
                 "an argument reference escapes its action's parameter environment"
             else
               parameterSig sig parameterRef `andThen` \parameter ->
-                pure (parameterValueType (parameterType parameter))
+                pure (parameterStaticType (parameterType parameter))
     ActorTerm path userEntity ->
       case signatureUser sig of
         Just distinguished
@@ -504,7 +518,7 @@ inferValue env term =
         let AttributeId owner _ = refTarget attributeRef
          in inferValue env source `andThen` \sourceType ->
               if sourceType == EntityRefType owner
-                then pure (attributeValueType (attributeType attribute))
+                then pure (attributeStaticType (attributeType attribute))
                 else
                   invariant
                     (valueTermPath source)
@@ -524,8 +538,8 @@ inferPolicy env term =
     LookupTerm path relationRef endpointTerms ->
       relationSig sig relationRef `andThen` \relation ->
         checkEndpointTerms env path relation (toList endpointTerms)
-          *> pure (OptionalPolicyType (payloadValueType (relationPayload relation)))
-    NoneTerm _ payload -> pure (OptionalPolicyType (payloadValueType payload))
+          *> pure (OptionalPolicyType (payloadStaticType (relationPayload relation)))
+    NoneTerm _ payload -> pure (OptionalPolicyType (payloadStaticType payload))
     SomeTerm _ valueTerm -> OptionalPolicyType <$> inferValue env valueTerm
     IsSomeTerm _ operand ->
       ( inferPolicy env operand `andThen` \operandType ->
@@ -584,41 +598,68 @@ checkComparison env operator path left right whenCompatible =
                 <> describePolicyType (envSignature env) rightType
             )
 
+-- | The complete ordered classification of a @LessOrEqual@ operand
+-- type: the shape half is the shared 'orderedPolicyType' (the one
+-- statement of which types are ordered-shaped), and the model half —
+-- whether the named enum actually declares an order — is judged here
+-- against the signature.  Both consumers of the classification go
+-- through this one function: the checking rule ('requireOrdered')
+-- maps the verdict to its user diagnostics, and the normalizer
+-- ("Mithril.Core.Internal.Normalize") stores the 'OrderedAt' evidence
+-- on the normalized comparison node.  A dangling enum identifier
+-- inside the type is an internal invariant, exactly as in every other
+-- signature lookup.
+data OrderedVerdict
+  = -- | The operand type is ordered: ordered shape, and the enum
+    -- declares an order.
+    OrderedAt OrderedType
+  | -- | The operand type has an ordered shape, but the enum declares
+    -- no order.
+    UnrankedEnum OrderedType
+  | -- | The operand type has no ordered shape at all.
+    NotOrdered
+
+-- | Classify a @LessOrEqual@ operand type; see 'OrderedVerdict'.
+orderedVerdict :: Signature -> SourcePath -> PolicyType -> Check OrderedVerdict
+orderedVerdict sig path operandType =
+  case orderedPolicyType operandType of
+    Nothing -> pure NotOrdered
+    Just evidence ->
+      enumSigAt sig path (orderedTypeEnum evidence) `andThen` \definition ->
+        case enumDefinitionOrder definition of
+          Just _ -> pure (OrderedAt evidence)
+          Nothing -> pure (UnrankedEnum evidence)
+
 -- | The shared operand type of a @LessOrEqual@ must be ordered:
 -- @Enum E@ or @Optional (Enum E)@ where @E@ declares an explicit
 -- order (mirroring the kernel's ordered types, with absence as
--- bottom on the optional level).  An /incomplete/ declared order is
--- reported at the enum declaration, not here.
+-- bottom on the optional level).  The classification itself is the
+-- shared 'orderedVerdict'; this rule only maps its refusals to the
+-- user diagnostics.  An /incomplete/ declared order is reported at
+-- the enum declaration, not here.
 requireOrdered :: Env -> SourcePath -> PolicyType -> Check ()
 requireOrdered env path operandType =
-  case orderedCandidate of
-    Nothing ->
-      flagged
-        path
-        ( "the operands of \"LessOrEqual\" have type "
-            <> describePolicyType sig operandType
-            <> ", which has no order"
-        )
-    Just enumTarget ->
-      enumSigAt sig path enumTarget `andThen` \definition ->
-        case enumDefinitionOrder definition of
-          Just _ -> pure ()
-          Nothing ->
-            flagged
-              path
-              ( "the operands of \"LessOrEqual\" have type "
-                  <> describePolicyType sig operandType
-                  <> ", but enum "
-                  <> enumLabel sig enumTarget
-                  <> " declares no order"
-              )
+  orderedVerdict sig path operandType `andThen` \verdict ->
+    case verdict of
+      OrderedAt _ -> pure ()
+      UnrankedEnum evidence ->
+        flagged
+          path
+          ( "the operands of \"LessOrEqual\" have type "
+              <> describePolicyType sig operandType
+              <> ", but enum "
+              <> enumLabel sig (orderedTypeEnum evidence)
+              <> " declares no order"
+          )
+      NotOrdered ->
+        flagged
+          path
+          ( "the operands of \"LessOrEqual\" have type "
+              <> describePolicyType sig operandType
+              <> ", which has no order"
+          )
   where
     sig = envSignature env
-    orderedCandidate =
-      case operandType of
-        ValuePolicyType (EnumType enumTarget) -> Just enumTarget
-        OptionalPolicyType (EnumType enumTarget) -> Just enumTarget
-        _ -> Nothing
 
 -- | A policy position that must have type @Bool@: allow policies,
 -- boolean operands, and the boolean guarantee-case terms.
@@ -805,7 +846,7 @@ checkCreateEntityEffect env effect =
                   attributeSig sig keyRef `andThen` \attribute ->
                     inferValue env (initializerValue initializer)
                       `andThen` \valueType ->
-                        let expected = attributeValueType (attributeType attribute)
+                        let expected = attributeStaticType (attributeType attribute)
                          in if valueType == expected
                               then pure ()
                               else
@@ -844,7 +885,7 @@ checkDoneEffect env effect =
     sig = envSignature env
     checkPayloadTerm relation payload =
       inferValue env payload `andThen` \payloadType ->
-        let expected = payloadValueType (relationPayload relation)
+        let expected = payloadStaticType (relationPayload relation)
          in if payloadType == expected
               then pure ()
               else

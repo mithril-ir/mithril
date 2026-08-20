@@ -1,14 +1,16 @@
 -- Control (must compile): the legitimate public pipeline, written
--- exactly as a downstream consumer would write it — through static
--- typing.  If this probe ever stops compiling, the probe environment
--- itself is broken and the attack probes' failures prove nothing —
--- the driver therefore builds this one first and requires success.
+-- exactly as a downstream consumer would write it — through
+-- normalization.  If this probe ever stops compiling, the probe
+-- environment itself is broken and the attack probes' failures prove
+-- nothing — the driver therefore builds this one first and requires
+-- success.
 module Main
   ( main
   ) where
 
 import qualified Data.ByteString.Char8 as Char8
 
+import Mithril.Core.Normalization (normalizeCoreDocument)
 import Mithril.Core.Resolution (resolveCoreDocument)
 import Mithril.Core.Typing (typecheckCoreDocument)
 import Mithril.Core.Validation
@@ -33,4 +35,7 @@ main =
                 Right resolvedDocument ->
                   case typecheckCoreDocument resolvedDocument of
                     Left _ -> putStrLn "ill-typed"
-                    Right _ -> putStrLn "typed"
+                    Right typedDocument ->
+                      case normalizeCoreDocument typedDocument of
+                        Left _ -> putStrLn "internal normalizer error"
+                        Right _ -> putStrLn "normalized"

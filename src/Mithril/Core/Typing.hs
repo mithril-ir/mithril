@@ -50,9 +50,11 @@
 -- Core: no normalization, no policy evaluation, no guarantee
 -- verification, no proof generation or checking, and no code
 -- generation happened, and no semantic or security property is
--- established.  Selecting a guarantee remains selecting a proof
--- obligation; a well-typed document's guarantees are still
--- unverified.
+-- established.  The next frontend stage, deterministic
+-- normalization, lives in "Mithril.Core.Normalization" and consumes
+-- the typed document this module produces.  Selecting a guarantee
+-- remains selecting a proof obligation; a well-typed document's
+-- guarantees are still unverified.
 --
 -- == Failure classification
 --

@@ -60,12 +60,13 @@
 -- compatibility at lookup and effect sites, effect value typing,
 -- @CreateEntity@ initializer completeness and value typing, result
 -- typing, and guarantee well-typedness all belong to the next stage,
--- the static typechecker ("Mithril.Core.Typing"), while policy
--- evaluation, guarantee truth, and normalization remain unimplemented
--- beyond it.  A structurally valid document can therefore resolve
--- successfully and still fail the typechecker.  A @'CoreDocument'
--- 'Resolved'@ is an attestation about names only — /not/ typed
--- normalized Core, and no semantic or security property.
+-- the static typechecker ("Mithril.Core.Typing"), with normalization
+-- ("Mithril.Core.Normalization") after it, while policy evaluation
+-- and guarantee truth remain unimplemented beyond the frontend.  A
+-- structurally valid document can therefore resolve successfully and
+-- still fail the typechecker.  A @'CoreDocument' 'Resolved'@ is an
+-- attestation about names only — /not/ typed normalized Core, and no
+-- semantic or security property.
 --
 -- == Failure classification
 --

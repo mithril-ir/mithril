@@ -7,7 +7,7 @@ description:
   exactly as an external package would write them (depending on
   mithril-ir as an external package, never by adding its src/ to a
   module search path).  One executable — probe-control — is the
-  legitimate external-consumer control and must COMPILE; the eleven
+  legitimate external-consumer control and must COMPILE; the fifteen
   attack executables must each FAIL to compile for their intended
   boundary reason.  The driver test/api-probes/run-api-probes.sh
   builds them one by one and treats a failing control, a compiling
@@ -27,8 +27,8 @@ flag werror
   manual:      True
   default:     False
 
--- Every probe component — the control and the eleven attacks —
--- imports this stanza, so all twelve compile under the same warning
+-- Every probe component — the control and the fifteen attacks —
+-- imports this stanza, so all sixteen compile under the same warning
 -- set as the repository's own components, with -Werror active; the
 -- driver verifies both from the generated build plan and from this
 -- file.
@@ -125,3 +125,29 @@ executable probe-hidden-typecheck
 executable probe-forge-typed
   import:  probe
   main-is: ForgeTyped.hs
+
+-- Attack 12: coerce a Typed document to Normalized, bypassing the
+-- normalizer.
+executable probe-coerce-normalized
+  import:  probe
+  main-is: CoerceNormalized.hs
+
+-- Attack 13: forge a Normalized document with the CoreDocument
+-- constructor.
+executable probe-forge-normalized
+  import:  probe
+  main-is: ForgeNormalized.hs
+
+-- Attack 14: import the hidden module that owns the explicit typed
+-- normalized representation (also the only route to constructing
+-- normalized nodes or recovering the internal model, neither of
+-- which can even be named without this import).
+executable probe-hidden-normalized
+  import:  probe
+  main-is: HiddenNormalized.hs
+
+-- Attack 15: import the hidden module that owns the Core v0
+-- normalization pass.
+executable probe-hidden-normalizer
+  import:  probe
+  main-is: HiddenNormalizer.hs

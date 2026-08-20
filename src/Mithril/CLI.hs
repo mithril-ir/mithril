@@ -8,7 +8,8 @@
 -- The tool understands the self-describing invocations plus one real
 -- command: @validate FILE@, JSON parsing plus structural Core v0
 -- validation plus complete name resolution plus complete static
--- typing.  No later compiler stage exists yet.
+-- typing plus deterministic normalization.  No later compiler stage
+-- exists yet.
 module Mithril.CLI
   ( Command (..)
   , parseCommand
@@ -26,8 +27,8 @@ data Command
   | -- | Print the package version and exit successfully.
     ShowVersion
   | -- | Parse FILE, validate it structurally against the compiled-in
-    -- Core v0 schema, resolve every Core v0 name, and typecheck the
-    -- resolved document.
+    -- Core v0 schema, resolve every Core v0 name, typecheck the
+    -- resolved document, and normalize the typed document.
     Validate FilePath
   deriving (Eq, Show)
 
@@ -116,21 +117,24 @@ renderHelp =
     , "  mithril --version      Print the package version."
     , "  mithril validate FILE  Parse FILE as JSON, check it against the"
     , "                         compiled-in Mithril Core v0 schema,"
-    , "                         resolve every Core v0 name, and typecheck"
-    , "                         the resolved document."
+    , "                         resolve every Core v0 name, typecheck the"
+    , "                         resolved document, and normalize the"
+    , "                         typed document."
     , ""
     , "validate performs JSON parsing, structural Core v0 validation"
     , "against the supported profile of core/schema.json (compiled into"
     , "the tool at build time), complete Core v0 name resolution:"
     , "declaration-name uniqueness in every namespace and resolution"
-    , "of every name reference in its namespace, and complete Core v0"
+    , "of every name reference in its namespace, complete Core v0"
     , "static typing of the resolved document: term, policy, effect and"
     , "result types, operand and relation-endpoint compatibility,"
     , "enum-order permutation validity, initializer completeness, and"
-    , "guarantee well-typedness. It is"
-    , "not semantic verification and not proof checking; it does not"
-    , "normalize, evaluate policies, verify guarantees, or generate"
-    , "anything."
+    , "guarantee well-typedness, and deterministic normalization of the"
+    , "well-typed document into the internal typed normalized Core. It is"
+    , "not semantic verification and not proof checking; normalization"
+    , "is structural only (no boolean simplification, constant folding,"
+    , "or policy evaluation), and validate does not verify guarantees"
+    , "or generate anything."
     , "No other compiler stage is implemented yet."
     ]
 
