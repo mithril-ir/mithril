@@ -60,7 +60,7 @@ import Mithril.Command.Validate
   ( ValidateFileError (..)
   , validateCoreFile
   )
-import Mithril.Core.Typing (Typed)
+import Mithril.Core.Normalization (Normalized)
 import Mithril.Core.Resolution
   ( ResolutionFailure (..)
   , ResolutionViolation (..)
@@ -121,7 +121,7 @@ withCoverage bytes buildChecks =
 -- The complete public pipeline over the coverage fixture
 --------------------------------------------------------------------
 
-fileChecks :: Either ValidateFileError (CoreDocument Typed) -> [Check]
+fileChecks :: Either ValidateFileError (CoreDocument Normalized) -> [Check]
 fileChecks fileOutcome =
   [ check
       "the coverage fixture reaches static typing through the file pipeline and is rejected there"

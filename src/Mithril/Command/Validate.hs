@@ -9,10 +9,11 @@
 -- stays a thin dispatcher.
 --
 -- The command establishes structural Core v0 validity plus complete
--- Core v0 name resolution plus complete Core v0 static typing —
--- nothing more (see "Mithril.Core.Validation",
--- "Mithril.Core.Resolution", and "Mithril.Core.Typing" for the exact
--- non-claims).
+-- Core v0 name resolution plus complete Core v0 static typing plus
+-- deterministic Core v0 normalization — nothing more (see
+-- "Mithril.Core.Validation", "Mithril.Core.Resolution",
+-- "Mithril.Core.Typing", and "Mithril.Core.Normalization" for the
+-- exact non-claims).
 module Mithril.Command.Validate
   ( ValidateFileError (..)
   , validateCoreFile
@@ -32,6 +33,12 @@ import qualified Data.Text as Text
 import System.Exit (ExitCode (..))
 import System.IO.Error (ioeGetErrorString)
 
+import Mithril.Core.Normalization
+  ( NormalizationFailure (..)
+  , Normalized
+  , NormalizerInvariantViolation (..)
+  , normalizeCoreDocument
+  )
 import Mithril.Core.Resolution
   ( ResolutionFailure (..)
   , ResolutionViolation (..)
@@ -41,7 +48,6 @@ import Mithril.Core.Resolution
 import Mithril.Core.Typing
   ( TypeViolation (..)
   , TypecheckerInvariantViolation (..)
-  , Typed
   , TypingFailure (..)
   , typecheckCoreDocument
   )
@@ -85,23 +91,29 @@ data ValidateFileError
     -- bug).  This is an internal error of the tool, never a
     -- user-document problem.
     InternalTypecheckerError (NonEmpty TypecheckerInvariantViolation)
+  | -- | The normalizer hit inconsistencies of the well-typed
+    -- document (frontend drift or a typechecker\/normalizer bug).
+    -- Normalization has no user-error class — a well-typed document
+    -- normalizes — so this is always an internal error of the tool,
+    -- never a user-document problem.
+    InternalNormalizerError (NonEmpty NormalizerInvariantViolation)
   deriving (Eq, Show)
 
 -- | Read FILE, parse it as JSON, validate it structurally against the
 -- compiled-in canonical Core v0 schema, resolve every Core v0 name,
--- and typecheck the resolved document.
+-- typecheck the resolved document, and normalize the typed document.
 --
 -- Expected failures — an unreadable file, malformed JSON, structural
 -- violations, name-resolution violations, static-typing violations,
--- a broken compiled-in schema, or a resolver- or
--- typechecker-invariant failure — are returned in 'Left';
+-- a broken compiled-in schema, or a resolver-, typechecker-, or
+-- normalizer-invariant failure — are returned in 'Left';
 -- 'IOException's from reading the user file are caught and
 -- classified.  The schema itself involves no run-time I\/O
 -- ('bundledCoreSchema' is pure), so no environment override can
 -- substitute it.
 validateCoreFile
   :: FilePath
-  -> IO (Either ValidateFileError (CoreDocument Typed))
+  -> IO (Either ValidateFileError (CoreDocument Normalized))
 validateCoreFile file =
   case bundledCoreSchema of
     Left schemaError -> pure (Left (InternalSchemaError schemaError))
@@ -133,12 +145,17 @@ validateCoreFile file =
                           Left (FileTypeViolations file violations)
                         Left (TypecheckerInvariantViolations problems) ->
                           Left (InternalTypecheckerError problems)
-                        Right typedDocument -> Right typedDocument
+                        Right typedDocument ->
+                          case normalizeCoreDocument typedDocument of
+                            Left (NormalizerInvariantViolations problems) ->
+                              Left (InternalNormalizerError problems)
+                            Right normalizedDocument ->
+                              Right normalizedDocument
 
 -- | The single success line, for stdout.
 renderValidateSuccess :: FilePath -> Text
 renderValidateSuccess file =
-  displayPath file <> ": valid Mithril Core v0 through static typing"
+  displayPath file <> ": valid Mithril Core v0 through normalization"
 
 -- | Render a failure for stderr.  The result has no trailing newline;
 -- print it with a newline-appending writer.  Rendering is pure and
@@ -225,20 +242,36 @@ renderValidateFailure failure =
               | problem <- NonEmpty.toList problems
               ]
         )
+    InternalNormalizerError problems ->
+      Text.intercalate
+        "\n"
+        ( ( internalNormalizerPrefix
+              <> "the well-typed document does not match the"
+              <> " normalizer's Core v0 interpretation"
+          )
+            : [ "  "
+                  <> renderJsonPointer (normalizerInvariantPath problem)
+                  <> ": "
+                  <> escapeControlChars (normalizerInvariantMessage problem)
+              | problem <- NonEmpty.toList problems
+              ]
+        )
   where
     internalSchemaPrefix = "mithril: internal Core schema error: "
     internalResolverPrefix = "mithril: internal Core resolver error: "
     internalTypecheckerPrefix = "mithril: internal Core typechecker error: "
+    internalNormalizerPrefix = "mithril: internal Core normalizer error: "
 
 -- | Exit classification: user-input failures exit @1@; internal
--- compiled-in-schema, resolver, and typechecker failures exit @2@.
--- (Success exits @0@ and is not a 'ValidateFileError'.)
+-- compiled-in-schema, resolver, typechecker, and normalizer failures
+-- exit @2@.  (Success exits @0@ and is not a 'ValidateFileError'.)
 failureExitCode :: ValidateFileError -> ExitCode
 failureExitCode failure =
   case failure of
     InternalSchemaError _ -> ExitFailure 2
     InternalResolverError _ -> ExitFailure 2
     InternalTypecheckerError _ -> ExitFailure 2
+    InternalNormalizerError _ -> ExitFailure 2
     FileReadError _ _ -> ExitFailure 1
     FileParseError _ _ -> ExitFailure 1
     FileStructuralViolations _ _ -> ExitFailure 1

@@ -3,12 +3,15 @@ name: Haskell
 # Builds and tests the Haskell host tool: the mithril-ir Cabal package
 # with the mithril CLI (help, version, and 'mithril validate FILE':
 # JSON parsing, structural Core v0 validation against the schema
-# compiled in from core/schema.json, complete name resolution, and
-# complete static typing), its unit and process-level tests, and the
-# downstream API-boundary compile-fail probes. The validate command
-# establishes JSON shape conformance, name resolution, and static
-# well-typedness only; no normalizer, verifier, or generator exists
-# yet.
+# compiled in from core/schema.json, complete name resolution,
+# complete static typing, and deterministic normalization into the
+# internal typed normalized Core), its unit and process-level tests,
+# and the downstream API-boundary compile-fail probes. The validate
+# command establishes JSON shape conformance, name resolution, static
+# well-typedness, and deterministic structural normalization only —
+# no policy evaluation, no simplification or optimization, and no
+# canonical equality across differently authored documents; no
+# verifier, contract renderer, or generator exists yet.
 
 on:
   push:

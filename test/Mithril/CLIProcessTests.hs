@@ -102,9 +102,9 @@ expectationChecks expectation = do
 -- write only to stdout; every user-input failure exits 1 and writes
 -- only to stderr.  (The internal-error exit 2 does not appear here:
 -- with the schema compiled in and gated at build time, no public
--- invocation can construct an internal schema, resolver, or
--- typechecker error, so those classifications stay pinned by unit
--- tests over their pure seams.)
+-- invocation can construct an internal schema, resolver,
+-- typechecker, or normalizer error, so those classifications stay
+-- pinned by unit tests over their pure seams.)
 expectations :: [CliExpectation]
 expectations =
   [ CliExpectation
@@ -143,7 +143,20 @@ expectations =
       , cliArgs = ["validate", acmePath]
       , cliExit = ExitSuccess
       , cliStdout =
-          "examples/acme/acme.mir.json: valid Mithril Core v0 through static typing\n"
+          "examples/acme/acme.mir.json: valid Mithril Core v0 through normalization\n"
+      , cliStderr = ""
+      }
+  , CliExpectation
+      { -- The well-typed full-coverage fixture: every Core v0
+        -- constructor family flows through parsing, structural
+        -- validation, name resolution, static typing, and
+        -- normalization; the (twice-run, byte-identical) success
+        -- line pins the complete frontend at the process level.
+        cliName = "validate accepts the well-typed coverage fixture through normalization"
+      , cliArgs = ["validate", welltypedPath]
+      , cliExit = ExitSuccess
+      , cliStdout =
+          "test/fixtures/welltyped.mir.json: valid Mithril Core v0 through normalization\n"
       , cliStderr = ""
       }
   , CliExpectation
@@ -255,6 +268,9 @@ expectations =
 acmePath :: FilePath
 acmePath = "examples/acme/acme.mir.json"
 
+welltypedPath :: FilePath
+welltypedPath = "test/fixtures/welltyped.mir.json"
+
 nearCorePath :: FilePath
 nearCorePath = "test/fixtures/near-core.mir.json"
 
@@ -307,7 +323,7 @@ datadirOverrideChecks = do
           "hostile datadir override: Acme still validates with exit 0"
           ( acmeTriple
               == ( ExitSuccess
-                 , "examples/acme/acme.mir.json: valid Mithril Core v0 through static typing\n"
+                 , "examples/acme/acme.mir.json: valid Mithril Core v0 through normalization\n"
                  , ""
                  )
           )

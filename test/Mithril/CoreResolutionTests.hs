@@ -61,7 +61,7 @@ import Mithril.Core.Resolution
   , normalizeResolutionViolations
   , resolveCoreDocument
   )
-import Mithril.Core.Typing (Typed)
+import Mithril.Core.Normalization (Normalized)
 import Mithril.Core.Validation
   ( CoreDocument
   , CoreSchema
@@ -143,7 +143,7 @@ normalizationChecks =
 acmeResolutionChecks
   :: CoreSchema
   -> ByteString
-  -> Either ValidateFileError (CoreDocument Typed)
+  -> Either ValidateFileError (CoreDocument Normalized)
   -> [Check]
 acmeResolutionChecks schema acmeBytes acmeFileOutcome =
   [ check
@@ -160,12 +160,12 @@ acmeResolutionChecks schema acmeBytes acmeFileOutcome =
                   (resolveCoreDocument validDocument)
       )
   , check
-      "validateCoreFile resolves (and then typechecks) the Acme example"
-      (either (const False) hasTypedStage acmeFileOutcome)
+      "validateCoreFile resolves (and then typechecks and normalizes) the Acme example"
+      (either (const False) hasNormalizedStage acmeFileOutcome)
   , check
       "the success line is exactly as specified"
       ( renderValidateSuccess acmePath
-          == "examples/acme/acme.mir.json: valid Mithril Core v0 through static typing"
+          == "examples/acme/acme.mir.json: valid Mithril Core v0 through normalization"
       )
   ]
 
@@ -176,10 +176,10 @@ hasResolvedStage :: CoreDocument Resolved -> Bool
 hasResolvedStage _ = True
 
 -- | Compile-time witness that the file boundary now ends at the
--- 'Typed' stage; using it on a merely resolved document does not
--- typecheck.
-hasTypedStage :: CoreDocument Typed -> Bool
-hasTypedStage _ = True
+-- 'Normalized' stage; using it on a merely resolved or typed
+-- document does not typecheck.
+hasNormalizedStage :: CoreDocument Normalized -> Bool
+hasNormalizedStage _ = True
 
 --------------------------------------------------------------------
 -- Name reuse that must be accepted

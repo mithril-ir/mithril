@@ -126,6 +126,7 @@ import Mithril.Command.Validate
   , validateCoreFile
   )
 import Mithril.Core.Internal.Document (CoreDocument (..))
+import Mithril.Core.Normalization (Normalized)
 import qualified Mithril.Core.Internal.Resolved as Internal
 import Mithril.Core.Internal.SourcePath
   ( SourcePath
@@ -235,21 +236,21 @@ normalizationChecks =
 acmeChecks
   :: CoreSchema
   -> Value
-  -> Either ValidateFileError (CoreDocument Typed)
+  -> Either ValidateFileError (CoreDocument Normalized)
   -> [Check]
 acmeChecks schema acme acmeFileOutcome =
   [ check
       "the public pipeline reaches a CoreDocument Typed witness on Acme"
       (welltyped schema acme)
   , check
-      "validateCoreFile typechecks the Acme example"
-      (either (const False) hasTypedStage acmeFileOutcome)
+      "validateCoreFile typechecks the Acme example (and continues into normalization)"
+      (either (const False) hasNormalizedFileStage acmeFileOutcome)
   ]
 
 -- | The deliberately ill-typed coverage fixture through the file
 -- boundary: rejected at static typing with exactly its independent
 -- violations — the same list the process-level test pins as bytes.
-coverageChecks :: Either ValidateFileError (CoreDocument Typed) -> [Check]
+coverageChecks :: Either ValidateFileError (CoreDocument Normalized) -> [Check]
 coverageChecks coverageFileOutcome =
   [ check
       "validateCoreFile rejects the coverage fixture with exactly its type violations"
@@ -1117,6 +1118,12 @@ welltyped schema value =
 -- using it on a merely resolved document does not typecheck.
 hasTypedStage :: CoreDocument Typed -> Bool
 hasTypedStage _ = True
+
+-- | Compile-time witness that the file boundary now carries its
+-- success to the 'Normalized' stage (the well-typed document
+-- continued through the normalizer).
+hasNormalizedFileStage :: CoreDocument Normalized -> Bool
+hasNormalizedFileStage _ = True
 
 -- | The mutant's type violations, if it reached the typechecker and
 -- was rejected with user violations (never internal ones).

@@ -1,0 +1,742 @@
+{
+  "format": "mithril-core",
+  "formatVersion": "0",
+  "name": "Welltyped",
+  "schema": {
+    "entities": [
+      {
+        "name": "User",
+        "attributes": [
+          {
+            "name": "role",
+            "type": {
+              "kind": "Enum",
+              "enum": "Rank"
+            }
+          }
+        ]
+      },
+      {
+        "name": "Organization",
+        "attributes": [
+          {
+            "name": "owner",
+            "type": {
+              "kind": "EntityRef",
+              "entity": "User"
+            }
+          }
+        ]
+      },
+      {
+        "name": "Ticket",
+        "attributes": [
+          {
+            "name": "owner",
+            "type": {
+              "kind": "EntityRef",
+              "entity": "User"
+            }
+          },
+          {
+            "name": "urgent",
+            "type": {
+              "kind": "Bool"
+            }
+          },
+          {
+            "name": "organization",
+            "type": {
+              "kind": "EntityRef",
+              "entity": "Organization"
+            }
+          }
+        ]
+      }
+    ],
+    "enums": [
+      {
+        "name": "Rank",
+        "values": [
+          "Bronze",
+          "Silver",
+          "Gold"
+        ],
+        "order": [
+          "Bronze",
+          "Silver",
+          "Gold"
+        ]
+      },
+      {
+        "name": "Phase",
+        "values": [
+          "Draft",
+          "Final"
+        ],
+        "order": [
+          "Final",
+          "Draft"
+        ]
+      },
+      {
+        "name": "Badge",
+        "values": [
+          "Star"
+        ]
+      }
+    ],
+    "relations": [
+      {
+        "name": "Membership",
+        "endpoints": [
+          {
+            "name": "member",
+            "entity": "User"
+          },
+          {
+            "name": "organization",
+            "entity": "Organization"
+          }
+        ],
+        "payload": {
+          "kind": "Enum",
+          "enum": "Rank"
+        }
+      },
+      {
+        "name": "Marked",
+        "endpoints": [
+          {
+            "name": "subject",
+            "entity": "User"
+          }
+        ],
+        "payload": {
+          "kind": "Unit"
+        }
+      },
+      {
+        "name": "Clearance",
+        "endpoints": [
+          {
+            "name": "holder",
+            "entity": "User"
+          }
+        ],
+        "payload": {
+          "kind": "Enum",
+          "enum": "Rank"
+        }
+      }
+    ]
+  },
+  "actions": [
+    {
+      "name": "Ticket.read",
+      "parameters": [
+        {
+          "name": "ticket",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Ticket"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Read",
+      "allow": {
+        "kind": "LessOrEqual",
+        "left": {
+          "kind": "Some",
+          "value": {
+            "kind": "Enum",
+            "enum": "Rank",
+            "value": "Silver"
+          }
+        },
+        "right": {
+          "kind": "Lookup",
+          "relation": "Membership",
+          "endpoints": [
+            {
+              "kind": "Actor"
+            },
+            {
+              "kind": "Attribute",
+              "source": {
+                "kind": "Argument",
+                "name": "ticket"
+              },
+              "attribute": "organization"
+            }
+          ]
+        }
+      },
+      "effect": {
+        "kind": "NoChange"
+      },
+      "result": {
+        "kind": "Observe",
+        "entity": {
+          "kind": "Argument",
+          "name": "ticket"
+        }
+      }
+    },
+    {
+      "name": "Ticket.file",
+      "parameters": [
+        {
+          "name": "organization",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Organization"
+          }
+        },
+        {
+          "name": "urgent",
+          "type": {
+            "kind": "Bool"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "IsSome",
+        "value": {
+          "kind": "Lookup",
+          "relation": "Membership",
+          "endpoints": [
+            {
+              "kind": "Actor"
+            },
+            {
+              "kind": "Argument",
+              "name": "organization"
+            }
+          ]
+        }
+      },
+      "effect": {
+        "kind": "CreateEntity",
+        "entity": "Ticket",
+        "attributes": {
+          "organization": {
+            "kind": "Argument",
+            "name": "organization"
+          },
+          "owner": {
+            "kind": "Actor"
+          },
+          "urgent": {
+            "kind": "Argument",
+            "name": "urgent"
+          }
+        }
+      },
+      "result": {
+        "kind": "Created"
+      }
+    },
+    {
+      "name": "User.inspect",
+      "parameters": [
+        {
+          "name": "target",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        },
+        {
+          "name": "level",
+          "type": {
+            "kind": "Enum",
+            "enum": "Rank"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Read",
+      "allow": {
+        "kind": "And",
+        "left": {
+          "kind": "LessOrEqual",
+          "left": {
+            "kind": "Enum",
+            "enum": "Rank",
+            "value": "Bronze"
+          },
+          "right": {
+            "kind": "Argument",
+            "name": "level"
+          }
+        },
+        "right": {
+          "kind": "Equal",
+          "left": {
+            "kind": "Attribute",
+            "source": {
+              "kind": "Actor"
+            },
+            "attribute": "role"
+          },
+          "right": {
+            "kind": "Argument",
+            "name": "level"
+          }
+        }
+      },
+      "effect": {
+        "kind": "NoChange"
+      },
+      "result": {
+        "kind": "Observe",
+        "entity": {
+          "kind": "Argument",
+          "name": "target"
+        }
+      }
+    },
+    {
+      "name": "Ticket.purge",
+      "parameters": [
+        {
+          "name": "ticket",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Ticket"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "Equal",
+        "left": {
+          "kind": "Attribute",
+          "source": {
+            "kind": "Argument",
+            "name": "ticket"
+          },
+          "attribute": "owner"
+        },
+        "right": {
+          "kind": "Actor"
+        }
+      },
+      "effect": {
+        "kind": "DeleteEntity",
+        "target": {
+          "kind": "Argument",
+          "name": "ticket"
+        }
+      },
+      "result": {
+        "kind": "Done"
+      }
+    },
+    {
+      "name": "Membership.assign",
+      "parameters": [
+        {
+          "name": "target",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        },
+        {
+          "name": "organization",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Organization"
+          }
+        },
+        {
+          "name": "level",
+          "type": {
+            "kind": "Enum",
+            "enum": "Rank"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "And",
+        "left": {
+          "kind": "Not",
+          "value": {
+            "kind": "Equal",
+            "left": {
+              "kind": "Actor"
+            },
+            "right": {
+              "kind": "Argument",
+              "name": "target"
+            }
+          }
+        },
+        "right": {
+          "kind": "Or",
+          "left": {
+            "kind": "Equal",
+            "left": {
+              "kind": "Lookup",
+              "relation": "Membership",
+              "endpoints": [
+                {
+                  "kind": "Argument",
+                  "name": "target"
+                },
+                {
+                  "kind": "Argument",
+                  "name": "organization"
+                }
+              ]
+            },
+            "right": {
+              "kind": "None",
+              "payloadType": {
+                "kind": "Enum",
+                "enum": "Rank"
+              }
+            }
+          },
+          "right": {
+            "kind": "Bool",
+            "value": false
+          }
+        }
+      },
+      "effect": {
+        "kind": "SetRelation",
+        "relation": "Membership",
+        "endpoints": [
+          {
+            "kind": "Argument",
+            "name": "target"
+          },
+          {
+            "kind": "Argument",
+            "name": "organization"
+          }
+        ],
+        "payload": {
+          "kind": "Argument",
+          "name": "level"
+        }
+      },
+      "result": {
+        "kind": "Done"
+      }
+    },
+    {
+      "name": "Marked.strip",
+      "parameters": [
+        {
+          "name": "subject",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        }
+      ],
+      "principalMode": "AnyPrincipal",
+      "classification": "Mutation",
+      "allow": {
+        "anonymous": {
+          "kind": "Equal",
+          "left": {
+            "kind": "Lookup",
+            "relation": "Marked",
+            "endpoints": [
+              {
+                "kind": "Argument",
+                "name": "subject"
+              }
+            ]
+          },
+          "right": {
+            "kind": "None",
+            "payloadType": {
+              "kind": "Unit"
+            }
+          }
+        },
+        "authenticated": {
+          "kind": "Bool",
+          "value": true
+        }
+      },
+      "effect": {
+        "kind": "RemoveRelation",
+        "relation": "Marked",
+        "endpoints": [
+          {
+            "kind": "Argument",
+            "name": "subject"
+          }
+        ]
+      },
+      "result": {
+        "kind": "Done"
+      }
+    },
+    {
+      "name": "Status.check",
+      "parameters": [
+        {
+          "name": "peer",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        },
+        {
+          "name": "phase",
+          "type": {
+            "kind": "Enum",
+            "enum": "Phase"
+          }
+        }
+      ],
+      "principalMode": "AnyPrincipal",
+      "classification": "Read",
+      "allow": {
+        "anonymous": {
+          "kind": "LessOrEqual",
+          "left": {
+            "kind": "Argument",
+            "name": "phase"
+          },
+          "right": {
+            "kind": "Enum",
+            "enum": "Phase",
+            "value": "Draft"
+          }
+        },
+        "authenticated": {
+          "kind": "IsSome",
+          "value": {
+            "kind": "Lookup",
+            "relation": "Marked",
+            "endpoints": [
+              {
+                "kind": "Actor"
+              }
+            ]
+          }
+        }
+      },
+      "effect": {
+        "kind": "NoChange"
+      },
+      "result": {
+        "kind": "Observe",
+        "entity": {
+          "kind": "Argument",
+          "name": "peer"
+        }
+      }
+    },
+    {
+      "name": "Marked.tag",
+      "parameters": [
+        {
+          "name": "subject",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        }
+      ],
+      "principalMode": "AnyPrincipal",
+      "classification": "Mutation",
+      "allow": {
+        "anonymous": {
+          "kind": "Bool",
+          "value": false
+        },
+        "authenticated": {
+          "kind": "Bool",
+          "value": true
+        }
+      },
+      "effect": {
+        "kind": "SetRelation",
+        "relation": "Marked",
+        "endpoints": [
+          {
+            "kind": "Argument",
+            "name": "subject"
+          }
+        ],
+        "payload": {
+          "kind": "Unit"
+        }
+      },
+      "result": {
+        "kind": "Done"
+      }
+    },
+    {
+      "name": "Organization.found",
+      "parameters": [
+        {
+          "name": "founder",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        }
+      ],
+      "principalMode": "AnyPrincipal",
+      "classification": "Mutation",
+      "allow": {
+        "anonymous": {
+          "kind": "Bool",
+          "value": true
+        },
+        "authenticated": {
+          "kind": "Bool",
+          "value": true
+        }
+      },
+      "effect": {
+        "kind": "CreateEntity",
+        "entity": "Organization",
+        "attributes": {
+          "owner": {
+            "kind": "Argument",
+            "name": "founder"
+          }
+        }
+      },
+      "result": {
+        "kind": "Created"
+      }
+    },
+    {
+      "name": "Session.refresh",
+      "parameters": [],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "And",
+        "left": {
+          "kind": "Bool",
+          "value": true
+        },
+        "right": {
+          "kind": "Bool",
+          "value": true
+        }
+      },
+      "effect": {
+        "kind": "NoChange"
+      },
+      "result": {
+        "kind": "Done"
+      }
+    }
+  ],
+  "guarantees": [
+    {
+      "kind": "AuthenticatedMutation",
+      "target": {
+        "classification": "Mutation"
+      }
+    },
+    {
+      "kind": "TenantIsolation",
+      "cases": [
+        {
+          "action": "Ticket.read",
+          "tenant": {
+            "kind": "Attribute",
+            "source": {
+              "kind": "Argument",
+              "name": "ticket"
+            },
+            "attribute": "organization"
+          },
+          "protected": {
+            "kind": "Bool",
+            "value": true
+          },
+          "tenantAccess": {
+            "kind": "LessOrEqual",
+            "left": {
+              "kind": "Some",
+              "value": {
+                "kind": "Enum",
+                "enum": "Rank",
+                "value": "Bronze"
+              }
+            },
+            "right": {
+              "kind": "Lookup",
+              "relation": "Membership",
+              "endpoints": [
+                {
+                  "kind": "Actor"
+                },
+                {
+                  "kind": "Attribute",
+                  "source": {
+                    "kind": "Argument",
+                    "name": "ticket"
+                  },
+                  "attribute": "organization"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "NoSelfPrivilegeEscalation",
+      "authority": {
+        "relation": "Membership",
+        "subjectEndpoint": "member",
+        "scopeEndpoints": [
+          "organization"
+        ],
+        "absenceLevel": "Bottom",
+        "payloadOrder": "Rank"
+      },
+      "cases": [
+        {
+          "action": "Membership.assign",
+          "scope": [
+            {
+              "kind": "Argument",
+              "name": "organization"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "NoSelfPrivilegeEscalation",
+      "authority": {
+        "relation": "Clearance",
+        "subjectEndpoint": "holder",
+        "scopeEndpoints": [],
+        "absenceLevel": "Bottom",
+        "payloadOrder": "Rank"
+      },
+      "cases": [
+        {
+          "action": "Session.refresh",
+          "scope": []
+        }
+      ]
+    }
+  ]
+}

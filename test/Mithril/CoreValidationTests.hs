@@ -59,7 +59,7 @@ import Mithril.Command.Validate
   , renderValidateSuccess
   , validateCoreFile
   )
-import Mithril.Core.Typing (Typed)
+import Mithril.Core.Normalization (Normalized)
 import Mithril.Core.Validation
   ( CoreDocument
   , CoreSchema
@@ -466,7 +466,7 @@ schemaProfileChecks schemaOutcome =
 acmeChecks
   :: CoreSchema
   -> ByteString
-  -> Either ValidateFileError (CoreDocument Typed)
+  -> Either ValidateFileError (CoreDocument Normalized)
   -> [Check]
 acmeChecks schema acmeBytes acmeFileOutcome =
   [ check
@@ -490,7 +490,7 @@ acmeChecks schema acmeBytes acmeFileOutcome =
       )
   , check
       "validateCoreFile accepts the Acme example"
-      (either (const False) hasTypedStage acmeFileOutcome)
+      (either (const False) hasNormalizedStage acmeFileOutcome)
   ]
 
 -- | Compile-time witness that a value sits at the
@@ -500,9 +500,9 @@ hasStructurallyValidStage :: CoreDocument StructurallyValid -> Bool
 hasStructurallyValidStage _ = True
 
 -- | Compile-time witness that a 'validateCoreFile' success now sits
--- at the 'Typed' stage.
-hasTypedStage :: CoreDocument Typed -> Bool
-hasTypedStage _ = True
+-- at the 'Normalized' stage.
+hasNormalizedStage :: CoreDocument Normalized -> Bool
+hasNormalizedStage _ = True
 
 --------------------------------------------------------------------
 -- Targeted invalid mutations (built in memory from pristine Acme)
@@ -756,14 +756,14 @@ diagnosticsChecks schema acme =
 --------------------------------------------------------------------
 
 commandChecks
-  :: Either ValidateFileError (CoreDocument Typed)
-  -> Either ValidateFileError (CoreDocument Typed)
+  :: Either ValidateFileError (CoreDocument Normalized)
+  -> Either ValidateFileError (CoreDocument Normalized)
   -> [Check]
 commandChecks missingFileOutcome readmeOutcome =
   [ check
       "the success line is exactly as specified"
       ( renderValidateSuccess acmePath
-          == "examples/acme/acme.mir.json: valid Mithril Core v0 through static typing"
+          == "examples/acme/acme.mir.json: valid Mithril Core v0 through normalization"
       )
   , check
       "a missing file is classified as a read error"
@@ -861,7 +861,7 @@ commandChecks missingFileOutcome readmeOutcome =
 nearCoreChecks
   :: CoreSchema
   -> ByteString
-  -> Either ValidateFileError (CoreDocument Typed)
+  -> Either ValidateFileError (CoreDocument Normalized)
   -> [Check]
 nearCoreChecks schema nearCoreBytes nearCoreOutcome =
   [ check

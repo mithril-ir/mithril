@@ -67,14 +67,20 @@ checks =
       "help lists the validate command"
       ("validate FILE" `isInfixOf` renderHelp)
   , check
-      "help scopes validate to structural validation plus name resolution plus static typing"
+      "help scopes validate to structural validation plus name resolution plus static typing plus normalization"
       ( ("structural Core v0 validation" `isInfixOf` renderHelp)
           && ("name resolution" `isInfixOf` renderHelp)
           && ("static typing" `isInfixOf` renderHelp)
+          && ("deterministic normalization" `isInfixOf` renderHelp)
       )
   , check
       "help disclaims semantic verification and proof checking"
       ("not semantic verification and not proof checking" `isInfixOf` renderHelp)
+  , check
+      "help scopes normalization to structural work without simplification or evaluation"
+      ( ("no boolean simplification, constant folding," `isInfixOf` renderHelp)
+          && ("or policy evaluation" `isInfixOf` renderHelp)
+      )
   , check
       "help states that no other compiler stage is implemented"
       ("No other compiler stage is implemented yet." `isInfixOf` renderHelp)

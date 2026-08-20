@@ -11,17 +11,27 @@ description:
   environment lookup selects the grammar — complete Core v0 name
   resolution: declaration-name uniqueness in every global and
   owner-local namespace, and resolution of every name reference in
-  its correct namespace — and complete Core v0 static typing of the
+  its correct namespace — complete Core v0 static typing of the
   resolved document: term, policy, effect, and result types, operand
   and relation-endpoint compatibility, enum-order permutation
   validity, CreateEntity initializer completeness, and guarantee
-  well-typedness.  A successfully resolved document is carried as an
-  explicit internal decoded and name-resolved Core representation
-  (identifier-based references with JSON source paths; generic JSON
-  ends at the internal decode boundary), and the typechecker consumes
-  exactly that representation; the typed stage remains an opaque
-  attestation of well-typedness only, not typed normalized Core: no
-  normalizer, verifier, proof generator or checker, runtime
+  well-typedness — and deterministic Core v0 normalization of the
+  well-typed document into an explicit internal typed normalized
+  representation: statically typed terms, materialized enum ranks,
+  explicit endpoint bindings, declaration-ordered CreateEntity
+  initializers, and explicit guarantee structure, with resolved
+  identifiers preserved and names and source paths kept as metadata.
+  A successfully resolved document is carried as an explicit internal
+  decoded and name-resolved Core representation (identifier-based
+  references with JSON source paths; generic JSON ends at the
+  internal decode boundary); the typechecker consumes exactly that
+  representation, and the normalizer consumes exactly the typed
+  document, reusing the typechecker's judgment rather than rerunning
+  type inference of its own.  Normalization is structural only — no
+  boolean simplification, constant folding, operand reordering,
+  policy evaluation, or semantic optimization, and no canonical
+  equality between differently authored documents is claimed.  No
+  verifier, contract renderer, proof generator or checker, runtime
   enforcement, or target generator is implemented yet, and acceptance
   neither verifies a model nor establishes any guarantee.
 homepage:           https://github.com/mithril-ir/mithril
@@ -57,6 +67,7 @@ extra-source-files:
     test/fixtures/malformed.mir.json
     test/fixtures/near-core.mir.json
     test/fixtures/unknown-name.mir.json
+    test/fixtures/welltyped.mir.json
 
 source-repository head
   type:     git
@@ -93,14 +104,18 @@ common shared
   if flag(werror)
     ghc-options: -Werror
 
--- The stage machinery and the explicit decoded and name-resolved Core
--- representation (Document, Resolved, SourcePath, Syntax) live in
--- this package-private named sublibrary.  That is an internal
+-- The stage machinery, the explicit decoded and name-resolved Core
+-- representation (Document, Resolved, SourcePath, Syntax), the
+-- shared static type language with the one statement of the
+-- declared-type projections and the ordered-comparison shape
+-- (StaticType), and the explicit typed normalized representation
+-- (Normalized) live in this
+-- package-private named sublibrary.  That is an internal
 -- testability and encapsulation mechanism, not a packaging or
 -- distribution decision: visibility: private means no other package
 -- can depend on it or import its modules — the downstream
 -- compile-fail probes pin exactly that — while this package's own
--- test suite can inspect the real production model and the
+-- test suite can inspect the real production models and the
 -- in-package probes can prove the identifier namespaces
 -- non-coercible.  Never make it public, never add it to a downstream
 -- package's dependencies, and never re-export its modules from the
@@ -111,8 +126,10 @@ library core-internal
   hs-source-dirs:  src-internal
   exposed-modules:
     Mithril.Core.Internal.Document
+    Mithril.Core.Internal.Normalized
     Mithril.Core.Internal.Resolved
     Mithril.Core.Internal.SourcePath
+    Mithril.Core.Internal.StaticType
     Mithril.Core.Internal.Syntax
 
   build-depends:
@@ -125,6 +142,7 @@ library
   exposed-modules:
     Mithril.CLI
     Mithril.Command.Validate
+    Mithril.Core.Normalization
     Mithril.Core.Resolution
     Mithril.Core.Typing
     Mithril.Core.Validation
@@ -133,18 +151,22 @@ library
   -- bytes of core/schema.json; Report owns the frontend's diagnostic
   -- vocabulary; Decode owns the one JSON reading that produces the
   -- decoded representation; Typecheck owns the Core v0 static-typing
-  -- judgment over that representation.  The representation itself
-  -- sits in the private core-internal sublibrary above.  None of
-  -- these modules may ever move to exposed-modules (nor the
-  -- sublibrary to public visibility): hiding them is what keeps
-  -- external code from constructing documents or resolved nodes,
-  -- minting or coercing identifiers, extracting the underlying
-  -- payload, coercing one pipeline stage into another, reaching the
-  -- typechecker's internals, or validating against anything but the
-  -- canonical schema.
+  -- judgment over that representation (and the shared type-query
+  -- facility the normalizer consumes); Normalize owns the Core v0
+  -- normalization pass from the typed model to the normalized one.
+  -- The representations themselves sit in the private core-internal
+  -- sublibrary above.  None of these modules may ever move to
+  -- exposed-modules (nor the sublibrary to public visibility):
+  -- hiding them is what keeps external code from constructing
+  -- documents, resolved nodes, or normalized nodes, minting or
+  -- coercing identifiers, extracting the underlying payload,
+  -- coercing one pipeline stage into another, reaching the
+  -- typechecker's or normalizer's internals, or validating against
+  -- anything but the canonical schema.
   other-modules:
     Mithril.Core.Internal.BundledSchema
     Mithril.Core.Internal.Decode
+    Mithril.Core.Internal.Normalize
     Mithril.Core.Internal.Report
     Mithril.Core.Internal.Typecheck
 
@@ -181,10 +203,12 @@ test-suite mithril-ir-test
     Mithril.CLIProcessTests
     Mithril.CLITests
     Mithril.CoreModelTests
+    Mithril.CoreNormalizationTests
     Mithril.CoreRepresentationTests
     Mithril.CoreResolutionTests
     Mithril.CoreTypingTests
     Mithril.CoreValidationTests
+    Mithril.NormalizedModelTests
     Mithril.Test
     Mithril.TestEnv
 
