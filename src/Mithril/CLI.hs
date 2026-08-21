@@ -5,11 +5,13 @@
 -- handles, choosing the exit status — belong to the executable's
 -- @Main@ module.
 --
--- The tool understands the self-describing invocations plus one real
--- command: @validate FILE@, JSON parsing plus structural Core v0
+-- The tool understands the self-describing invocations plus two real
+-- commands: @validate FILE@, JSON parsing plus structural Core v0
 -- validation plus complete name resolution plus complete static
--- typing plus deterministic normalization.  No later compiler stage
--- exists yet.
+-- typing plus deterministic normalization, and @contract FILE@, the
+-- same complete pipeline followed by deterministic rendering of the
+-- normalized document as the human-readable security contract.  No
+-- later compiler stage exists yet.
 module Mithril.CLI
   ( Command (..)
   , parseCommand
@@ -30,30 +32,43 @@ data Command
     -- Core v0 schema, resolve every Core v0 name, typecheck the
     -- resolved document, and normalize the typed document.
     Validate FilePath
+  | -- | Run the complete @validate@ pipeline on FILE and print the
+    -- deterministic security contract of the normalized document.
+    Contract FilePath
   deriving (Eq, Show)
 
 -- | Interpret raw command-line arguments.
 --
 -- Exactly these invocations are accepted: no arguments (help),
--- @--help@, @-h@, @--version@, and @validate FILE@.  Anything else —
--- an unknown argument, a missing FILE, or extra arguments after a
--- complete invocation — yields a deterministic error message intended
--- for stderr.  Every user-supplied argument embedded in such a
--- message is rendered through 'displayArgument', so no argument can
--- add physical lines or terminal controls to a diagnostic.
+-- @--help@, @-h@, @--version@, @validate FILE@, and @contract FILE@.
+-- Anything else — an unknown argument, a missing FILE, or extra
+-- arguments after a complete invocation — yields a deterministic
+-- error message intended for stderr.  Every user-supplied argument
+-- embedded in such a message is rendered through 'displayArgument',
+-- so no argument can add physical lines or terminal controls to a
+-- diagnostic.
 parseCommand :: [String] -> Either String Command
 parseCommand [] = Right ShowHelp
-parseCommand ("validate" : rest) =
-  case rest of
-    [file] -> Right (Validate file)
-    [] -> Left missingFileError
-    (_file : extras) -> Left (extraArgumentsError "validate FILE" extras)
+parseCommand ("validate" : rest) = fileCommand "validate" Validate rest
+parseCommand ("contract" : rest) = fileCommand "contract" Contract rest
 parseCommand (argument : rest) =
   case recognize argument of
     Nothing -> Left (unknownArgumentError argument)
     Just command
       | null rest -> Right command
       | otherwise -> Left (extraArgumentsError argument rest)
+
+-- | Interpret the argument list after a FILE-taking command name.
+-- The next argument is always FILE — a leading dash does not make it
+-- an option — and anything after it is rejected.
+fileCommand
+  :: String -> (FilePath -> Command) -> [String] -> Either String Command
+fileCommand commandName construct rest =
+  case rest of
+    [file] -> Right (construct file)
+    [] -> Left (missingFileError commandName)
+    (_file : extras) ->
+      Left (extraArgumentsError (commandName ++ " FILE") extras)
 
 -- | Map a single recognized option to its command.
 recognize :: String -> Maybe Command
@@ -96,10 +111,14 @@ extraArgumentsError argument extras =
     ++ "\n"
     ++ usageHint
 
--- | Deterministic error for @validate@ without its FILE argument.
-missingFileError :: String
-missingFileError =
-  "mithril: 'validate' requires exactly one FILE argument\n" ++ usageHint
+-- | Deterministic error for a FILE-taking command without its FILE
+-- argument.
+missingFileError :: String -> String
+missingFileError commandName =
+  "mithril: '"
+    ++ commandName
+    ++ "' requires exactly one FILE argument\n"
+    ++ usageHint
 
 usageHint :: String
 usageHint = "Run 'mithril --help' for usage."
@@ -120,6 +139,10 @@ renderHelp =
     , "                         resolve every Core v0 name, typecheck the"
     , "                         resolved document, and normalize the"
     , "                         typed document."
+    , "  mithril contract FILE  Run the complete validate pipeline on"
+    , "                         FILE, then print the deterministic"
+    , "                         human-readable security contract of the"
+    , "                         normalized document to stdout."
     , ""
     , "validate performs JSON parsing, structural Core v0 validation"
     , "against the supported profile of core/schema.json (compiled into"
@@ -135,7 +158,15 @@ renderHelp =
     , "is structural only (no boolean simplification, constant folding,"
     , "or policy evaluation), and validate does not verify guarantees"
     , "or generate anything."
-    , "No other compiler stage is implemented yet."
+    , "contract renders the typed normalized Core of a document that"
+    , "passes that complete pipeline as a deterministic, line-oriented"
+    , "security contract for human review: the declared schema, every"
+    , "action's policies, effects and results, and the selected"
+    , "guarantees, which remain unverified proof obligations. It"
+    , "evaluates no policy, proves and verifies nothing, generates"
+    , "nothing executable, and is not a semantic diff."
+    , "No other compiler stage is implemented yet: no verifier, no"
+    , "proof generation or checking, and no target code generation."
     ]
 
 -- | Version line for the given package version string.

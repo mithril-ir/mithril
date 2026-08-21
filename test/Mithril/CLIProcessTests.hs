@@ -53,7 +53,12 @@ data CliExpectation = CliExpectation
 -- exception.
 tests :: IO [Check]
 tests = do
-  matrixChecks <- traverse expectationChecks expectations
+  acmeContract <- readFile acmeContractPath
+  welltypedContract <- readFile welltypedContractPath
+  matrixChecks <-
+    traverse
+      expectationChecks
+      (expectations <> contractExpectations acmeContract welltypedContract)
   helpTriple <- invokeMithril ["--help"]
   overrideChecks <- datadirOverrideChecks
   pure $
@@ -102,9 +107,9 @@ expectationChecks expectation = do
 -- write only to stdout; every user-input failure exits 1 and writes
 -- only to stderr.  (The internal-error exit 2 does not appear here:
 -- with the schema compiled in and gated at build time, no public
--- invocation can construct an internal schema, resolver,
--- typechecker, or normalizer error, so those classifications stay
--- pinned by unit tests over their pure seams.)
+-- invocation can construct an internal schema, resolver, typechecker,
+-- normalizer, or contract-renderer error, so those classifications
+-- stay pinned by unit tests over their pure seams.)
 expectations :: [CliExpectation]
 expectations =
   [ CliExpectation
@@ -265,11 +270,113 @@ expectations =
       }
   ]
 
+-- | The pinned @contract@ invocation matrix, parameterized by the two
+-- frozen golden contracts (read from @test\/fixtures\/@ so the
+-- process expectation stays independent of the renderer).  A
+-- successful contract invocation exits 0 and writes only the complete
+-- contract to stdout — no validate success line, nothing on stderr —
+-- and every input failure keeps the byte-exact validate diagnostics
+-- and classification.  Each expectation runs twice through
+-- 'expectationChecks', pinning repetition determinism.
+contractExpectations :: String -> String -> [CliExpectation]
+contractExpectations acmeContract welltypedContract =
+  [ CliExpectation
+      { cliName = "contract renders the frozen Acme security contract"
+      , cliArgs = ["contract", acmePath]
+      , cliExit = ExitSuccess
+      , cliStdout = acmeContract
+      , cliStderr = ""
+      }
+  , CliExpectation
+      { cliName = "contract renders the frozen well-typed coverage contract"
+      , cliArgs = ["contract", welltypedPath]
+      , cliExit = ExitSuccess
+      , cliStdout = welltypedContract
+      , cliStderr = ""
+      }
+  , CliExpectation
+      { cliName = "contract rejects malformed JSON with the validate bytes"
+      , cliArgs = ["contract", "test/fixtures/malformed.mir.json"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "test/fixtures/malformed.mir.json: invalid JSON\n\
+          \  Unexpected end-of-input, expecting key literal\n"
+      }
+  , CliExpectation
+      { cliName = "contract rejects the near-Core document with the validate bytes"
+      , cliArgs = ["contract", nearCorePath]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr = nearCoreStderr
+      }
+  , CliExpectation
+      { cliName = "contract rejects an unresolved name with the validate bytes"
+      , cliArgs = ["contract", "test/fixtures/unknown-name.mir.json"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "test/fixtures/unknown-name.mir.json: invalid Mithril Core v0 name resolution\n\
+          \  /guarantees/2/authority/payloadOrder: unknown enum \"Ghost\"\n"
+      }
+  , CliExpectation
+      { cliName = "contract rejects the ill-typed coverage fixture with the validate bytes"
+      , cliArgs = ["contract", "test/fixtures/coverage.mir.json"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr = coverageTypingStderr
+      }
+  , CliExpectation
+      { cliName = "contract reports a nonexistent input"
+      , cliArgs = ["contract", "test/fixtures/does-not-exist.mir.json"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "test/fixtures/does-not-exist.mir.json: cannot read file\n\
+          \  does not exist\n"
+      }
+  , CliExpectation
+      { cliName = "contract without FILE is a usage error"
+      , cliArgs = ["contract"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "mithril: 'contract' requires exactly one FILE argument\n\
+          \Run 'mithril --help' for usage.\n"
+      }
+  , CliExpectation
+      { cliName = "an extra argument after contract FILE is a usage error"
+      , cliArgs = ["contract", acmePath, "surplus"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "mithril: unexpected extra arguments after 'contract FILE': 'surplus'\n\
+          \Run 'mithril --help' for usage.\n"
+      }
+  , CliExpectation
+      { -- After 'contract', a dash argument is FILE, never an option:
+        -- it is looked up as a path and reported unreadable.
+        cliName = "a hostile dash FILE after contract stays a file path"
+      , cliArgs = ["contract", "--frobnicate"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "--frobnicate: cannot read file\n\
+          \  does not exist\n"
+      }
+  ]
+
 acmePath :: FilePath
 acmePath = "examples/acme/acme.mir.json"
 
+acmeContractPath :: FilePath
+acmeContractPath = "test/fixtures/acme.contract.txt"
+
 welltypedPath :: FilePath
 welltypedPath = "test/fixtures/welltyped.mir.json"
+
+welltypedContractPath :: FilePath
+welltypedContractPath = "test/fixtures/welltyped.contract.txt"
 
 nearCorePath :: FilePath
 nearCorePath = "test/fixtures/near-core.mir.json"

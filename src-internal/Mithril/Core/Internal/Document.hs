@@ -78,7 +78,8 @@ data Typed
 -- representation ("Mithril.Core.Internal.Normalized") — typed terms,
 -- materialized enum ranks, explicit endpoint bindings,
 -- declaration-ordered initializers, and explicit guarantee structure,
--- the single form the future contract renderer, Agda backend, and
+-- the single form the contract renderer (implemented, in
+-- "Mithril.Core.Contract"), the future Agda backend, and the future
 -- target emitters consume.  This is an attestation about
 -- deterministic structural normalization only: a
 -- @'CoreDocument' 'Normalized'@ is /not/ verified, carries no

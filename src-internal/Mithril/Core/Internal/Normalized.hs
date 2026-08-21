@@ -8,8 +8,10 @@
 -- of a @'Mithril.Core.Validation.CoreDocument' 'Normalized'@, produced
 -- only by the normalizer ("Mithril.Core.Internal.Normalize", behind
 -- "Mithril.Core.Normalization") from a well-typed document, and the
--- one intended input of the future contract renderer, Agda backend,
--- and target emitters.  It is a distinct model from the resolved
+-- one intended input of the contract renderer (its first implemented
+-- consumer, "Mithril.Core.Internal.Contract" behind
+-- "Mithril.Core.Contract"), the future Agda backend, and the future
+-- target emitters.  It is a distinct model from the resolved
 -- representation ("Mithril.Core.Internal.Resolved") — not the resolved
 -- 'Mithril.Core.Internal.Resolved.Model' under another stage tag —
 -- although it deliberately shares the resolved leaf vocabulary:

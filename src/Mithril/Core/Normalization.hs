@@ -12,8 +12,9 @@
 -- produced by "Mithril.Core.Typing" — the stage index makes a merely
 -- resolved (or earlier) document unacceptable — and constructs the
 -- typed normalized Core: the explicit internal representation the
--- future contract renderer, Agda backend, and target emitters are
--- required to share.  Relative to the typed document's resolved
+-- contract renderer ("Mithril.Core.Contract", its first implemented
+-- consumer), the future Agda backend, and the future target emitters
+-- are required to share.  Relative to the typed document's resolved
 -- model, normalization
 --
 -- * stamps every term with the static type the typechecker

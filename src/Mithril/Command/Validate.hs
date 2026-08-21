@@ -25,7 +25,7 @@ module Mithril.Command.Validate
 
 import Control.Exception (IOException, try)
 import qualified Data.ByteString as ByteString
-import Data.Char (isPrint, showLitChar)
+import Data.Char (isPrint)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
@@ -33,6 +33,7 @@ import qualified Data.Text as Text
 import System.Exit (ExitCode (..))
 import System.IO.Error (ioeGetErrorString)
 
+import Mithril.Command.Internal.Diagnostic (escapeControlChars)
 import Mithril.Core.Normalization
   ( NormalizationFailure (..)
   , Normalized
@@ -288,12 +289,3 @@ displayPath :: FilePath -> Text
 displayPath path
   | not (null path) && all isPrint path = Text.pack path
   | otherwise = Text.pack (show path)
-
--- | Escape control characters in diagnostic text ('showLitChar'
--- form), keeping every diagnostic on its intended line.
-escapeControlChars :: Text -> Text
-escapeControlChars = Text.concatMap escapeChar
-  where
-    escapeChar c
-      | isPrint c = Text.singleton c
-      | otherwise = Text.pack (showLitChar c "")

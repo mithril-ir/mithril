@@ -1,0 +1,104 @@
+Mithril Core v0 security contract
+model: Acme
+
+Entities
+  entity User
+    (no attributes)
+  entity Organization
+    (no attributes)
+  entity Project
+    attribute organization : EntityRef[Organization]
+
+Enums
+  enum MembershipRole
+    value Member
+    value Admin
+    order: Member = 0, Admin = 1
+
+Relations
+  relation Membership
+    endpoint user : User
+    endpoint organization : Organization
+    payload: Enum[MembershipRole]
+
+Actions
+  action Project.read
+    parameter project : EntityRef[Project]
+    principal mode: AuthenticatedOnly
+    classification: Read
+    allow: LessOrEqual[order optional MembershipRole, absence as bottom](Some(Enum[MembershipRole.Member]), Lookup[Membership](user = Actor[User], organization = Attribute[organization](Argument[project]))) : Bool
+    effect: NoChange
+    result: Observe
+      entity: Argument[project] : EntityRef[Project]
+  action Project.create
+    parameter organization : EntityRef[Organization]
+    principal mode: AuthenticatedOnly
+    classification: Mutation
+    allow: LessOrEqual[order optional MembershipRole, absence as bottom](Some(Enum[MembershipRole.Member]), Lookup[Membership](user = Actor[User], organization = Argument[organization])) : Bool
+    effect: CreateEntity[Project]
+      initialize organization = Argument[organization] : EntityRef[Organization]
+    result: Created
+  action Project.delete
+    parameter project : EntityRef[Project]
+    principal mode: AuthenticatedOnly
+    classification: Mutation
+    allow: LessOrEqual[order optional MembershipRole, absence as bottom](Some(Enum[MembershipRole.Admin]), Lookup[Membership](user = Actor[User], organization = Attribute[organization](Argument[project]))) : Bool
+    effect: DeleteEntity
+      target: Argument[project] : EntityRef[Project]
+    result: Done
+  action Membership.addMember
+    parameter target : EntityRef[User]
+    parameter organization : EntityRef[Organization]
+    principal mode: AuthenticatedOnly
+    classification: Mutation
+    allow: And(LessOrEqual[order optional MembershipRole, absence as bottom](Some(Enum[MembershipRole.Admin]), Lookup[Membership](user = Actor[User], organization = Argument[organization])), Equal(Lookup[Membership](user = Argument[target], organization = Argument[organization]), None[Enum[MembershipRole]])) : Bool
+    effect: SetRelation[Membership]
+      endpoint user = Argument[target] : EntityRef[User]
+      endpoint organization = Argument[organization] : EntityRef[Organization]
+      payload: Enum[MembershipRole.Member] : Enum[MembershipRole]
+    result: Done
+  action Membership.changeRole
+    parameter target : EntityRef[User]
+    parameter organization : EntityRef[Organization]
+    parameter newRole : Enum[MembershipRole]
+    principal mode: AuthenticatedOnly
+    classification: Mutation
+    allow: And(LessOrEqual[order optional MembershipRole, absence as bottom](Some(Enum[MembershipRole.Admin]), Lookup[Membership](user = Actor[User], organization = Argument[organization])), And(Not(Equal(Actor[User], Argument[target])), IsSome(Lookup[Membership](user = Argument[target], organization = Argument[organization])))) : Bool
+    effect: SetRelation[Membership]
+      endpoint user = Argument[target] : EntityRef[User]
+      endpoint organization = Argument[organization] : EntityRef[Organization]
+      payload: Argument[newRole] : Enum[MembershipRole]
+    result: Done
+
+Selected guarantees (unverified proof obligations)
+  guarantee AuthenticatedMutation (unverified proof obligation)
+  guarantee TenantIsolation (unverified proof obligation)
+    case for action Project.read
+      tenant: Attribute[organization](Argument[project]) : EntityRef[Organization]
+      protected: Bool[true] : Bool
+      tenantAccess: LessOrEqual[order optional MembershipRole, absence as bottom](Some(Enum[MembershipRole.Member]), Lookup[Membership](user = Actor[User], organization = Attribute[organization](Argument[project]))) : Bool
+    case for action Project.create
+      tenant: Argument[organization] : EntityRef[Organization]
+      protected: Bool[true] : Bool
+      tenantAccess: LessOrEqual[order optional MembershipRole, absence as bottom](Some(Enum[MembershipRole.Member]), Lookup[Membership](user = Actor[User], organization = Argument[organization])) : Bool
+    case for action Project.delete
+      tenant: Attribute[organization](Argument[project]) : EntityRef[Organization]
+      protected: Bool[true] : Bool
+      tenantAccess: LessOrEqual[order optional MembershipRole, absence as bottom](Some(Enum[MembershipRole.Member]), Lookup[Membership](user = Actor[User], organization = Attribute[organization](Argument[project]))) : Bool
+  guarantee NoSelfPrivilegeEscalation (unverified proof obligation)
+    authority relation: Membership
+    authority subject endpoint: user
+    authority scope endpoint: organization
+    authority absence level: Bottom
+    authority payload order: MembershipRole
+    case for action Membership.changeRole
+      scope organization = Argument[organization] : EntityRef[Organization]
+
+Limitations and non-claims
+  - This contract is a deterministic rendering of one well-typed, normalized Mithril Core v0 document; it restates that document and adds nothing to it.
+  - No policy was evaluated: allow policies, effects, and results are rendered as authored, not interpreted, simplified, or executed.
+  - The selected guarantees above are unverified proof obligations; selecting them establishes nothing about the document or any system.
+  - No proof was generated or checked.
+  - No executable backend or runtime enforcement was generated.
+  - Authentication of the acting principal is supplied by an external trusted boundary; this document does not establish it.
+  - This output is not a semantic diff: it does not compare this document with any other document or revision.

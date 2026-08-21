@@ -21,19 +21,31 @@ description:
   explicit endpoint bindings, declaration-ordered CreateEntity
   initializers, and explicit guarantee structure, with resolved
   identifiers preserved and names and source paths kept as metadata.
+  @mithril contract FILE@ runs the same complete pipeline and then
+  renders the normalized document as a deterministic, line-oriented,
+  human-readable security contract — the first consumer of the typed
+  normalized Core: declarations in normalized order, fully
+  parenthesized constructor-preserving terms with their stored static
+  types, materialized enum ranks, explicit endpoint and scope
+  bindings, and the selected guarantees explicitly labelled
+  unverified proof obligations.
   A successfully resolved document is carried as an explicit internal
   decoded and name-resolved Core representation (identifier-based
   references with JSON source paths; generic JSON ends at the
   internal decode boundary); the typechecker consumes exactly that
-  representation, and the normalizer consumes exactly the typed
+  representation, the normalizer consumes exactly the typed
   document, reusing the typechecker's judgment rather than rerunning
-  type inference of its own.  Normalization is structural only — no
-  boolean simplification, constant folding, operand reordering,
-  policy evaluation, or semantic optimization, and no canonical
-  equality between differently authored documents is claimed.  No
-  verifier, contract renderer, proof generator or checker, runtime
-  enforcement, or target generator is implemented yet, and acceptance
-  neither verifies a model nor establishes any guarantee.
+  type inference of its own, and the contract renderer consumes
+  exactly the normalized document, repeating no earlier stage.
+  Normalization is structural only — no boolean simplification,
+  constant folding, operand reordering, policy evaluation, or
+  semantic optimization, and no canonical equality between
+  differently authored documents is claimed — and contract rendering
+  is deterministic restatement only: it evaluates no policy, proves
+  and checks nothing, and is not a semantic diff.  No verifier,
+  policy evaluator, proof generator or checker, runtime enforcement,
+  or target generator is implemented yet, and acceptance neither
+  verifies a model nor establishes any guarantee.
 homepage:           https://github.com/mithril-ir/mithril
 bug-reports:        https://github.com/mithril-ir/mithril/issues
 license:            Apache-2.0
@@ -50,10 +62,10 @@ extra-doc-files:    README.md
 -- into the library at compile time (Mithril.Core.Internal.BundledSchema),
 -- never installed as package data and never looked up at run time, so
 -- it belongs in the source distribution but not in data-files.  The
--- handwritten Acme example, the invalid test fixtures, and the
--- API-boundary probe material are consumed by the test suite and the
--- documented probe command, so source distributions must carry them
--- too.
+-- handwritten Acme example, the invalid test fixtures, the frozen
+-- golden security contracts, and the API-boundary probe material are
+-- consumed by the test suite and the documented probe command, so
+-- source distributions must carry them too.
 extra-source-files:
     cabal.project
     cabal.project.probes
@@ -63,10 +75,12 @@ extra-source-files:
     test/api-probes/probe/*.hs
     test/api-probes/probe/probe.cabal
     test/api-probes/run-api-probes.sh
+    test/fixtures/acme.contract.txt
     test/fixtures/coverage.mir.json
     test/fixtures/malformed.mir.json
     test/fixtures/near-core.mir.json
     test/fixtures/unknown-name.mir.json
+    test/fixtures/welltyped.contract.txt
     test/fixtures/welltyped.mir.json
 
 source-repository head
@@ -141,7 +155,9 @@ library
   hs-source-dirs:  src
   exposed-modules:
     Mithril.CLI
+    Mithril.Command.Contract
     Mithril.Command.Validate
+    Mithril.Core.Contract
     Mithril.Core.Normalization
     Mithril.Core.Resolution
     Mithril.Core.Typing
@@ -153,7 +169,11 @@ library
   -- decoded representation; Typecheck owns the Core v0 static-typing
   -- judgment over that representation (and the shared type-query
   -- facility the normalizer consumes); Normalize owns the Core v0
-  -- normalization pass from the typed model to the normalized one.
+  -- normalization pass from the typed model to the normalized one;
+  -- Contract owns the deterministic security-contract rendering pass
+  -- over the normalized model (behind Mithril.Core.Contract);
+  -- Mithril.Command.Internal.Diagnostic owns the one
+  -- diagnostic-escaping convention shared by the command boundaries.
   -- The representations themselves sit in the private core-internal
   -- sublibrary above.  None of these modules may ever move to
   -- exposed-modules (nor the sublibrary to public visibility):
@@ -161,10 +181,12 @@ library
   -- documents, resolved nodes, or normalized nodes, minting or
   -- coercing identifiers, extracting the underlying payload,
   -- coercing one pipeline stage into another, reaching the
-  -- typechecker's or normalizer's internals, or validating against
-  -- anything but the canonical schema.
+  -- typechecker's, normalizer's, or contract renderer's internals,
+  -- or validating against anything but the canonical schema.
   other-modules:
+    Mithril.Command.Internal.Diagnostic
     Mithril.Core.Internal.BundledSchema
+    Mithril.Core.Internal.Contract
     Mithril.Core.Internal.Decode
     Mithril.Core.Internal.Normalize
     Mithril.Core.Internal.Report
@@ -202,6 +224,7 @@ test-suite mithril-ir-test
   other-modules:
     Mithril.CLIProcessTests
     Mithril.CLITests
+    Mithril.CoreContractTests
     Mithril.CoreModelTests
     Mithril.CoreNormalizationTests
     Mithril.CoreRepresentationTests
