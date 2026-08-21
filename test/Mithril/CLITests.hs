@@ -3,9 +3,10 @@
 -- Every check calls the public surface directly; no CLI logic is
 -- duplicated here.  The pre-existing bootstrap behaviors (no
 -- arguments, help, short help, version, unknown arguments, extra
--- arguments) are pinned alongside the @validate FILE@ grammar, and
--- the argument-escaping checks pin that no user-supplied argument
--- can add physical lines or terminal controls to a diagnostic.
+-- arguments) are pinned alongside the @validate FILE@ and
+-- @contract FILE@ grammars, and the argument-escaping checks pin
+-- that no user-supplied argument can add physical lines or terminal
+-- controls to a diagnostic.
 module Mithril.CLITests
   ( tests
   ) where
@@ -61,11 +62,23 @@ checks =
       "validate with extra arguments is rejected naming the extras"
       (isRejectionMentioning "surplus" (parseCommand ["validate", "doc.mir.json", "surplus"]))
   , check
+      "contract FILE parses"
+      (parseCommand ["contract", "doc.mir.json"] == Right (Contract "doc.mir.json"))
+  , check
+      "contract without FILE is rejected mentioning FILE"
+      (isRejectionMentioning "FILE" (parseCommand ["contract"]))
+  , check
+      "contract with extra arguments is rejected naming the extras"
+      (isRejectionMentioning "surplus" (parseCommand ["contract", "doc.mir.json", "surplus"]))
+  , check
       "help contains a Usage: section"
       ("Usage:" `isInfixOf` renderHelp)
   , check
       "help lists the validate command"
       ("validate FILE" `isInfixOf` renderHelp)
+  , check
+      "help lists the contract command"
+      ("contract FILE" `isInfixOf` renderHelp)
   , check
       "help scopes validate to structural validation plus name resolution plus static typing plus normalization"
       ( ("structural Core v0 validation" `isInfixOf` renderHelp)
@@ -82,8 +95,21 @@ checks =
           && ("or policy evaluation" `isInfixOf` renderHelp)
       )
   , check
-      "help states that no other compiler stage is implemented"
-      ("No other compiler stage is implemented yet." `isInfixOf` renderHelp)
+      "help scopes contract to deterministic review rendering with unverified obligations"
+      ( ("security contract for human review" `isInfixOf` renderHelp)
+          && ("remain unverified proof obligations" `isInfixOf` renderHelp)
+      )
+  , check
+      "help disclaims policy evaluation, generation, and semantic diffing for contract"
+      ( ("evaluates no policy, proves and verifies nothing," `isInfixOf` renderHelp)
+          && ("is not a semantic diff" `isInfixOf` renderHelp)
+      )
+  , check
+      "help states that no compiler stage beyond validate and contract is implemented"
+      ( "No other compiler stage is implemented yet: no verifier, no\n\
+        \proof generation or checking, and no target code generation.\n"
+          `isInfixOf` renderHelp
+      )
   , check
       "version rendering produces the exact version line"
       (renderVersion "0.1.0.0" == "mithril 0.1.0.0")
@@ -119,6 +145,20 @@ argumentEscapingChecks =
       ( parseCommand ["validate", "doc.mir.json", "surplus"]
           == Left
             "mithril: unexpected extra arguments after 'validate FILE': \
+            \'surplus'\nRun 'mithril --help' for usage."
+      )
+  , check
+      "the contract missing-FILE message is byte-stable"
+      ( parseCommand ["contract"]
+          == Left
+            "mithril: 'contract' requires exactly one FILE argument\n\
+            \Run 'mithril --help' for usage."
+      )
+  , check
+      "the contract extra-arguments message is byte-stable"
+      ( parseCommand ["contract", "doc.mir.json", "surplus"]
+          == Left
+            "mithril: unexpected extra arguments after 'contract FILE': \
             \'surplus'\nRun 'mithril --help' for usage."
       )
   , check

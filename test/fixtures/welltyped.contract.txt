@@ -1,0 +1,166 @@
+Mithril Core v0 security contract
+model: Welltyped
+
+Entities
+  entity User
+    attribute role : Enum[Rank]
+  entity Organization
+    attribute owner : EntityRef[User]
+  entity Ticket
+    attribute owner : EntityRef[User]
+    attribute urgent : Bool
+    attribute organization : EntityRef[Organization]
+
+Enums
+  enum Rank
+    value Bronze
+    value Silver
+    value Gold
+    order: Bronze = 0, Silver = 1, Gold = 2
+  enum Phase
+    value Draft
+    value Final
+    order: Final = 0, Draft = 1
+  enum Badge
+    value Star
+    (no declared order)
+
+Relations
+  relation Membership
+    endpoint member : User
+    endpoint organization : Organization
+    payload: Enum[Rank]
+  relation Marked
+    endpoint subject : User
+    payload: Unit
+  relation Clearance
+    endpoint holder : User
+    payload: Enum[Rank]
+
+Actions
+  action Ticket.read
+    parameter ticket : EntityRef[Ticket]
+    principal mode: AuthenticatedOnly
+    classification: Read
+    allow: LessOrEqual[order optional Rank, absence as bottom](Some(Enum[Rank.Silver]), Lookup[Membership](member = Actor[User], organization = Attribute[organization](Argument[ticket]))) : Bool
+    effect: NoChange
+    result: Observe
+      entity: Argument[ticket] : EntityRef[Ticket]
+  action Ticket.file
+    parameter organization : EntityRef[Organization]
+    parameter urgent : Bool
+    principal mode: AuthenticatedOnly
+    classification: Mutation
+    allow: IsSome(Lookup[Membership](member = Actor[User], organization = Argument[organization])) : Bool
+    effect: CreateEntity[Ticket]
+      initialize owner = Actor[User] : EntityRef[User]
+      initialize urgent = Argument[urgent] : Bool
+      initialize organization = Argument[organization] : EntityRef[Organization]
+    result: Created
+  action User.inspect
+    parameter target : EntityRef[User]
+    parameter level : Enum[Rank]
+    principal mode: AuthenticatedOnly
+    classification: Read
+    allow: And(LessOrEqual[order Rank](Enum[Rank.Bronze], Argument[level]), Equal(Attribute[role](Actor[User]), Argument[level])) : Bool
+    effect: NoChange
+    result: Observe
+      entity: Argument[target] : EntityRef[User]
+  action Ticket.purge
+    parameter ticket : EntityRef[Ticket]
+    principal mode: AuthenticatedOnly
+    classification: Mutation
+    allow: Equal(Attribute[owner](Argument[ticket]), Actor[User]) : Bool
+    effect: DeleteEntity
+      target: Argument[ticket] : EntityRef[Ticket]
+    result: Done
+  action Membership.assign
+    parameter target : EntityRef[User]
+    parameter organization : EntityRef[Organization]
+    parameter level : Enum[Rank]
+    principal mode: AuthenticatedOnly
+    classification: Mutation
+    allow: And(Not(Equal(Actor[User], Argument[target])), Or(Equal(Lookup[Membership](member = Argument[target], organization = Argument[organization]), None[Enum[Rank]]), Bool[false])) : Bool
+    effect: SetRelation[Membership]
+      endpoint member = Argument[target] : EntityRef[User]
+      endpoint organization = Argument[organization] : EntityRef[Organization]
+      payload: Argument[level] : Enum[Rank]
+    result: Done
+  action Marked.strip
+    parameter subject : EntityRef[User]
+    principal mode: AnyPrincipal
+    classification: Mutation
+    allow (anonymous): Equal(Lookup[Marked](subject = Argument[subject]), None[Unit]) : Bool
+    allow (authenticated): Bool[true] : Bool
+    effect: RemoveRelation[Marked]
+      endpoint subject = Argument[subject] : EntityRef[User]
+    result: Done
+  action Status.check
+    parameter peer : EntityRef[User]
+    parameter phase : Enum[Phase]
+    principal mode: AnyPrincipal
+    classification: Read
+    allow (anonymous): LessOrEqual[order Phase](Argument[phase], Enum[Phase.Draft]) : Bool
+    allow (authenticated): IsSome(Lookup[Marked](subject = Actor[User])) : Bool
+    effect: NoChange
+    result: Observe
+      entity: Argument[peer] : EntityRef[User]
+  action Marked.tag
+    parameter subject : EntityRef[User]
+    principal mode: AnyPrincipal
+    classification: Mutation
+    allow (anonymous): Bool[false] : Bool
+    allow (authenticated): Bool[true] : Bool
+    effect: SetRelation[Marked]
+      endpoint subject = Argument[subject] : EntityRef[User]
+      payload: Unit : Unit
+    result: Done
+  action Organization.found
+    parameter founder : EntityRef[User]
+    principal mode: AnyPrincipal
+    classification: Mutation
+    allow (anonymous): Bool[true] : Bool
+    allow (authenticated): Bool[true] : Bool
+    effect: CreateEntity[Organization]
+      initialize owner = Argument[founder] : EntityRef[User]
+    result: Created
+  action Session.refresh
+    (no parameters)
+    principal mode: AuthenticatedOnly
+    classification: Mutation
+    allow: And(Bool[true], Bool[true]) : Bool
+    effect: NoChange
+    result: Done
+
+Selected guarantees (unverified proof obligations)
+  guarantee AuthenticatedMutation (unverified proof obligation)
+  guarantee TenantIsolation (unverified proof obligation)
+    case for action Ticket.read
+      tenant: Attribute[organization](Argument[ticket]) : EntityRef[Organization]
+      protected: Bool[true] : Bool
+      tenantAccess: LessOrEqual[order optional Rank, absence as bottom](Some(Enum[Rank.Bronze]), Lookup[Membership](member = Actor[User], organization = Attribute[organization](Argument[ticket]))) : Bool
+  guarantee NoSelfPrivilegeEscalation (unverified proof obligation)
+    authority relation: Membership
+    authority subject endpoint: member
+    authority scope endpoint: organization
+    authority absence level: Bottom
+    authority payload order: Rank
+    case for action Membership.assign
+      scope organization = Argument[organization] : EntityRef[Organization]
+  guarantee NoSelfPrivilegeEscalation (unverified proof obligation)
+    authority relation: Clearance
+    authority subject endpoint: holder
+    authority scope endpoint: (none)
+    authority absence level: Bottom
+    authority payload order: Rank
+    case for action Session.refresh
+      scope: (none)
+
+Limitations and non-claims
+  - This contract is a deterministic rendering of one well-typed, normalized Mithril Core v0 document; it restates that document and adds nothing to it.
+  - No policy was evaluated: allow policies, effects, and results are rendered as authored, not interpreted, simplified, or executed.
+  - The selected guarantees above are unverified proof obligations; selecting them establishes nothing about the document or any system.
+  - No proof was generated or checked.
+  - No executable backend or runtime enforcement was generated.
+  - Authentication of the acting principal is supplied by an external trusted boundary; this document does not establish it.
+  - This output is not a semantic diff: it does not compare this document with any other document or revision.

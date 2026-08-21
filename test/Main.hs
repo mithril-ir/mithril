@@ -10,14 +10,17 @@
 -- "Mithril.CoreTypingTests" (static-typing boundary),
 -- "Mithril.CoreNormalizationTests" (normalization boundary),
 -- "Mithril.NormalizedModelTests" (white-box inspection of the real
--- normalized model through the package-private sublibrary), and
--- "Mithril.CLIProcessTests" (the real executable as a process).
+-- normalized model through the package-private sublibrary),
+-- "Mithril.CoreContractTests" (the security-contract rendering
+-- boundary), and "Mithril.CLIProcessTests" (the real executable as a
+-- process).
 module Main
   ( main
   ) where
 
 import qualified Mithril.CLIProcessTests
 import qualified Mithril.CLITests
+import qualified Mithril.CoreContractTests
 import qualified Mithril.CoreModelTests
 import qualified Mithril.CoreNormalizationTests
 import qualified Mithril.CoreRepresentationTests
@@ -38,5 +41,6 @@ main =
     , ("Core typing", Mithril.CoreTypingTests.tests)
     , ("Core normalization", Mithril.CoreNormalizationTests.tests)
     , ("Normalized model", Mithril.NormalizedModelTests.tests)
+    , ("Core contract", Mithril.CoreContractTests.tests)
     , ("CLI process", Mithril.CLIProcessTests.tests)
     ]

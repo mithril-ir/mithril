@@ -1,6 +1,9 @@
 -- Control (must compile): the legitimate public pipeline, written
 -- exactly as a downstream consumer would write it — through
--- normalization.  If this probe ever stops compiling, the probe
+-- normalization and on into the public contract API, so the
+-- renderer's one accepted input (a normalized document obtained
+-- through the public pipeline) is demonstrably reachable from
+-- outside.  If this probe ever stops compiling, the probe
 -- environment itself is broken and the attack probes' failures prove
 -- nothing — the driver therefore builds this one first and requires
 -- success.
@@ -10,6 +13,7 @@ module Main
 
 import qualified Data.ByteString.Char8 as Char8
 
+import Mithril.Core.Contract (renderCoreContract)
 import Mithril.Core.Normalization (normalizeCoreDocument)
 import Mithril.Core.Resolution (resolveCoreDocument)
 import Mithril.Core.Typing (typecheckCoreDocument)
@@ -38,4 +42,7 @@ main =
                     Right typedDocument ->
                       case normalizeCoreDocument typedDocument of
                         Left _ -> putStrLn "internal normalizer error"
-                        Right _ -> putStrLn "normalized"
+                        Right normalizedDocument ->
+                          case renderCoreContract normalizedDocument of
+                            Left _ -> putStrLn "internal contract renderer error"
+                            Right _contract -> putStrLn "contract rendered"

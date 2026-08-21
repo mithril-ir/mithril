@@ -7,7 +7,7 @@ description:
   exactly as an external package would write them (depending on
   mithril-ir as an external package, never by adding its src/ to a
   module search path).  One executable — probe-control — is the
-  legitimate external-consumer control and must COMPILE; the fifteen
+  legitimate external-consumer control and must COMPILE; the seventeen
   attack executables must each FAIL to compile for their intended
   boundary reason.  The driver test/api-probes/run-api-probes.sh
   builds them one by one and treats a failing control, a compiling
@@ -27,8 +27,8 @@ flag werror
   manual:      True
   default:     False
 
--- Every probe component — the control and the fifteen attacks —
--- imports this stanza, so all sixteen compile under the same warning
+-- Every probe component — the control and the seventeen attacks —
+-- imports this stanza, so all eighteen compile under the same warning
 -- set as the repository's own components, with -Werror active; the
 -- driver verifies both from the generated build plan and from this
 -- file.
@@ -151,3 +151,15 @@ executable probe-hidden-normalized
 executable probe-hidden-normalizer
   import:  probe
   main-is: HiddenNormalizer.hs
+
+-- Attack 16: pass a merely Typed document to the public contract
+-- renderer, bypassing normalization.
+executable probe-contract-typed
+  import:  probe
+  main-is: ContractTyped.hs
+
+-- Attack 17: import the hidden module that owns the Core v0
+-- security-contract rendering pass.
+executable probe-hidden-contract
+  import:  probe
+  main-is: HiddenContract.hs
