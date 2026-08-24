@@ -5,13 +5,17 @@
 -- handles, choosing the exit status — belong to the executable's
 -- @Main@ module.
 --
--- The tool understands the self-describing invocations plus two real
--- commands: @validate FILE@, JSON parsing plus structural Core v0
--- validation plus complete name resolution plus complete static
--- typing plus deterministic normalization, and @contract FILE@, the
--- same complete pipeline followed by deterministic rendering of the
--- normalized document as the human-readable security contract.  No
--- later compiler stage exists yet.
+-- The tool understands the self-describing invocations plus three
+-- real commands: @validate FILE@, JSON parsing plus structural Core
+-- v0 validation plus complete name resolution plus complete static
+-- typing plus deterministic normalization, @contract FILE@, the same
+-- complete pipeline followed by deterministic rendering of the
+-- normalized document as the human-readable security contract, and
+-- @verify FILE@, the same complete pipeline followed by the first
+-- connected verifier slice: a deterministic support gate and, for
+-- exactly one supported Acme-derived NoSelfPrivilegeEscalation
+-- obligation shape, generated Agda checked by exactly Agda 2.8.0.
+-- No other compiler stage exists yet.
 module Mithril.CLI
   ( Command (..)
   , parseCommand
@@ -35,12 +39,17 @@ data Command
   | -- | Run the complete @validate@ pipeline on FILE and print the
     -- deterministic security contract of the normalized document.
     Contract FilePath
+  | -- | Run the complete @validate@ pipeline on FILE and verify the
+    -- normalized document against the one implemented support rule,
+    -- checking the generated obligation with Agda 2.8.0.
+    Verify FilePath
   deriving (Eq, Show)
 
 -- | Interpret raw command-line arguments.
 --
 -- Exactly these invocations are accepted: no arguments (help),
--- @--help@, @-h@, @--version@, @validate FILE@, and @contract FILE@.
+-- @--help@, @-h@, @--version@, @validate FILE@, @contract FILE@, and
+-- @verify FILE@.
 -- Anything else — an unknown argument, a missing FILE, or extra
 -- arguments after a complete invocation — yields a deterministic
 -- error message intended for stderr.  Every user-supplied argument
@@ -51,6 +60,7 @@ parseCommand :: [String] -> Either String Command
 parseCommand [] = Right ShowHelp
 parseCommand ("validate" : rest) = fileCommand "validate" Validate rest
 parseCommand ("contract" : rest) = fileCommand "contract" Contract rest
+parseCommand ("verify" : rest) = fileCommand "verify" Verify rest
 parseCommand (argument : rest) =
   case recognize argument of
     Nothing -> Left (unknownArgumentError argument)
@@ -143,6 +153,12 @@ renderHelp =
     , "                         FILE, then print the deterministic"
     , "                         human-readable security contract of the"
     , "                         normalized document to stdout."
+    , "  mithril verify FILE    Run the complete validate pipeline on"
+    , "                         FILE, then verify the normalized document"
+    , "                         against the one implemented support rule:"
+    , "                         a single selected NoSelfPrivilegeEscalation"
+    , "                         obligation matching the mechanized proof"
+    , "                         shape, checked by Agda 2.8.0."
     , ""
     , "validate performs JSON parsing, structural Core v0 validation"
     , "against the supported profile of core/schema.json (compiled into"
@@ -165,8 +181,23 @@ renderHelp =
     , "guarantees, which remain unverified proof obligations. It"
     , "evaluates no policy, proves and verifies nothing, generates"
     , "nothing executable, and is not a semantic diff."
-    , "No other compiler stage is implemented yet: no verifier, no"
-    , "proof generation or checking, and no target code generation."
+    , "verify implements exactly one proof slice: a document selecting"
+    , "exactly one NoSelfPrivilegeEscalation obligation whose normalized"
+    , "structure corresponds to the mechanized safe changeRole proof rule"
+    , "is checked by generating a deterministic Agda module against the"
+    , "embedded trusted kernel and running exactly Agda 2.8.0 with"
+    , "--safe --no-libraries --ignore-interfaces (exit 0, VERIFIED)."
+    , "Everything else is UNSUPPORTED (exit 3) - including the canonical"
+    , "Acme example, whose TenantIsolation and AuthenticatedMutation"
+    , "obligations remain unverified, documents selecting no or several"
+    , "guarantees, and semantically equivalent but differently authored"
+    , "shapes. verify never reports a violation: an unsafe variant is"
+    , "unsupported, not a proved violation, and a checker problem is a"
+    , "tool failure (exit 2), never a semantic verdict. The generator,"
+    , "the embedded Agda kernel, the Agda toolchain, and the support"
+    , "rule itself remain trusted components."
+    , "No other compiler stage is implemented yet: no complete verifier,"
+    , "no semantic diff, and no target code generation."
     ]
 
 -- | Version line for the given package version string.

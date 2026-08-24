@@ -8,7 +8,7 @@
 # cabal.project.probes, so hidden modules (including the private
 # core-internal sublibrary), abstract types, and nominal roles are
 # enforced exactly as any downstream consumer would experience them.
-# All eighteen downstream components carry the repository warning set
+# All twenty-two downstream components carry the repository warning set
 # with -Werror; this script verifies that from the generated build
 # plan, from probe.cabal, from every downstream probe source (no
 # module-level OPTIONS_GHC pragma may sidestep the command line),
@@ -77,9 +77,9 @@ fail() {
 
 # --- Downstream warning-policy verification ----------------------
 #
-# All eighteen downstream components — the control plus the seventeen
-# attacks — must compile under the repository warning set with an
-# EFFECTIVE -Werror.  Four cooperating executable checks, using POSIX awk and
+# All twenty-two downstream components — the control plus the
+# twenty-one attacks — must compile under the repository warning set
+# with an EFFECTIVE -Werror.  Four cooperating executable checks, using POSIX awk and
 # grep only (no optional tooling).  Three run once, right after the
 # control build: the downstream build plan just generated must list
 # every probe component with the werror flag resolved to true,
@@ -174,7 +174,7 @@ if [ ! -f "$plan" ]; then
   fail "the downstream build plan was not generated at $plan"
 fi
 
-probe_components='probe-control probe-hidden-import probe-constructor-use probe-coerce-parsed probe-coerce-valid probe-coerce-value probe-hidden-resolved probe-hidden-syntax probe-extract-value probe-coerce-typed probe-hidden-typecheck probe-forge-typed probe-coerce-normalized probe-forge-normalized probe-hidden-normalized probe-hidden-normalizer probe-contract-typed probe-hidden-contract'
+probe_components='probe-control probe-hidden-import probe-constructor-use probe-coerce-parsed probe-coerce-valid probe-coerce-value probe-hidden-resolved probe-hidden-syntax probe-extract-value probe-coerce-typed probe-hidden-typecheck probe-forge-typed probe-coerce-normalized probe-forge-normalized probe-hidden-normalized probe-hidden-normalizer probe-contract-typed probe-hidden-contract probe-verify-typed probe-hidden-verify probe-hidden-agda-kernel probe-hidden-agda-checker'
 
 if ! awk -v names="$probe_components" '
   { buffer = buffer $0 }
@@ -229,7 +229,7 @@ echo "ok: the downstream plan and probe.cabal give every probe component the wer
 # command-line arguments, so a probe source could weaken the warning
 # policy invisibly to verify_policy.  Every downstream probe source —
 # all *.hs in test/api-probes/probe, the one shared hs-source-dirs of
-# all eighteen components — is therefore checked structurally before any
+# all twenty-two components — is therefore checked structurally before any
 # probe is accepted: the pragma's presence is rejected outright, with
 # no attempt to reconstruct GHC's post-pragma warning state.  Only a
 # real pragma opener ("{-#", then the pragma name, case-insensitive,
@@ -370,6 +370,29 @@ expect probe-contract-typed \
 expect probe-hidden-contract \
   "Could not load module" \
   "Mithril\.Core\.Internal\.Contract" \
+  "it is a hidden module in the package .{1,3}mithril-ir-[0-9.]+"
+
+# Like probe-contract-typed above: the verifier's parameter type
+# prints with its hidden-sublibrary qualification, and GHC wraps the
+# two type names onto separate lines.
+expect probe-verify-typed \
+  "match type .{1,3}Typed.{1,3}" \
+  "with .{1,3}mithril-ir-[0-9.]+:core-internal:Mithril\.Core\.Internal\.Document\.Normalized" \
+  "In the first argument of .{1,3}verifyCoreDocument"
+
+expect probe-hidden-verify \
+  "Could not load module" \
+  "Mithril\.Core\.Internal\.Verify" \
+  "member of the hidden package .{1,3}mithril-ir-[0-9.]+:core-internal"
+
+expect probe-hidden-agda-kernel \
+  "Could not load module" \
+  "Mithril\.Core\.Internal\.AgdaKernel" \
+  "it is a hidden module in the package .{1,3}mithril-ir-[0-9.]+"
+
+expect probe-hidden-agda-checker \
+  "Could not load module" \
+  "Mithril\.Core\.Internal\.AgdaChecker" \
   "it is a hidden module in the package .{1,3}mithril-ir-[0-9.]+"
 
 # --- In-package identifier non-coercion probes -------------------

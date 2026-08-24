@@ -18,9 +18,13 @@
 -- SPECIALIZED FOR THE SPIKE: the authority relation (Membership), subject
 -- kind (User), scope kind (Organization) and payload order (Role) are the
 -- fixed-schema ones; a full kernel would draw them from the guarantee's
--- authority declaration.  No JSON is consumed here and no automated
--- verifier exists: `Mithril.Acme` instantiates this proposition for one
--- hand-transcribed action only.
+-- authority declaration.  No JSON is consumed here.  `Mithril.Acme`
+-- instantiates this proposition for one hand-transcribed action; the host
+-- tool's `mithril verify` slice additionally instantiates it through a
+-- generated module checked by Agda 2.8.0, for exactly one structurally
+-- gated NoSelfPrivilegeEscalation obligation shape of normalized Core —
+-- no complete verifier exists, and every other document, action, and
+-- guarantee family remains unverified.
 
 module Mithril.Guarantee where
 

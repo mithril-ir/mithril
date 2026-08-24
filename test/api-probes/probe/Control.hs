@@ -1,9 +1,11 @@
 -- Control (must compile): the legitimate public pipeline, written
 -- exactly as a downstream consumer would write it — through
--- normalization and on into the public contract API, so the
--- renderer's one accepted input (a normalized document obtained
--- through the public pipeline) is demonstrably reachable from
--- outside.  If this probe ever stops compiling, the probe
+-- normalization and on into the public contract and verifier APIs,
+-- so each boundary's one accepted input (a normalized document
+-- obtained through the public pipeline) is demonstrably reachable
+-- from outside.  The verifier action is referenced but deliberately
+-- not executed, so compiling (or even running) this probe never
+-- invokes Agda.  If this probe ever stops compiling, the probe
 -- environment itself is broken and the attack probes' failures prove
 -- nothing — the driver therefore builds this one first and requires
 -- success.
@@ -22,6 +24,7 @@ import Mithril.Core.Validation
   , parseCoreDocument
   , validateCoreDocument
   )
+import Mithril.Core.Verification (verifyCoreDocument)
 
 main :: IO ()
 main =
@@ -45,4 +48,10 @@ main =
                         Right normalizedDocument ->
                           case renderCoreContract normalizedDocument of
                             Left _ -> putStrLn "internal contract renderer error"
-                            Right _contract -> putStrLn "contract rendered"
+                            Right _contract ->
+                              -- The verifier boundary accepts the same
+                              -- normalized document; forcing the IO
+                              -- action's closure proves reachability
+                              -- without ever running the checker.
+                              verifyCoreDocument normalizedDocument
+                                `seq` putStrLn "contract rendered, verifier reachable"

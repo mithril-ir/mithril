@@ -24,9 +24,20 @@ module Mithril.CLIProcessTests
   ( tests
   ) where
 
-import Data.List (isPrefixOf)
+import Data.List (isInfixOf, isPrefixOf)
+import System.Directory
+  ( createDirectory
+  , getPermissions
+  , getTemporaryDirectory
+  , removeDirectoryRecursive
+  , removeFile
+  , setOwnerExecutable
+  , setPermissions
+  )
 import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
+import System.FilePath ((</>))
+import System.IO (hClose, openTempFile)
 import System.Process
   ( CreateProcess (..)
   , proc
@@ -58,9 +69,13 @@ tests = do
   matrixChecks <-
     traverse
       expectationChecks
-      (expectations <> contractExpectations acmeContract welltypedContract)
+      ( expectations
+          <> contractExpectations acmeContract welltypedContract
+          <> verifyExpectations
+      )
   helpTriple <- invokeMithril ["--help"]
   overrideChecks <- datadirOverrideChecks
+  verifierToolFailureChecks <- verifierCheckerOverrideChecks
   pure $
     concat matrixChecks
       <> [ -- Belt to the renderHelp-equality braces: the first help
@@ -75,6 +90,7 @@ tests = do
             )
          ]
       <> overrideChecks
+      <> verifierToolFailureChecks
 
 -- | Spawn the real executable with the inherited environment and no
 -- stdin, capturing everything it observably does.
@@ -366,6 +382,131 @@ contractExpectations acmeContract welltypedContract =
       }
   ]
 
+-- | The pinned @verify@ invocation matrix.  The supported
+-- single-obligation fixture verifies under the real Agda 2.8.0
+-- checker (exit 0, the deterministic report alone on stdout); every
+-- unsupported document exits 3 with its deterministic report alone
+-- on stdout; every input failure keeps the byte-exact validate
+-- diagnostics and classification; and the verify grammar mirrors the
+-- validate and contract grammars.  Each expectation runs twice
+-- through 'expectationChecks', pinning repetition determinism.
+verifyExpectations :: [CliExpectation]
+verifyExpectations =
+  [ CliExpectation
+      { cliName = "verify verifies the supported single-obligation fixture"
+      , cliArgs = ["verify", nspePath]
+      , cliExit = ExitSuccess
+      , cliStdout =
+          "test/fixtures/acme-nspe.mir.json: VERIFIED\n\
+          \  guarantee: NoSelfPrivilegeEscalation\n\
+          \  case action: \"Membership.changeRole\"\n\
+          \  checker: Agda 2.8.0 with --safe --no-libraries --ignore-interfaces\n\
+          \  theorems: case-scope-is-scope-argument, policy-actor-distinct, actor-authority-unchanged, no-self-escalation\n\
+          \  scope: exactly the one selected obligation of this document is verified; nothing else is\n"
+      , cliStderr = ""
+      }
+  , CliExpectation
+      { -- The canonical Acme document remains unsupported: its
+        -- AuthenticatedMutation and TenantIsolation obligations are
+        -- not implemented, and it selects three guarantees.
+        cliName = "verify reports the canonical Acme document unsupported with exit 3"
+      , cliArgs = ["verify", acmePath]
+      , cliExit = ExitFailure 3
+      , cliStdout =
+          "examples/acme/acme.mir.json: UNSUPPORTED by the implemented verifier support rule\n\
+          \  /guarantees: the document selects 3 guarantee obligations, but only a document selecting exactly one NoSelfPrivilegeEscalation obligation is supported\n\
+          \  /guarantees/0: the AuthenticatedMutation guarantee family is not supported by the verifier\n\
+          \  /guarantees/1: the TenantIsolation guarantee family is not supported by the verifier\n"
+      , cliStderr = ""
+      }
+  , CliExpectation
+      { -- The unsafe variant lacking the actor/subject guard is
+        -- unsupported — never a proved violation.
+        cliName = "verify reports the unsafe variant unsupported, not violated"
+      , cliArgs = ["verify", unsafeNspePath]
+      , cliExit = ExitFailure 3
+      , cliStdout =
+          "test/fixtures/acme-nspe-unsafe.mir.json: UNSUPPORTED by the implemented verifier support rule\n\
+          \  /actions/4/allow/right: the second operand of the allow policy must itself be the conjunction And(actor/subject guard, subject membership)\n"
+      , cliStderr = ""
+      }
+  , CliExpectation
+      { cliName = "verify rejects malformed JSON with the validate bytes"
+      , cliArgs = ["verify", "test/fixtures/malformed.mir.json"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "test/fixtures/malformed.mir.json: invalid JSON\n\
+          \  Unexpected end-of-input, expecting key literal\n"
+      }
+  , CliExpectation
+      { cliName = "verify rejects the near-Core document with the validate bytes"
+      , cliArgs = ["verify", nearCorePath]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr = nearCoreStderr
+      }
+  , CliExpectation
+      { cliName = "verify rejects an unresolved name with the validate bytes"
+      , cliArgs = ["verify", "test/fixtures/unknown-name.mir.json"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "test/fixtures/unknown-name.mir.json: invalid Mithril Core v0 name resolution\n\
+          \  /guarantees/2/authority/payloadOrder: unknown enum \"Ghost\"\n"
+      }
+  , CliExpectation
+      { cliName = "verify rejects the ill-typed coverage fixture with the validate bytes"
+      , cliArgs = ["verify", "test/fixtures/coverage.mir.json"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr = coverageTypingStderr
+      }
+  , CliExpectation
+      { cliName = "verify reports a nonexistent input"
+      , cliArgs = ["verify", "test/fixtures/does-not-exist.mir.json"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "test/fixtures/does-not-exist.mir.json: cannot read file\n\
+          \  does not exist\n"
+      }
+  , CliExpectation
+      { cliName = "verify without FILE is a usage error"
+      , cliArgs = ["verify"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "mithril: 'verify' requires exactly one FILE argument\n\
+          \Run 'mithril --help' for usage.\n"
+      }
+  , CliExpectation
+      { cliName = "an extra argument after verify FILE is a usage error"
+      , cliArgs = ["verify", nspePath, "surplus"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "mithril: unexpected extra arguments after 'verify FILE': 'surplus'\n\
+          \Run 'mithril --help' for usage.\n"
+      }
+  , CliExpectation
+      { -- After 'verify', a dash argument is FILE, never an option.
+        cliName = "a hostile dash FILE after verify stays a file path"
+      , cliArgs = ["verify", "--frobnicate"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "--frobnicate: cannot read file\n\
+          \  does not exist\n"
+      }
+  ]
+
+nspePath :: FilePath
+nspePath = "test/fixtures/acme-nspe.mir.json"
+
+unsafeNspePath :: FilePath
+unsafeNspePath = "test/fixtures/acme-nspe-unsafe.mir.json"
+
 acmePath :: FilePath
 acmePath = "examples/acme/acme.mir.json"
 
@@ -406,6 +547,108 @@ coverageTypingStderr =
   \  /guarantees/2/cases/1: this case names no scope term, but the authority declares the scope endpoint \"organization\"\n\
   \  /guarantees/3/authority/payloadOrder: enum \"Badge\" declares no order, so it cannot rank authority levels\n\
   \  /guarantees/3/authority/payloadOrder: relation \"Flagged\" has a Unit payload, so enum \"Badge\" cannot rank its authority levels\n"
+
+-- | The checker-substitution failure against the real process: with
+-- a fake @agda@ reporting version 2.7.0 shadowing the search path,
+-- @mithril verify@ on the supported fixture must exit 2 with the
+-- exact escaped tool-failure diagnostic on stderr and nothing on
+-- stdout — never a semantic verdict — twice, byte-identically.
+-- Additionally, with a fake @agda@ reporting the required version but
+-- a hostile, nonexistent TMPDIR, the workspace failure must render
+-- the stable anchor-creation diagnostic with no trace of the
+-- environment-supplied path — twice, byte-identically.
+verifierCheckerOverrideChecks :: IO [Check]
+verifierCheckerOverrideChecks = do
+  baseEnvironment <- getEnvironment
+  temporaryBase <- getTemporaryDirectory
+  (anchorPath, handle) <- openTempFile temporaryBase "mithril-fake-agda.txt"
+  hClose handle
+  let fakeDirectory = anchorPath ++ ".d"
+  createDirectory fakeDirectory
+  let program = fakeDirectory </> "agda"
+  writeFile program
+    "#!/bin/sh\n\
+    \if [ \"$1\" = \"--version\" ]; then echo \"Agda version 2.7.0\"; exit 0; fi\n\
+    \exit 1\n"
+  permissions <- getPermissions program
+  setPermissions program (setOwnerExecutable True permissions)
+  let rightVersionDirectory = anchorPath ++ ".v"
+  createDirectory rightVersionDirectory
+  let rightVersionProgram = rightVersionDirectory </> "agda"
+  writeFile rightVersionProgram
+    "#!/bin/sh\n\
+    \if [ \"$1\" = \"--version\" ]; then echo \"Agda version 2.8.0\"; exit 0; fi\n\
+    \exit 1\n"
+  rightVersionPermissions <- getPermissions rightVersionProgram
+  setPermissions
+    rightVersionProgram
+    (setOwnerExecutable True rightVersionPermissions)
+  let overriddenEnvironment =
+        [ ( name
+          , if name == "PATH" then fakeDirectory ++ ":" ++ value else value
+          )
+        | (name, value) <- baseEnvironment
+        ]
+      invokeOverridden arguments =
+        readCreateProcessWithExitCode
+          (proc "mithril" arguments) {env = Just overriddenEnvironment}
+          ""
+      -- Hostile and never created: spaces and shell-sensitive text.
+      hostileTemporary = fakeDirectory </> "missing tempdir $(hostile) chars"
+      workspaceEnvironment =
+        ("TMPDIR", hostileTemporary)
+          : [ ( name
+              , if name == "PATH"
+                  then rightVersionDirectory ++ ":" ++ value
+                  else value
+              )
+            | (name, value) <- baseEnvironment
+            , name /= "TMPDIR"
+            ]
+      invokeWorkspace arguments =
+        readCreateProcessWithExitCode
+          (proc "mithril" arguments) {env = Just workspaceEnvironment}
+          ""
+  firstTriple <- invokeOverridden ["verify", nspePath]
+  secondTriple <- invokeOverridden ["verify", nspePath]
+  firstWorkspaceTriple <- invokeWorkspace ["verify", nspePath]
+  secondWorkspaceTriple <- invokeWorkspace ["verify", nspePath]
+  removeDirectoryRecursive rightVersionDirectory
+  removeDirectoryRecursive fakeDirectory
+  removeFile anchorPath
+  pure
+    [ check
+        "a wrong-version checker fails the verify process with exit 2 and the exact diagnostic"
+        ( firstTriple
+            == ( ExitFailure 2
+               , ""
+               , "mithril: internal Core verifier error: the checker is not\
+                 \ exactly Agda 2.8.0\n  reported: Agda version 2.7.0\n"
+               )
+        )
+    , check
+        "the wrong-version checker failure is byte-identical on repetition"
+        (firstTriple == secondTriple)
+    , check
+        "a hostile nonexistent TMPDIR fails the verify process with the exact path-free diagnostic"
+        ( firstWorkspaceTriple
+            == ( ExitFailure 2
+               , ""
+               , "mithril: internal Core verifier error: the isolated checking\
+                 \ workspace could not be prepared or cleaned\n\
+                 \  creating the workspace anchor failed: does not exist\n"
+               )
+        )
+    , check
+        "the hostile TMPDIR value appears nowhere in the process output"
+        ( case firstWorkspaceTriple of
+            (_, out, err) ->
+              not (hostileTemporary `isInfixOf` (out <> err))
+        )
+    , check
+        "the workspace failure is byte-identical on repetition"
+        (firstWorkspaceTriple == secondWorkspaceTriple)
+    ]
 
 -- | The substitution attack against the real process: a hostile
 -- @mithril_ir_datadir@ pointing at an in-profile permissive schema

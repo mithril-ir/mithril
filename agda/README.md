@@ -13,8 +13,23 @@ Acme example's `Membership.changeRole` action together with a checked proof
 of its selected NoSelfPrivilegeEscalation case (see
 ["The Acme application slice"](#the-acme-application-slice) below).
 Everything else — the other two property families, the rest of the Acme
-model, and the JSON document itself — remains unverified, and no automated
-verifier or JSON-to-Agda connection exists.
+model, and the canonical JSON document itself — remains unverified.
+
+One narrow automated connection now exists on the host-tool side:
+`mithril verify FILE` embeds five of these modules (`Mithril.Base`,
+`Mithril.Core`, `Mithril.Policy`, `Mithril.Effect`, `Mithril.Guarantee`) at
+compile time as its trusted generic kernel, and — for exactly one supported
+normalized obligation shape, structurally corresponding to the safe
+`changeRole` proof rule below — generates an obligation module against them
+and checks it with exactly Agda 2.8.0 in safe mode inside an isolated
+workspace. The hand-written `Mithril.Acme` slice is never imported by
+generated code and remains an authored experiment; the generated module
+re-proves the same rule per supported document. Changing any of the five
+kernel modules changes the verifier's trusted computing base: keep both
+checks below and the Haskell test suite passing. No general verifier or
+general JSON-to-Agda lowering exists — everything outside that single
+obligation shape is UNSUPPORTED to the tool, and no violation is ever
+reported by it.
 
 ## Checking
 
@@ -38,7 +53,7 @@ termination or rewrite pragmas, and no holes.
 
 | Module | Contents |
 |---|---|
-| `Mithril.Base` | Minimal prelude: negation, sums/products, `≤` on `Nat`, decidable equality. |
+| `Mithril.Base` | Minimal prelude: negation, sums/products, `≤` on `Nat`, decidable equality. (Embedded kernel module of `mithril verify`.) |
 | `Mithril.Core` | Entity kinds and references, the value universe, finite state, total closed-world relation lookup, `SetRelation` upsert, freshness, allocation, well-formedness (`WF`), and the *unauthorized* state-level lemmas: update/frame lemmas and conditional `WF` preservation. |
 | `Mithril.Policy` | Authentication levels and environments, typed argument contexts, policy terms, total evaluation, principal modes, policies with anonymous/authenticated branches, callers, validity, `eval-valid`, `fresh-not-evaluable`. |
 | `Mithril.Effect` | Result descriptors, effects indexed by the descriptor they produce, actions, the `Capability` authorization evidence, the authorized transition `execute`, `execute-wf`, and general read/upsert/creation theorems. |

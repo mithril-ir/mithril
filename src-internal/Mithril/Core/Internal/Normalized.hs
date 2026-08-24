@@ -10,7 +10,10 @@
 -- "Mithril.Core.Normalization") from a well-typed document, and the
 -- one intended input of the contract renderer (its first implemented
 -- consumer, "Mithril.Core.Internal.Contract" behind
--- "Mithril.Core.Contract"), the future Agda backend, and the future
+-- "Mithril.Core.Contract"), the Agda backend (implemented so far as
+-- the single-obligation verifier slice,
+-- "Mithril.Core.Internal.Verify" behind "Mithril.Core.Verification"),
+-- and the future
 -- target emitters.  It is a distinct model from the resolved
 -- representation ("Mithril.Core.Internal.Resolved") — not the resolved
 -- 'Mithril.Core.Internal.Resolved.Model' under another stage tag —

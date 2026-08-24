@@ -13,7 +13,9 @@
 -- resolved (or earlier) document unacceptable — and constructs the
 -- typed normalized Core: the explicit internal representation the
 -- contract renderer ("Mithril.Core.Contract", its first implemented
--- consumer), the future Agda backend, and the future target emitters
+-- consumer), the Agda backend (implemented so far as the
+-- single-obligation verifier slice behind "Mithril.Core.Verification",
+-- its second consumer), and the future target emitters
 -- are required to share.  Relative to the typed document's resolved
 -- model, normalization
 --

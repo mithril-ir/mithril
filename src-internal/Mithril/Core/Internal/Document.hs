@@ -79,7 +79,9 @@ data Typed
 -- materialized enum ranks, explicit endpoint bindings,
 -- declaration-ordered initializers, and explicit guarantee structure,
 -- the single form the contract renderer (implemented, in
--- "Mithril.Core.Contract"), the future Agda backend, and the future
+-- "Mithril.Core.Contract"), the Agda backend (implemented so far as
+-- the single-obligation verifier slice behind
+-- "Mithril.Core.Verification"), and the future
 -- target emitters consume.  This is an attestation about
 -- deterministic structural normalization only: a
 -- @'CoreDocument' 'Normalized'@ is /not/ verified, carries no

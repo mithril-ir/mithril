@@ -5,18 +5,28 @@ name: Haskell
 # parsing, structural Core v0 validation against the schema compiled
 # in from core/schema.json, complete name resolution, complete static
 # typing, and deterministic normalization into the internal typed
-# normalized Core, and 'mithril contract FILE': the same pipeline
+# normalized Core, 'mithril contract FILE': the same pipeline
 # followed by deterministic rendering of the normalized document as
-# the human-readable security contract), its unit and process-level
-# tests, and the downstream API-boundary compile-fail probes. The
-# validate command establishes JSON shape conformance, name
-# resolution, static well-typedness, and deterministic structural
-# normalization only — no policy evaluation, no simplification or
-# optimization, and no canonical equality across differently authored
-# documents — and the contract command only restates the normalized
-# document for review: it is not a semantic diff, and its rendered
-# guarantees remain unverified proof obligations; no verifier or
-# generator exists yet.
+# the human-readable security contract, and 'mithril verify FILE':
+# the same pipeline followed by the first connected verifier slice —
+# a deterministic support gate and, for exactly one supported
+# Acme-derived NoSelfPrivilegeEscalation obligation shape, generated
+# Agda checked by exactly Agda 2.8.0 in safe mode), its unit and
+# process-level tests, and the downstream API-boundary compile-fail
+# probes. The validate command establishes JSON shape conformance,
+# name resolution, static well-typedness, and deterministic
+# structural normalization only — no policy evaluation, no
+# simplification or optimization, and no canonical equality across
+# differently authored documents — the contract command only restates
+# the normalized document for review: it is not a semantic diff, and
+# its rendered guarantees remain unverified proof obligations; and
+# the verify command implements exactly the one obligation slice: the
+# canonical Acme document stays unsupported (its TenantIsolation and
+# AuthenticatedMutation obligations remain unverified), and a checker
+# problem is a tool failure, never a semantic verdict. Agda 2.8.0 is
+# installed here because the verifier's end-to-end checks (in the
+# test suite and the explicit verify steps below) invoke the real
+# checker; the standalone Agda spike keeps its own workflow.
 
 on:
   push:
@@ -37,11 +47,15 @@ jobs:
     name: Build and test
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: source
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          path: source
 
       - name: Set up GHC and cabal-install
         uses: haskell-actions/setup@cd0d9bdd65b20557f41bea4dbe43d0b5fbbfe553 # v2.11.0
@@ -49,6 +63,17 @@ jobs:
           ghc-version: "9.12.4"
           cabal-version: "3.18.1.0"
           cabal-update: true
+
+      # The verifier invokes exactly Agda 2.8.0 across a process
+      # boundary; the same pinned setup action as the Agda spike
+      # workflow provides it.
+      - name: Install Agda 2.8.0
+        uses: agda/agda-setup-action@c931d59d76a036d1bed9f322cc12cc105bda7881 # v1
+        with:
+          agda-version: "2.8.0"
+
+      - name: Print Agda version
+        run: agda --version
 
       - name: Check package description
         run: cabal check
@@ -67,6 +92,26 @@ jobs:
 
       - name: Render Acme security contract
         run: cabal run mithril -- contract examples/acme/acme.mir.json
+
+      # The end-to-end generated-verifier checks: the supported
+      # Acme-derived single-obligation fixture must verify under the
+      # real Agda 2.8.0 safe check (exit 0), and the canonical Acme
+      # document must remain unsupported with exactly exit 3 — its
+      # TenantIsolation and AuthenticatedMutation obligations are not
+      # implemented, and unsupported is never a verdict.
+      - name: Verify the supported NoSelfPrivilegeEscalation fixture
+        run: cabal run mithril -- verify test/fixtures/acme-nspe.mir.json
+
+      - name: Canonical Acme document is unsupported (exit 3)
+        run: |
+          set +e
+          cabal run mithril -- verify examples/acme/acme.mir.json
+          status=$?
+          set -e
+          if [ "$status" -ne 3 ]; then
+            echo "expected exit 3, got $status" >&2
+            exit 1
+          fi
 
       - name: Run mithril --help
         run: cabal run mithril -- --help
