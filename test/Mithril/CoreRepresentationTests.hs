@@ -13,9 +13,10 @@
 -- behavior: the full-coverage fixture
 -- (@test\/fixtures\/coverage.mir.json@) pushes every Core v0
 -- constructor family — the actor-available families
--- (@AuthenticatedOnly@ bodies, authenticated branches, guarantee
--- terms) and the actor-free families (@AnyPrincipal@ anonymous
--- branches, effects, and results) — through parsing, structural
+-- (@AuthenticatedOnly@ bodies, authenticated branches,
+-- escalation-case scope terms) and the actor-free families
+-- (@AnyPrincipal@ anonymous branches, effects, results, and
+-- @TenantIsolation@ case terms) — through parsing, structural
 -- validation, and name resolution successfully, and reference sites
 -- that only this fixture exercises (an arity-one authority relation,
 -- actor-free initializer keys, actor-free effect terms) get targeted

@@ -116,6 +116,7 @@ module Mithril.Core.Internal.Normalized
 
     -- * Guarantees
   , Guarantee (..)
+  , TenantIsolationAccess (..)
   , TenantIsolationCase (..)
   , Authority (..)
   , EscalationCase (..)
@@ -508,23 +509,48 @@ deriving instance Eq (EndpointBinding availability)
 -- obligation; normalization establishes nothing about its truth.
 data Guarantee
   = AuthenticatedMutationGuarantee SourcePath
-  | TenantIsolationGuarantee SourcePath (NonEmpty TenantIsolationCase)
+  | TenantIsolationGuarantee
+      SourcePath
+      TenantIsolationAccess
+      (NonEmpty TenantIsolationCase)
   | NoSelfPrivilegeEscalationGuarantee
       SourcePath
       Authority
       (NonEmpty EscalationCase)
   deriving (Eq)
 
--- | One normalized @TenantIsolation@ case: its terms are typed in
--- the referenced action's parameter environment — the tenant term at
--- an entity reference (its type names the tenant entity directly),
--- @protected@ and @tenantAccess@ at @Bool@.
+-- | The normalized @TenantIsolation@ structural access relation.  The
+-- typechecked facts a backend consumes: the relation is binary, the
+-- subject and tenant endpoints are distinct relation-owned endpoints
+-- (so together they cover the relation), and the subject endpoint
+-- references the distinguished @User@ entity.  Presence of a
+-- @(subject, tenant)@ tuple in the relation is the baseline tenant
+-- access of the (unverified) obligation; the relation payload defines
+-- no action-specific floor here — role floors remain in each action's
+-- allow policy.
+data TenantIsolationAccess = TenantIsolationAccess
+  { tenantIsolationAccessPath :: SourcePath
+  , tenantIsolationAccessRelation :: Ref RelationId
+  , tenantIsolationAccessSubjectEndpoint :: Ref EndpointId
+  , tenantIsolationAccessTenantEndpoint :: Ref EndpointId
+  }
+  deriving (Eq)
+
+-- | One normalized @TenantIsolation@ case: its actor-free terms are
+-- typed in the referenced action's parameter environment — the
+-- tenant term at the entity reference type of the guarantee's tenant
+-- endpoint (its stored type names that tenant entity directly),
+-- @protected@ at @Bool@.  The stored types are the typechecker's, so
+-- the (future, unverified) obligation's parameters — if @protected@
+-- holds and the request is allowed, the access relation must contain
+-- the tuple binding the subject endpoint to the authenticated
+-- principal and the tenant endpoint to the evaluated tenant — are
+-- recorded without any backend rerunning inference.
 data TenantIsolationCase = TenantIsolationCase
   { tenantIsolationCasePath :: SourcePath
   , tenantIsolationCaseAction :: Ref ActionId
-  , tenantIsolationCaseTenant :: ValueTerm 'ActorAvailable
-  , tenantIsolationCaseProtected :: PolicyTerm 'ActorAvailable
-  , tenantIsolationCaseTenantAccess :: PolicyTerm 'ActorAvailable
+  , tenantIsolationCaseTenant :: ValueTerm 'ActorFree
+  , tenantIsolationCaseProtected :: PolicyTerm 'ActorFree
   }
   deriving (Eq)
 

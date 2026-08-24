@@ -653,6 +653,11 @@
     },
     {
       "kind": "TenantIsolation",
+      "access": {
+        "relation": "Membership",
+        "subjectEndpoint": "member",
+        "tenantEndpoint": "organization"
+      },
       "cases": [
         {
           "action": "Ticket.read",
@@ -667,34 +672,6 @@
           "protected": {
             "kind": "Bool",
             "value": true
-          },
-          "tenantAccess": {
-            "kind": "LessOrEqual",
-            "left": {
-              "kind": "Some",
-              "value": {
-                "kind": "Enum",
-                "enum": "Rank",
-                "value": "Bronze"
-              }
-            },
-            "right": {
-              "kind": "Lookup",
-              "relation": "Membership",
-              "endpoints": [
-                {
-                  "kind": "Actor"
-                },
-                {
-                  "kind": "Attribute",
-                  "source": {
-                    "kind": "Argument",
-                    "name": "ticket"
-                  },
-                  "attribute": "organization"
-                }
-              ]
-            }
           }
         }
       ]

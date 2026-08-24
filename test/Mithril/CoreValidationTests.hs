@@ -519,6 +519,36 @@ mutationChecks schema acme =
   , check
       "a well-formed extra CreateEntity attribute key is accepted (control)"
       (accepts schema (withExtraAttribute "extra"))
+  , -- The migrated TenantIsolation shape: a guarantee-level access
+    -- object plus actor-free per-case tenant/protected terms.  The
+    -- unmutated document is the primary control; this one pins that a
+    -- nested actor-free protected policy is structurally acceptable,
+    -- so the Actor rejections below fail on the Actor alone.
+    check
+      "a nested actor-free protected policy is accepted (control)"
+      ( accepts
+          schema
+          ( onKey
+              "guarantees"
+              ( onIndex
+                  1
+                  ( onKey
+                      "cases"
+                      ( onIndex
+                          0
+                          ( setKey
+                              "protected"
+                              ( andTerm
+                                  boolTrueTerm
+                                  (notTerm (equalTerm boolTrueTerm boolTrueTerm))
+                              )
+                          )
+                      )
+                  )
+              )
+              acme
+          )
+      )
   , -- Resource-limit gap, documented in Mithril.Core.Validation: the
     -- backend is expected to fail closed on pathological nesting, but
     -- no dedicated depth diagnostic is guaranteed — its error
@@ -586,6 +616,85 @@ mutationChecks schema acme =
       , ( "empty TenantIsolation.cases [minItems]"
         , ["guarantees", "1"]
         , onKey "guarantees" (onIndex 1 (setKey "cases" (toJSON ([] :: [Value]))))
+        )
+      , ( "missing TenantIsolation access [required]"
+        , ["guarantees", "1"]
+        , onKey "guarantees" (onIndex 1 (dropKey "access"))
+        )
+      , ( "missing access relation [required]"
+        , ["guarantees", "1"]
+        , onKey "guarantees" (onIndex 1 (onKey "access" (dropKey "relation")))
+        )
+      , ( "missing access subjectEndpoint [required]"
+        , ["guarantees", "1"]
+        , onKey "guarantees" (onIndex 1 (onKey "access" (dropKey "subjectEndpoint")))
+        )
+      , ( "missing access tenantEndpoint [required]"
+        , ["guarantees", "1"]
+        , onKey "guarantees" (onIndex 1 (onKey "access" (dropKey "tenantEndpoint")))
+        )
+      , ( "extra member inside the access object [additionalProperties]"
+        , ["guarantees", "1"]
+        , onKey
+            "guarantees"
+            (onIndex 1 (onKey "access" (setKey "payloadFloor" (String "Member"))))
+        )
+      , ( "the removed per-case tenantAccess member [additionalProperties]"
+        , ["guarantees", "1"]
+        , onKey
+            "guarantees"
+            ( onIndex
+                1
+                (onKey "cases" (onIndex 0 (setKey "tenantAccess" boolTrueTerm)))
+            )
+        )
+      , ( "a case missing its protected term [required]"
+        , ["guarantees", "1"]
+        , onKey
+            "guarantees"
+            (onIndex 1 (onKey "cases" (onIndex 0 (dropKey "protected"))))
+        )
+      , ( "Actor as a TenantIsolation tenant term [Actor-free families]"
+        , ["guarantees", "1"]
+        , onKey
+            "guarantees"
+            (onIndex 1 (onKey "cases" (onIndex 0 (setKey "tenant" actorTerm))))
+        )
+      , ( "Actor nested in a tenant Attribute source [Actor-free families]"
+        , ["guarantees", "1"]
+        , onKey
+            "guarantees"
+            ( onIndex
+                1
+                ( onKey
+                    "cases"
+                    (onIndex 0 (setKey "tenant" (attributeOfTerm actorTerm "organization")))
+                )
+            )
+        )
+      , ( "Actor as a TenantIsolation protected term [Actor-free families]"
+        , ["guarantees", "1"]
+        , onKey
+            "guarantees"
+            (onIndex 1 (onKey "cases" (onIndex 0 (setKey "protected" actorTerm))))
+        )
+      , ( "Actor nested deep inside a protected policy [Actor-free families]"
+        , ["guarantees", "1"]
+        , onKey
+            "guarantees"
+            ( onIndex
+                1
+                ( onKey
+                    "cases"
+                    ( onIndex
+                        0
+                        ( setKey
+                            "protected"
+                            (andTerm boolTrueTerm (notTerm (equalTerm actorTerm actorTerm)))
+                        )
+                    )
+                )
+            )
         )
       , ( "empty NoSelfPrivilegeEscalation.cases [minItems]"
         , ["guarantees", "2"]
@@ -684,6 +793,25 @@ actorTerm = object ["kind" .= ("Actor" :: Text)]
 
 unitTerm :: Value
 unitTerm = object ["kind" .= ("Unit" :: Text)]
+
+attributeOfTerm :: Value -> Text -> Value
+attributeOfTerm source attribute =
+  object
+    [ "kind" .= ("Attribute" :: Text)
+    , "source" .= source
+    , "attribute" .= attribute
+    ]
+
+equalTerm :: Value -> Value -> Value
+equalTerm left right =
+  object ["kind" .= ("Equal" :: Text), "left" .= left, "right" .= right]
+
+andTerm :: Value -> Value -> Value
+andTerm left right =
+  object ["kind" .= ("And" :: Text), "left" .= left, "right" .= right]
+
+notTerm :: Value -> Value
+notTerm value = object ["kind" .= ("Not" :: Text), "value" .= value]
 
 argumentOrganization :: Value
 argumentOrganization =

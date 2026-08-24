@@ -73,18 +73,18 @@ Actions
 Selected guarantees (unverified proof obligations)
   guarantee AuthenticatedMutation (unverified proof obligation)
   guarantee TenantIsolation (unverified proof obligation)
+    access relation: Membership
+    access subject endpoint: user
+    access tenant endpoint: organization
     case for action Project.read
       tenant: Attribute[organization](Argument[project]) : EntityRef[Organization]
       protected: Bool[true] : Bool
-      tenantAccess: LessOrEqual[order optional MembershipRole, absence as bottom](Some(Enum[MembershipRole.Member]), Lookup[Membership](user = Actor[User], organization = Attribute[organization](Argument[project]))) : Bool
     case for action Project.create
       tenant: Argument[organization] : EntityRef[Organization]
       protected: Bool[true] : Bool
-      tenantAccess: LessOrEqual[order optional MembershipRole, absence as bottom](Some(Enum[MembershipRole.Member]), Lookup[Membership](user = Actor[User], organization = Argument[organization])) : Bool
     case for action Project.delete
       tenant: Attribute[organization](Argument[project]) : EntityRef[Organization]
       protected: Bool[true] : Bool
-      tenantAccess: LessOrEqual[order optional MembershipRole, absence as bottom](Some(Enum[MembershipRole.Member]), Lookup[Membership](user = Actor[User], organization = Attribute[organization](Argument[project]))) : Bool
   guarantee NoSelfPrivilegeEscalation (unverified proof obligation)
     authority relation: Membership
     authority subject endpoint: user

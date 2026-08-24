@@ -29,8 +29,12 @@
 --    @Attribute@, @Lookup@, @None@ payload enums, and all nested
 --    terms), effect targets and @CreateEntity@ initializer keys,
 --    result terms, and every guarantee reference (case actions and
---    their action-scoped terms, and the @NoSelfPrivilegeEscalation@
---    authority relation, endpoints, and payload-order enum).
+--    their action-scoped terms, the @TenantIsolation@ access relation
+--    with its subject and tenant endpoints — endpoints are
+--    relation-owned members, resolved within the resolved access
+--    relation, never global names — and the
+--    @NoSelfPrivilegeEscalation@ authority relation, endpoints, and
+--    payload-order enum).
 --
 -- Internally the stage is one frontend interpretation in two passes:
 -- "Mithril.Core.Internal.Decode" decodes the structurally valid JSON
@@ -1048,13 +1052,65 @@ resolveGuarantee indexes guarantee =
       -- No declaration-name reference beyond the structural target
       -- selector.
       pure (Resolved.AuthenticatedMutationGuarantee path)
-    Syntax.TenantIsolationGuarantee path cases ->
+    Syntax.TenantIsolationGuarantee path access cases ->
       Resolved.TenantIsolationGuarantee path
-        <$> traverse (resolveTenantIsolationCase indexes) cases
+        <$> resolveTenantIsolationAccess indexes access
+        <*> traverse (resolveTenantIsolationCase indexes) cases
     Syntax.NoSelfPrivilegeEscalationGuarantee path authority cases ->
       Resolved.NoSelfPrivilegeEscalationGuarantee path
         <$> resolveAuthority indexes authority
         <*> traverse (resolveEscalationCase indexes) cases
+
+-- | Resolve the @TenantIsolation@ structural access relation.  An
+-- unknown or duplicated access relation is reported once (or at its
+-- declaration sites); its endpoint names cannot be resolved without a
+-- unique relation and are suppressed.  Once the relation resolves,
+-- each endpoint name resolves in that relation's own endpoint
+-- namespace — endpoints are relation-owned members, never global
+-- names — with unknown and ambiguous names diagnosed exactly like
+-- the authority endpoints below.
+resolveTenantIsolationAccess
+  :: Indexes
+  -> Syntax.TenantIsolationAccess
+  -> Resolve Resolved.TenantIsolationAccess
+resolveTenantIsolationAccess indexes access =
+  Resolved.TenantIsolationAccess
+    (Syntax.tenantIsolationAccessPath access)
+    <$> relationResolve
+    <*> resolveEndpoint (Syntax.tenantIsolationAccessSubjectEndpoint access)
+    <*> resolveEndpoint (Syntax.tenantIsolationAccessTenantEndpoint access)
+  where
+    Sourced relationSitePath relationName =
+      Syntax.tenantIsolationAccessRelation access
+    relationLookup = lookupName (relationIndex indexes) relationName
+    relationResolve =
+      case relationLookup of
+        NameMissing ->
+          refuseAt relationSitePath ("unknown relation " <> quoted relationName)
+        NameAmbiguous -> suppressed
+        NameFound (RelationEntry relationId _) ->
+          pure (Resolved.Ref relationSitePath relationId)
+    endpointNamespace =
+      case relationLookup of
+        NameFound (RelationEntry _ endpoints) -> Just endpoints
+        NameMissing -> Nothing
+        NameAmbiguous -> Nothing
+    resolveEndpoint (Sourced endpointSitePath endpointName) =
+      case endpointNamespace of
+        Nothing -> suppressed
+        Just endpoints ->
+          case lookupName endpoints endpointName of
+            NameMissing ->
+              refuseAt
+                endpointSitePath
+                ( "unknown endpoint "
+                    <> quoted endpointName
+                    <> " in relation "
+                    <> quoted relationName
+                )
+            NameAmbiguous -> suppressed
+            NameFound endpointId ->
+              pure (Resolved.Ref endpointSitePath endpointId)
 
 resolveTenantIsolationCase
   :: Indexes -> Syntax.TenantIsolationCase -> Resolve Resolved.TenantIsolationCase
@@ -1064,7 +1120,6 @@ resolveTenantIsolationCase indexes tenantCase =
     <$> actionResolve
     <*> valueOnly scope (Syntax.tenantIsolationCaseTenant tenantCase)
     <*> resolvePolicyTerm scope (Syntax.tenantIsolationCaseProtected tenantCase)
-    <*> resolvePolicyTerm scope (Syntax.tenantIsolationCaseTenantAccess tenantCase)
   where
     (actionResolve, scope) =
       caseActionScope indexes (Syntax.tenantIsolationCaseAction tenantCase)

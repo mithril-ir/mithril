@@ -34,9 +34,11 @@
 -- * keeps the two principal modes and their allow branches explicit,
 --   with the actor-free families still unrepresentable outside their
 --   branches; and
--- * normalizes guarantee cases and authority metadata into explicit
---   structures — case terms typed in their action's environment,
---   escalation scope terms bound to the authority's scope endpoint.
+-- * normalizes guarantee cases and access\/authority metadata into
+--   explicit structures — case terms typed in their action's
+--   environment, the @TenantIsolation@ access relation and endpoint
+--   identities carried over from resolution unchanged, escalation
+--   scope terms bound to the authority's scope endpoint.
 --
 -- Normalization is /structural/ canonicalization of one authored
 -- document and nothing more.  It performs no boolean simplification,

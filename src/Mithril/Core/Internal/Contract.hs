@@ -58,7 +58,8 @@
 -- referential inconsistency of the normalized model (a dangling
 -- identifier, an enum value outside its enum, an endpoint binding
 -- outside its relation, an initializer key outside its target entity,
--- ordered evidence naming an unranked enum, or a scope binding that
+-- a tenant-access endpoint outside its access relation, ordered
+-- evidence naming an unranked enum, or a scope binding that
 -- contradicts its authority) that no pipeline-produced document can
 -- exhibit.  Such violations indicate frontend drift or a
 -- normalizer\/renderer bug, never a problem with the user's document;
@@ -876,9 +877,13 @@ guaranteeBlock model guarantee =
   case guarantee of
     Normalized.AuthenticatedMutationGuarantee _ ->
       pure ["  guarantee AuthenticatedMutation (unverified proof obligation)"]
-    Normalized.TenantIsolationGuarantee _ cases ->
-      ("  guarantee TenantIsolation (unverified proof obligation)" :) . concat
-        <$> traverse (tenantCaseLines model) (NonEmpty.toList cases)
+    Normalized.TenantIsolationGuarantee _ access cases ->
+      (\headLines caseLines ->
+         "  guarantee TenantIsolation (unverified proof obligation)"
+           : headLines
+             <> concat caseLines)
+        <$> accessLines model access
+        <*> traverse (tenantCaseLines model) (NonEmpty.toList cases)
     Normalized.NoSelfPrivilegeEscalationGuarantee _ authority cases ->
       (\headLines caseLines ->
          "  guarantee NoSelfPrivilegeEscalation (unverified proof obligation)"
@@ -889,20 +894,64 @@ guaranteeBlock model guarantee =
           (escalationCaseLines model authority)
           (NonEmpty.toList cases)
 
--- | One @TenantIsolation@ case: the action it selects and its tenant,
--- protected, and tenantAccess terms, each with its stored type, typed
--- in the action's environment.
+-- | The @TenantIsolation@ structural access relation: its relation
+-- and its subject and tenant endpoints, printed through their stored
+-- resolved identities.  Access endpoints must belong to the access
+-- relation — printing another relation's endpoint name would
+-- misdescribe the access — and nothing beyond that referential
+-- consistency is judged here: no name resolution, no typing, no
+-- policy evaluation, and no guarantee checking.
+accessLines
+  :: Normalized.Model -> Normalized.TenantIsolationAccess -> Render [Text]
+accessLines model access =
+  (\relationName subjectName tenantName ->
+     [ "    access relation: " <> relationName
+     , "    access subject endpoint: " <> subjectName
+     , "    access tenant endpoint: " <> tenantName
+     ])
+    <$> relationNameAt model (refPath relationRef) (refTarget relationRef)
+    <*> accessEndpointName
+      model
+      access
+      (Normalized.tenantIsolationAccessSubjectEndpoint access)
+    <*> accessEndpointName
+      model
+      access
+      (Normalized.tenantIsolationAccessTenantEndpoint access)
+  where
+    relationRef = Normalized.tenantIsolationAccessRelation access
+
+-- | The name of an access endpoint, which must belong to the access
+-- relation.
+accessEndpointName
+  :: Normalized.Model
+  -> Normalized.TenantIsolationAccess
+  -> Ref EndpointId
+  -> Render Text
+accessEndpointName model access endpointRef =
+  case refTarget endpointRef of
+    target@(EndpointId owner _)
+      | owner /= refTarget (Normalized.tenantIsolationAccessRelation access) ->
+          refuseAt
+            (refPath endpointRef)
+            "an access endpoint reference does not name an endpoint of the access relation"
+      | otherwise ->
+          sourcedValue . Normalized.endpointName
+            <$> endpointAt model (refPath endpointRef) target
+
+-- | One @TenantIsolation@ case: the action it selects and its
+-- actor-free tenant and protected terms, each with its stored type,
+-- typed in the action's environment.
 tenantCaseLines :: Normalized.Model -> Normalized.TenantIsolationCase -> Render [Text]
 tenantCaseLines model tenantCase =
   actionAt model (refPath actionRef) (refTarget actionRef)
     `andThen` \caseAction ->
       let envAction = Normalized.actionId caseAction
-       in (\tenantLine protectedLine accessLine ->
+       in (\tenantLine protectedLine ->
              [ "    case for action "
                  <> sourcedValue (Normalized.actionName caseAction)
              , tenantLine
              , protectedLine
-             , accessLine
              ])
             <$> valueSite
               model
@@ -914,11 +963,6 @@ tenantCaseLines model tenantCase =
               envAction
               "      protected: "
               (Normalized.tenantIsolationCaseProtected tenantCase)
-            <*> policySite
-              model
-              envAction
-              "      tenantAccess: "
-              (Normalized.tenantIsolationCaseTenantAccess tenantCase)
   where
     actionRef = Normalized.tenantIsolationCaseAction tenantCase
 

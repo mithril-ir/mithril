@@ -34,9 +34,20 @@
 -- * /@CreateEntity@ initializers/: complete over the target entity's
 --   attributes, with every initializer term of its attribute's
 --   declared type;
--- * /guarantee well-typedness/: @TenantIsolation@ case terms typed
---   in their action's environment (an entity-reference tenant and
---   @Bool@ @protected@\/@tenantAccess@ terms), and
+-- * /guarantee well-typedness/: @TenantIsolation@ structural access
+--   relations that are binary with two distinct designated endpoints
+--   (which therefore cover the relation) and a subject endpoint of
+--   the distinguished @User@ entity's type — the relation's payload
+--   is Unit or an enum exactly as any relation may declare, and
+--   defines no action-specific floor: presence of a
+--   @(subject, tenant)@ tuple is the baseline tenant access of the
+--   (still unverified) obligation, while role floors remain in
+--   action allow policies — with each case's actor-free terms typed
+--   in its action's environment (a tenant term of exactly the tenant
+--   endpoint's entity reference type and a @Bool@ @protected@ term;
+--   a case may name an @AnyPrincipal@ action — whether an anonymous
+--   allow branch violates the obligation is a future verifier
+--   question, not a type error), and
 --   @NoSelfPrivilegeEscalation@ authorities whose subject endpoint
 --   references the distinguished @User@ entity, whose subject and
 --   scope endpoints are distinct and cover the relation, whose
