@@ -508,6 +508,28 @@ unknownReferenceChecks schema acme =
       ["guarantees", "1", "cases", "0", "tenant", "source", "name"]
       "unknown parameter \"ghost\" in action \"Project.read\""
   , referenceCheck
+      "a TenantIsolation protected term in the referenced action's environment"
+      ( onGuarantee 1
+          (onKey "cases" (onIndex 1 (setKey "protected" (equalTerm (argumentTerm "ghost") boolTrueTerm))))
+      )
+      ["guarantees", "1", "cases", "1", "protected", "left", "name"]
+      "unknown parameter \"ghost\" in action \"Project.create\""
+  , referenceCheck
+      "a TenantIsolation access relation"
+      (onGuarantee 1 (onKey "access" (setKey "relation" (String "Ghost"))))
+      ["guarantees", "1", "access", "relation"]
+      "unknown relation \"Ghost\""
+  , referenceCheck
+      "a TenantIsolation access subject endpoint within its relation"
+      (onGuarantee 1 (onKey "access" (setKey "subjectEndpoint" (String "ghost"))))
+      ["guarantees", "1", "access", "subjectEndpoint"]
+      "unknown endpoint \"ghost\" in relation \"Membership\""
+  , referenceCheck
+      "a TenantIsolation access tenant endpoint within its relation"
+      (onGuarantee 1 (onKey "access" (setKey "tenantEndpoint" (String "ghost"))))
+      ["guarantees", "1", "access", "tenantEndpoint"]
+      "unknown endpoint \"ghost\" in relation \"Membership\""
+  , referenceCheck
       "a NoSelfPrivilegeEscalation subject endpoint"
       (onGuarantee 2 (onKey "authority" (setKey "subjectEndpoint" (String "ghost"))))
       ["guarantees", "2", "authority", "subjectEndpoint"]
@@ -608,6 +630,58 @@ noCascadeChecks schema acme =
             )
           ]
       )
+  , check
+      "an unknown access relation suppresses both dependent access endpoint checks"
+      ( rejectsExactly
+          schema
+          ( onGuarantee 1
+              ( onKey "access"
+                  ( setKey "relation" (String "Ghost")
+                      . setKey "subjectEndpoint" (String "alsoGhost")
+                      . setKey "tenantEndpoint" (String "alsoGhost")
+                  )
+              )
+              acme
+          )
+          [(["guarantees", "1", "access", "relation"], "unknown relation \"Ghost\"")]
+      )
+  , check
+      "a duplicated access endpoint name is suppressed while an unknown one is still exact"
+      ( rejectsExactly
+          schema
+          ( appendRelation
+              ( relationDecl
+                  "Tagging"
+                  [endpointDecl "user" "User", endpointDecl "user" "User"]
+                  unitType
+              )
+              (onGuarantee 1 (onKey "access" (setKey "relation" (String "Tagging"))) acme)
+          )
+          [
+            ( ["guarantees", "1", "access", "tenantEndpoint"]
+            , "unknown endpoint \"organization\" in relation \"Tagging\""
+            )
+          ,
+            ( ["schema", "relations", "1", "endpoints", "1", "name"]
+            , "duplicate endpoint name \"user\" in relation \"Tagging\"\
+              \ (first declared at /schema/relations/1/endpoints/0/name)"
+            )
+          ]
+      )
+  , check
+      "inserting an unrelated relation leaves the access endpoint diagnostic unchanged"
+      ( rejectsExactly
+          schema
+          ( appendRelation
+              (relationDecl "Audit" [endpointDecl "organization" "Organization"] unitType)
+              (onGuarantee 1 (onKey "access" (setKey "subjectEndpoint" (String "ghost"))) acme)
+          )
+          [
+            ( ["guarantees", "1", "access", "subjectEndpoint"]
+            , "unknown endpoint \"ghost\" in relation \"Membership\""
+            )
+          ]
+      )
   ]
   where
     bogusInnerChain =
@@ -648,12 +722,47 @@ separationChecks schema acme =
   , separationCheck
       "a SetRelation payload of the wrong type for its relation"
       (onAction 3 (onKey "effect" (setKey "payload" boolTrueTerm)))
+  , separationCheck
+      "a TenantIsolation access over an arity-one relation"
+      ( appendRelation soloRelation
+          . onGuarantee 1 (const (tenantIsolationValue soloAccess [userTenantCase]))
+      )
+  , separationCheck
+      "a TenantIsolation access naming one endpoint twice"
+      ( onGuarantee 1
+          ( const
+              ( tenantIsolationValue
+                  (accessValue "Membership" "user" "user")
+                  [userTenantCase]
+              )
+          )
+      )
+  , separationCheck
+      "a TenantIsolation access with a non-User subject endpoint"
+      ( onGuarantee 1
+          ( const
+              ( tenantIsolationValue
+                  (accessValue "Membership" "organization" "user")
+                  [userTenantCase]
+              )
+          )
+      )
+  , separationCheck
+      "a TenantIsolation tenant term of a different entity than the tenant endpoint"
+      ( onGuarantee 1
+          (onKey "cases" (onIndex 0 (setKey "tenant" (argumentTerm "project"))))
+      )
   ]
   where
     separationCheck description mutate =
       check
         ("resolves although ill-typed: " ++ description)
         (resolves schema (mutate acme))
+    soloRelation =
+      relationDecl "Solo" [endpointDecl "holder" "User"] unitType
+    soloAccess = accessValue "Solo" "holder" "holder"
+    userTenantCase =
+      tenantCaseValue "Membership.addMember" (argumentTerm "target") boolTrueTerm
 
 --------------------------------------------------------------------
 -- Rendering, exit codes, and determinism
@@ -884,6 +993,33 @@ endpointDecl name entity = object ["name" .= name, "entity" .= entity]
 relationDecl :: Text -> [Value] -> Value -> Value
 relationDecl name endpoints payload =
   object ["name" .= name, "endpoints" .= endpoints, "payload" .= payload]
+
+-- | A TenantIsolation access object.
+accessValue :: Text -> Text -> Text -> Value
+accessValue relation subjectEndpoint tenantEndpoint =
+  object
+    [ "relation" .= relation
+    , "subjectEndpoint" .= subjectEndpoint
+    , "tenantEndpoint" .= tenantEndpoint
+    ]
+
+-- | A TenantIsolation case object.
+tenantCaseValue :: Text -> Value -> Value -> Value
+tenantCaseValue actionName tenant protectedTerm =
+  object
+    [ "action" .= actionName
+    , "tenant" .= tenant
+    , "protected" .= protectedTerm
+    ]
+
+-- | A complete TenantIsolation guarantee value.
+tenantIsolationValue :: Value -> [Value] -> Value
+tenantIsolationValue access cases =
+  object
+    [ "kind" .= ("TenantIsolation" :: Text)
+    , "access" .= access
+    , "cases" .= cases
+    ]
 
 -- | A minimal AuthenticatedOnly Read action used as a duplicate or
 -- reuse probe; structurally valid on its own.

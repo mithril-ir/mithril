@@ -108,6 +108,7 @@ module Mithril.Core.Internal.Resolved
 
     -- * Guarantees
   , Guarantee (..)
+  , TenantIsolationAccess (..)
   , TenantIsolationCase (..)
   , Authority (..)
   , EscalationCase (..)
@@ -421,21 +422,38 @@ deriving instance Eq (PolicyTerm availability)
 -- obligation; nothing about it is verified.
 data Guarantee
   = AuthenticatedMutationGuarantee SourcePath
-  | TenantIsolationGuarantee SourcePath (NonEmpty TenantIsolationCase)
+  | TenantIsolationGuarantee
+      SourcePath
+      TenantIsolationAccess
+      (NonEmpty TenantIsolationCase)
   | NoSelfPrivilegeEscalationGuarantee
       SourcePath
       Authority
       (NonEmpty EscalationCase)
   deriving (Eq)
 
--- | One resolved @TenantIsolation@ case.  Its terms are resolved in
--- the referenced action's parameter environment.
+-- | The resolved @TenantIsolation@ structural access relation:
+-- relation, subject endpoint, and tenant endpoint, all by identifier,
+-- the endpoints resolved within the resolved relation's own endpoint
+-- namespace and each reference retaining its authored source path.
+-- Resolution attests names only: whether the relation is binary, the
+-- endpoints distinct, and the subject endpoint of entity type @User@
+-- are typechecker questions.
+data TenantIsolationAccess = TenantIsolationAccess
+  { tenantIsolationAccessPath :: SourcePath
+  , tenantIsolationAccessRelation :: Ref RelationId
+  , tenantIsolationAccessSubjectEndpoint :: Ref EndpointId
+  , tenantIsolationAccessTenantEndpoint :: Ref EndpointId
+  }
+  deriving (Eq)
+
+-- | One resolved @TenantIsolation@ case.  Its actor-free terms are
+-- resolved in the referenced action's parameter environment.
 data TenantIsolationCase = TenantIsolationCase
   { tenantIsolationCasePath :: SourcePath
   , tenantIsolationCaseAction :: Ref ActionId
-  , tenantIsolationCaseTenant :: ValueTerm 'ActorAvailable
-  , tenantIsolationCaseProtected :: PolicyTerm 'ActorAvailable
-  , tenantIsolationCaseTenantAccess :: PolicyTerm 'ActorAvailable
+  , tenantIsolationCaseTenant :: ValueTerm 'ActorFree
+  , tenantIsolationCaseProtected :: PolicyTerm 'ActorFree
   }
   deriving (Eq)
 

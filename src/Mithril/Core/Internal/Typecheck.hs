@@ -63,10 +63,25 @@
 -- judgment is completeness: every declared value must appear.
 --
 -- /Guarantees/: @AuthenticatedMutation@ carries no terms — its truth
--- is a verification question, not a typing one.  Each
--- @TenantIsolation@ case is checked in its named action's parameter
--- environment: the @tenant@ term must be an entity reference and the
--- @protected@ and @tenantAccess@ terms must have type @Bool@.  A
+-- is a verification question, not a typing one.  A @TenantIsolation@
+-- guarantee's structural access relation must be well-formed for the
+-- guarantee's semantics: the access relation must be binary, its
+-- subject and tenant endpoints must be distinct (two distinct
+-- endpoints of a binary relation cover it; the relation's payload is
+-- Unit or an enum exactly as any relation may declare, and defines no
+-- action-specific floor — presence of a tuple is the baseline tenant
+-- access, and role floors remain in action allow policies), and the
+-- subject endpoint must reference the distinguished @User@ entity
+-- (the subject of the obligation is the acting principal).  Each
+-- case's actor-free terms are checked in its named action's parameter
+-- environment: the @tenant@ term must be an entity reference of
+-- exactly the tenant endpoint's entity, and the @protected@ term must
+-- have type @Bool@ — the recorded parameters of the (future,
+-- unverified) obligation that an allowed, protected request's
+-- principal holds the @(subject = principal, tenant = tenant)@ tuple
+-- of the access relation.  A case may name an @AnyPrincipal@ action:
+-- whether its anonymous allow branch violates the obligation is a
+-- verifier question, not a typing one.  A
 -- @NoSelfPrivilegeEscalation@ authority must be well-formed for the
 -- guarantee's semantics: its subject endpoint must reference the
 -- distinguished @User@ entity (the subject of a self-escalation is
@@ -93,10 +108,14 @@
 -- violations aggregate across the whole model without cascades, at
 -- the retained source path of the offending node (this module
 -- constructs no paths; it only reads the ones the representation
--- carries).  The two deliberate dependent-check suppressions are
+-- carries).  The deliberate dependent-check suppressions are
 -- endpoint-position compatibility under an arity mismatch (the
--- pairing would be a guess) and authority endpoint coverage under a
--- duplicated scope endpoint (the duplicate is the root cause).  A
+-- pairing would be a guess), authority endpoint coverage under a
+-- duplicated scope endpoint (the duplicate is the root cause),
+-- tenant-access endpoint distinctness under a non-binary access
+-- relation (with a single endpoint the coincidence is forced), and
+-- the tenant-entity comparison for a tenant term that is not an
+-- entity reference at all (there is no entity to compare).  A
 -- root cause is likewise reported once: an enum without a declared
 -- order is reported at each @LessOrEqual@ site that needs the order,
 -- while an /incomplete/ declared order is reported only at the enum
@@ -911,8 +930,9 @@ checkGuarantee sig guarantee =
       -- mutation actually requires authentication is a verification
       -- question, not a typing one.
       pure ()
-    TenantIsolationGuarantee _ cases ->
-      traverse_ (checkTenantIsolationCase sig) cases
+    TenantIsolationGuarantee _ access cases ->
+      checkTenantAccess sig access `andThen` \tenantEndpoint ->
+        traverse_ (checkTenantIsolationCase sig tenantEndpoint) cases
     NoSelfPrivilegeEscalationGuarantee _ authority cases ->
       checkAuthority sig authority `andThen` \scopeEndpoint ->
         traverse_ (checkEscalationCase sig scopeEndpoint) cases
@@ -929,34 +949,155 @@ caseEnv sig actionRef =
         (refPath actionRef)
         "a resolved action reference does not name an action of the model"
 
-checkTenantIsolationCase :: Signature -> TenantIsolationCase -> Check ()
-checkTenantIsolationCase sig tenantCase =
+-- | The @TenantIsolation@ structural access relation, yielding the
+-- resolved tenant endpoint for the per-case tenant-term checks.  The
+-- access relation must be binary, its subject and tenant endpoints
+-- must be distinct — two distinct relation-owned endpoints of a
+-- binary relation cover it, so no separate coverage judgment exists —
+-- and the subject endpoint must reference the distinguished @User@
+-- entity.  Distinctness is judged only when the relation is binary:
+-- with a single endpoint the coincidence is forced, and the arity
+-- violation is the root cause.  The relation's payload needs no
+-- check of its own — every relation declares a Unit or enum payload
+-- structurally, and the payload defines no action-specific floor for
+-- this guarantee.
+checkTenantAccess :: Signature -> TenantIsolationAccess -> Check Endpoint
+checkTenantAccess sig access =
+  relationSig sig (tenantIsolationAccessRelation access) `andThen` \relation ->
+    endpointSig sig (tenantIsolationAccessSubjectEndpoint access)
+      `andThen` \subject ->
+        endpointSig sig (tenantIsolationAccessTenantEndpoint access)
+          `andThen` \tenantEndpoint ->
+            ownedByAccess relation subject (tenantIsolationAccessSubjectEndpoint access)
+              *> ownedByAccess
+                relation
+                tenantEndpoint
+                (tenantIsolationAccessTenantEndpoint access)
+              *> checkSubjectEndpointEntity
+                sig
+                relation
+                subject
+                (tenantIsolationAccessSubjectEndpoint access)
+              *> checkBinaryDistinct relation subject tenantEndpoint
+              *> pure tenantEndpoint
+  where
+    ownedByAccess relation endpoint ref =
+      let EndpointId owner _ = endpointId endpoint
+       in if owner == relationId relation
+            then pure ()
+            else
+              invariant
+                (refPath ref)
+                "an access endpoint does not belong to the access relation"
+
+    checkBinaryDistinct relation subject tenantEndpoint =
+      case relationEndpoints relation of
+        One _ ->
+          flagged
+            (refPath (tenantIsolationAccessRelation access))
+            ( "relation "
+                <> quoted (sourcedValue (relationName relation))
+                <> " declares 1 endpoint, but the TenantIsolation access"
+                <> " requires a binary relation"
+            )
+        Two _ _
+          | endpointId tenantEndpoint == endpointId subject ->
+              flagged
+                (refPath (tenantIsolationAccessTenantEndpoint access))
+                ( "the tenant endpoint duplicates the subject endpoint "
+                    <> quoted (sourcedValue (endpointName subject))
+                )
+          | otherwise -> pure ()
+
+-- | The subject endpoint of a guarantee's relation — the acting
+-- principal's side — must reference the distinguished @User@ entity.
+-- The one statement of this rule, shared by the @TenantIsolation@
+-- access and the @NoSelfPrivilegeEscalation@ authority.
+checkSubjectEndpointEntity
+  :: Signature -> Relation -> Endpoint -> Ref EndpointId -> Check ()
+checkSubjectEndpointEntity sig relation subject ref =
+  case signatureUser sig of
+    Nothing ->
+      invariant
+        (refPath ref)
+        ( "the resolved model declares no distinguished "
+            <> quoted distinguishedUserEntity
+            <> " entity"
+        )
+    Just user
+      | refTarget (endpointEntity subject) == user -> pure ()
+      | otherwise ->
+          flagged
+            (refPath ref)
+            ( "the subject endpoint "
+                <> quoted (sourcedValue (endpointName subject))
+                <> " of relation "
+                <> quoted (sourcedValue (relationName relation))
+                <> " must reference the distinguished "
+                <> quoted distinguishedUserEntity
+                <> " entity, but it references entity "
+                <> entityLabel sig (refTarget (endpointEntity subject))
+            )
+
+-- | One @TenantIsolation@ case, checked in its named action's
+-- parameter environment against the access relation's tenant
+-- endpoint: the @tenant@ term must be an entity reference of exactly
+-- that endpoint's entity, and the @protected@ term must have type
+-- @Bool@.  A tenant term that is not an entity reference at all
+-- reports only that fact — there is no entity to compare against the
+-- tenant endpoint.
+checkTenantIsolationCase
+  :: Signature -> Endpoint -> TenantIsolationCase -> Check ()
+checkTenantIsolationCase sig tenantEndpoint tenantCase =
   caseEnv sig (tenantIsolationCaseAction tenantCase) `andThen` \env ->
-    requireEntityReference
-      env
-      "the \"tenant\" term must be an entity reference"
-      (tenantIsolationCaseTenant tenantCase)
+    checkTenantTerm env
       *> requireBool
         env
         "the \"protected\" term"
         (tenantIsolationCaseProtected tenantCase)
-      *> requireBool
-        env
-        "the \"tenantAccess\" term"
-        (tenantIsolationCaseTenantAccess tenantCase)
+  where
+    tenant = tenantIsolationCaseTenant tenantCase
+    checkTenantTerm env =
+      inferValue env tenant `andThen` \termType ->
+        let expected = EntityRefType (refTarget (endpointEntity tenantEndpoint))
+         in case termType of
+              EntityRefType _
+                | termType == expected -> pure ()
+                | otherwise ->
+                    flagged
+                      (valueTermPath tenant)
+                      ( "the \"tenant\" term must have type "
+                          <> describeValueType sig expected
+                          <> " (the entity of the access tenant endpoint "
+                          <> quoted (sourcedValue (endpointName tenantEndpoint))
+                          <> "), but this term has type "
+                          <> describeValueType sig termType
+                      )
+              _ ->
+                flagged
+                  (valueTermPath tenant)
+                  ( "the \"tenant\" term must be an entity reference,"
+                      <> " but this term has type "
+                      <> describeValueType sig termType
+                  )
 
 -- | The @NoSelfPrivilegeEscalation@ authority, yielding the declared
 -- scope endpoint (when any) for the per-case checks.  The subject
--- endpoint must reference the distinguished @User@ entity, subject
--- and scope endpoints must be distinct and together cover the
--- relation's endpoints, and the relation's payload must be exactly
--- the @payloadOrder@ enum, which must declare an order.
+-- endpoint must reference the distinguished @User@ entity (the
+-- shared 'checkSubjectEndpointEntity' rule), subject and scope
+-- endpoints must be distinct and together cover the relation's
+-- endpoints, and the relation's payload must be exactly the
+-- @payloadOrder@ enum, which must declare an order.
 checkAuthority :: Signature -> Authority -> Check (Maybe Endpoint)
 checkAuthority sig authority =
   relationSig sig (authorityRelation authority) `andThen` \relation ->
     endpointSig sig (authoritySubjectEndpoint authority) `andThen` \subject ->
       ownedByAuthority relation subject (authoritySubjectEndpoint authority)
-        *> checkSubjectEntity relation subject
+        *> checkSubjectEndpointEntity
+          sig
+          relation
+          subject
+          (authoritySubjectEndpoint authority)
         *> checkPayloadOrder relation
         *> checkScope relation subject
   where
@@ -968,30 +1109,6 @@ checkAuthority sig authority =
               invariant
                 (refPath ref)
                 "an authority endpoint does not belong to the authority relation"
-
-    checkSubjectEntity relation subject =
-      case signatureUser sig of
-        Nothing ->
-          invariant
-            (refPath (authoritySubjectEndpoint authority))
-            ( "the resolved model declares no distinguished "
-                <> quoted distinguishedUserEntity
-                <> " entity"
-            )
-        Just user
-          | refTarget (endpointEntity subject) == user -> pure ()
-          | otherwise ->
-              flagged
-                (refPath (authoritySubjectEndpoint authority))
-                ( "the subject endpoint "
-                    <> quoted (sourcedValue (endpointName subject))
-                    <> " of relation "
-                    <> quoted (sourcedValue (relationName relation))
-                    <> " must reference the distinguished "
-                    <> quoted distinguishedUserEntity
-                    <> " entity, but it references entity "
-                    <> entityLabel sig (refTarget (endpointEntity subject))
-                )
 
     checkPayloadOrder relation =
       enumSig sig (authorityPayloadOrder authority) `andThen` \orderEnum ->

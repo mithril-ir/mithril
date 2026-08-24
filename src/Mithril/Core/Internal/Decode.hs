@@ -780,7 +780,11 @@ decodeGuarantee path value =
           pure (Syntax.AuthenticatedMutationGuarantee path)
         "TenantIsolation" ->
           Syntax.TenantIsolationGuarantee path
-            <$> decodeCases members decodeTenantIsolationCase
+            <$> ( requiredMember path members "access"
+                    `andThen` decodeTenantIsolationAccess
+                      (memberPath path "access")
+                )
+            <*> decodeCases members decodeTenantIsolationCase
         "NoSelfPrivilegeEscalation" ->
           Syntax.NoSelfPrivilegeEscalationGuarantee path
             <$> ( requiredMember path members "authority"
@@ -801,15 +805,28 @@ decodeGuarantee path value =
         `andThen` \(casesPath, items) ->
           traverse (uncurry decodeCase) items `andThen` nonEmptyOf casesPath
 
+-- | The structural @TenantIsolation@ access relation: three symbolic
+-- references, resolved later (the endpoints within the relation).
+decodeTenantIsolationAccess
+  :: SourcePath -> Value -> Decode Syntax.TenantIsolationAccess
+decodeTenantIsolationAccess path value =
+  asObject path value `andThen` \members ->
+    Syntax.TenantIsolationAccess path
+      <$> textMember path members "relation"
+      <*> textMember path members "subjectEndpoint"
+      <*> textMember path members "tenantEndpoint"
+
+-- | A @TenantIsolation@ case: the tenant and protected terms are
+-- structurally actor-free, so they decode in the actor-free context
+-- (an @Actor@ inside them after structural validation is drift).
 decodeTenantIsolationCase
   :: SourcePath -> Value -> Decode Syntax.TenantIsolationCase
 decodeTenantIsolationCase path value =
   asObject path value `andThen` \members ->
     Syntax.TenantIsolationCase path
       <$> textMember path members "action"
-      <*> valueTermMember WithActor path members "tenant"
-      <*> policyTermMember WithActor path members "protected"
-      <*> policyTermMember WithActor path members "tenantAccess"
+      <*> valueTermMember WithoutActor path members "tenant"
+      <*> policyTermMember WithoutActor path members "protected"
 
 decodeEscalationCase :: SourcePath -> Value -> Decode Syntax.EscalationCase
 decodeEscalationCase path value =

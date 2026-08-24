@@ -871,11 +871,26 @@ referenceChecks model =
             _ -> False
       )
   , check
-      "a TenantIsolation case resolves its action and its terms in that action's environment"
+      "a TenantIsolation guarantee resolves its access within the named relation and its case terms in the action's environment"
       ( withGuarantee 1 $ \guarantee ->
           case guarantee of
-            TenantIsolationGuarantee path (tenantCase :| []) ->
+            TenantIsolationGuarantee path access (tenantCase :| []) ->
               hasSegments ["guarantees", "1"] path
+                && hasSegments
+                  ["guarantees", "1", "access"]
+                  (tenantIsolationAccessPath access)
+                && matchesRef
+                  ["guarantees", "1", "access", "relation"]
+                  (RelationId 0)
+                  (tenantIsolationAccessRelation access)
+                && matchesRef
+                  ["guarantees", "1", "access", "subjectEndpoint"]
+                  (EndpointId (RelationId 0) 0)
+                  (tenantIsolationAccessSubjectEndpoint access)
+                && matchesRef
+                  ["guarantees", "1", "access", "tenantEndpoint"]
+                  (EndpointId (RelationId 0) 1)
+                  (tenantIsolationAccessTenantEndpoint access)
                 && matchesRef
                   ["guarantees", "1", "cases", "0", "action"]
                   (ActionId 0)

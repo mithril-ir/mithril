@@ -427,6 +427,11 @@
     },
     {
       "kind": "TenantIsolation",
+      "access": {
+        "relation": "Membership",
+        "subjectEndpoint": "user",
+        "tenantEndpoint": "organization"
+      },
       "cases": [
         {
           "action": "Project.read",
@@ -441,34 +446,6 @@
           "protected": {
             "kind": "Bool",
             "value": true
-          },
-          "tenantAccess": {
-            "kind": "LessOrEqual",
-            "left": {
-              "kind": "Some",
-              "value": {
-                "kind": "Enum",
-                "enum": "MembershipRole",
-                "value": "Member"
-              }
-            },
-            "right": {
-              "kind": "Lookup",
-              "relation": "Membership",
-              "endpoints": [
-                {
-                  "kind": "Actor"
-                },
-                {
-                  "kind": "Attribute",
-                  "source": {
-                    "kind": "Argument",
-                    "name": "project"
-                  },
-                  "attribute": "organization"
-                }
-              ]
-            }
           }
         },
         {
@@ -480,30 +457,6 @@
           "protected": {
             "kind": "Bool",
             "value": true
-          },
-          "tenantAccess": {
-            "kind": "LessOrEqual",
-            "left": {
-              "kind": "Some",
-              "value": {
-                "kind": "Enum",
-                "enum": "MembershipRole",
-                "value": "Member"
-              }
-            },
-            "right": {
-              "kind": "Lookup",
-              "relation": "Membership",
-              "endpoints": [
-                {
-                  "kind": "Actor"
-                },
-                {
-                  "kind": "Argument",
-                  "name": "organization"
-                }
-              ]
-            }
           }
         },
         {
@@ -519,34 +472,6 @@
           "protected": {
             "kind": "Bool",
             "value": true
-          },
-          "tenantAccess": {
-            "kind": "LessOrEqual",
-            "left": {
-              "kind": "Some",
-              "value": {
-                "kind": "Enum",
-                "enum": "MembershipRole",
-                "value": "Member"
-              }
-            },
-            "right": {
-              "kind": "Lookup",
-              "relation": "Membership",
-              "endpoints": [
-                {
-                  "kind": "Actor"
-                },
-                {
-                  "kind": "Attribute",
-                  "source": {
-                    "kind": "Argument",
-                    "name": "project"
-                  },
-                  "attribute": "organization"
-                }
-              ]
-            }
           }
         }
       ]

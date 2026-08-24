@@ -1452,6 +1452,27 @@
       ],
       "additionalProperties": false
     },
+    "tenantIsolationAccess": {
+      "type": "object",
+      "properties": {
+        "relation": {
+          "$ref": "#/$defs/declarationName"
+        },
+        "subjectEndpoint": {
+          "$ref": "#/$defs/memberName"
+        },
+        "tenantEndpoint": {
+          "$ref": "#/$defs/memberName"
+        }
+      },
+      "required": [
+        "relation",
+        "subjectEndpoint",
+        "tenantEndpoint"
+      ],
+      "additionalProperties": false,
+      "$comment": "The structural tenant-access relation of a TenantIsolation guarantee: a declaration-name relation reference plus the two member-name endpoints, resolved within that relation. Semantic checks (deferred to the resolver and typechecker): the relation must be binary with its Unit or enum payload as any relation may declare, the two designated endpoints must be distinct relation-owned endpoints (so they cover the binary relation), and the subject endpoint must have entity type User. Presence of a (subject, tenant) tuple in this relation is the baseline tenant access of the obligation; the relation payload defines no action-specific floor here — role floors such as Viewer/Editor/Admin remain in each action's allow policy. This structural form replaces the former per-case arbitrary tenantAccess policy, which could restate an action's allow policy and collapse the obligation to a tautology; that shape no longer exists."
+    },
     "tenantIsolationCase": {
       "type": "object",
       "properties": {
@@ -1459,29 +1480,28 @@
           "$ref": "#/$defs/actionName"
         },
         "tenant": {
-          "$ref": "#/$defs/valueTerm"
+          "$ref": "#/$defs/actorFreeValueTerm"
         },
         "protected": {
-          "$ref": "#/$defs/policyTerm"
-        },
-        "tenantAccess": {
-          "$ref": "#/$defs/policyTerm"
+          "$ref": "#/$defs/actorFreePolicyTerm"
         }
       },
       "required": [
         "action",
         "tenant",
-        "protected",
-        "tenantAccess"
+        "protected"
       ],
       "additionalProperties": false,
-      "$comment": "Each case is later typechecked in the environment of its named action; the action reference itself is resolved semantically."
+      "$comment": "Each case is later typechecked in the environment of its named action: tenant must be an entity reference of the guarantee's tenant-endpoint entity, protected must be Bool. Both terms are structurally Actor-free at every nesting depth — the obligation quantifies over the principal, so no case term may mention it. A public exception is expressed as protected = false. The action reference itself is resolved semantically."
     },
     "tenantIsolationGuarantee": {
       "type": "object",
       "properties": {
         "kind": {
           "const": "TenantIsolation"
+        },
+        "access": {
+          "$ref": "#/$defs/tenantIsolationAccess"
         },
         "cases": {
           "type": "array",
@@ -1493,9 +1513,11 @@
       },
       "required": [
         "kind",
+        "access",
         "cases"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "$comment": "The intended (future, unverified) obligation per case: for every well-formed state and valid request of the case action, if protected evaluates true and the request is allowed, then the principal is an authenticated user u and the declared access relation contains the tuple binding the subject endpoint to u and the tenant endpoint to the evaluated tenant. Selecting the guarantee only records this proof obligation; no verifier exists."
     },
     "noSelfPrivilegeEscalationCase": {
       "type": "object",

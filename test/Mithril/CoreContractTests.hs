@@ -337,29 +337,20 @@ acmeContractLiteral =
       , "Selected guarantees (unverified proof obligations)"
       , "  guarantee AuthenticatedMutation (unverified proof obligation)"
       , "  guarantee TenantIsolation (unverified proof obligation)"
+      , "    access relation: Membership"
+      , "    access subject endpoint: user"
+      , "    access tenant endpoint: organization"
       , "    case for action Project.read"
       , "      tenant: Attribute[organization](Argument[project]) :\
         \ EntityRef[Organization]"
       , "      protected: Bool[true] : Bool"
-      , "      tenantAccess: LessOrEqual[order optional MembershipRole,\
-        \ absence as bottom](Some(Enum[MembershipRole.Member]),\
-        \ Lookup[Membership](user = Actor[User], organization =\
-        \ Attribute[organization](Argument[project]))) : Bool"
       , "    case for action Project.create"
       , "      tenant: Argument[organization] : EntityRef[Organization]"
       , "      protected: Bool[true] : Bool"
-      , "      tenantAccess: LessOrEqual[order optional MembershipRole,\
-        \ absence as bottom](Some(Enum[MembershipRole.Member]),\
-        \ Lookup[Membership](user = Actor[User], organization =\
-        \ Argument[organization])) : Bool"
       , "    case for action Project.delete"
       , "      tenant: Attribute[organization](Argument[project]) :\
         \ EntityRef[Organization]"
       , "      protected: Bool[true] : Bool"
-      , "      tenantAccess: LessOrEqual[order optional MembershipRole,\
-        \ absence as bottom](Some(Enum[MembershipRole.Member]),\
-        \ Lookup[Membership](user = Actor[User], organization =\
-        \ Attribute[organization](Argument[project]))) : Bool"
       , "  guarantee NoSelfPrivilegeEscalation (unverified proof obligation)"
       , "    authority relation: Membership"
       , "    authority subject endpoint: user"
@@ -411,6 +402,14 @@ byteDisciplineChecks acmeOutcome welltypedOutcome =
       ( maybe False noCarriageReturnOrTab acmeOutcome
           && maybe False noCarriageReturnOrTab welltypedOutcome
       )
+  , -- The removed arbitrary per-case tenantAccess policy must never
+    -- resurface: no rendered contract may carry a tenantAccess line.
+    check
+      "no rendered contract contains a tenantAccess line"
+      ( maybe False (not . Text.isInfixOf "tenantAccess") acmeOutcome
+          && maybe False (not . Text.isInfixOf "tenantAccess") welltypedOutcome
+          && not (Text.isInfixOf "tenantAccess" syntheticTinyContract)
+      )
   ]
 
 endsWithExactlyOneNewline :: Text -> Bool
@@ -454,8 +453,8 @@ consumptionMatrixChecks acmeOutcome welltypedOutcome =
       ]
         <> [ check
               "consumption matrix: value-term Some sites are the Some count minus the IsSome count"
-              ( countIn "Some(" acme - countIn "IsSome(" acme == 8
-                  && countIn "Some(" welltyped - countIn "IsSome(" welltyped == 2
+              ( countIn "Some(" acme - countIn "IsSome(" acme == 5
+                  && countIn "Some(" welltyped - countIn "IsSome(" welltyped == 1
               )
            , check
               "consumption matrix: plain-enum ordered readings are the LessOrEqual total minus the optional readings"
@@ -544,11 +543,11 @@ consumptionMatrix =
   , ("Bool[true] terms", "Bool[true]", 3, 7, 1)
   , ("Bool[false] terms", "Bool[false]", 0, 2, 0)
   , ("the Unit payload term with its stored Unit type", "\n      payload: Unit : Unit", 0, 1, 0)
-  , ("Enum brackets (terms and types)", "Enum[", 14, 12, 0)
-  , ("Argument terms", "Argument[", 25, 25, 0)
-  , ("Actor terms", "Actor[User]", 9, 8, 0)
-  , ("Attribute projections", "Attribute[", 6, 5, 0)
-  , ("Lookup terms", "Lookup[", 10, 6, 0)
+  , ("Enum brackets (terms and types)", "Enum[", 11, 11, 0)
+  , ("Argument terms", "Argument[", 22, 24, 0)
+  , ("Actor terms", "Actor[User]", 6, 7, 0)
+  , ("Attribute projections", "Attribute[", 4, 4, 0)
+  , ("Lookup terms", "Lookup[", 7, 5, 0)
   , ("None terms", "None[", 1, 2, 0)
   , ("None over a Unit payload", "None[Unit]", 0, 1, 0)
   , ("None over an Enum payload", "None[Enum[MembershipRole]]", 1, 0, 0)
@@ -556,8 +555,8 @@ consumptionMatrix =
   , ("Equal terms", "Equal(", 2, 5, 0)
   , ( "optional ordered readings with absence as bottom"
     , "LessOrEqual[order optional "
-    , 8
-    , 2
+    , 5
+    , 1
     , 0
     )
   , ("plain-enum ordered readings", "LessOrEqual[order Rank]", 0, 1, 0)
@@ -571,7 +570,7 @@ consumptionMatrix =
   , ("Or terms", "Or(", 0, 1, 0)
   , ("Not terms", "Not(", 1, 1, 0)
   , ("EntityRef type annotations", "EntityRef[", 19, 26, 0)
-  , ("Bool type annotations", " : Bool", 11, 19, 1)
+  , ("Bool type annotations", " : Bool", 8, 18, 1)
   , ("Unit type annotations", " : Unit", 0, 1, 1)
   , ( "the AuthenticatedMutation obligation"
     , "guarantee AuthenticatedMutation (unverified proof obligation)"
@@ -594,7 +593,19 @@ consumptionMatrix =
   , ("guarantee case lines", "case for action ", 4, 3, 0)
   , ("TenantIsolation tenant terms", "\n      tenant: ", 3, 1, 0)
   , ("TenantIsolation protected terms", "\n      protected: ", 3, 1, 0)
-  , ("TenantIsolation tenantAccess terms", "\n      tenantAccess: ", 3, 1, 0)
+  , ("TenantIsolation access relations", "access relation: ", 1, 1, 0)
+  , ( "TenantIsolation access subject endpoints"
+    , "access subject endpoint: "
+    , 1
+    , 1
+    , 0
+    )
+  , ( "TenantIsolation access tenant endpoints"
+    , "access tenant endpoint: "
+    , 1
+    , 1
+    , 0
+    )
   , ("authority relations", "authority relation: ", 1, 2, 0)
   , ("authority subject endpoints", "authority subject endpoint: ", 1, 2, 0)
   , ( "declared authority scope endpoints"
@@ -748,7 +759,7 @@ noChangeShape =
     (Internal.NoChangeEffect (synthetic "effect"))
     (synthetic "result")
 
-boolTrueAllow :: Internal.PolicyTerm 'ActorAvailable
+boolTrueAllow :: Internal.PolicyTerm availability
 boolTrueAllow =
   Internal.PolicyTerm
     { Internal.policyTermPath = synthetic "allow"
@@ -756,7 +767,7 @@ boolTrueAllow =
     , Internal.policyTermNode = Internal.ValuePolicyNode boolTrueTerm
     }
 
-boolTrueTerm :: Internal.ValueTerm 'ActorAvailable
+boolTrueTerm :: Internal.ValueTerm availability
 boolTrueTerm =
   Internal.ValueTerm
     { Internal.valueTermPath = synthetic "allowValue"
@@ -875,8 +886,39 @@ materialityChecks =
   , check
       "the stored scope information alone changes the authority and case scope lines (both models render successfully)"
       scopeInformationMateriality
+  , check
+      "the stored access endpoint identities alone swap the two access endpoint lines (both models render successfully)"
+      ( rendersWithLines
+          (tenantContractModelWith pairAccess (boolEntityRefTerm "tenantTerm"))
+          [ "    access relation: Pair"
+          , "    access subject endpoint: first"
+          , "    access tenant endpoint: second"
+          ]
+          && rendersWithLines
+            (tenantContractModelWith swappedPairAccess (boolEntityRefTerm "tenantTerm"))
+            [ "    access relation: Pair"
+            , "    access subject endpoint: second"
+            , "    access tenant endpoint: first"
+            ]
+      )
+  , check
+      "the stored tenant-term annotation alone changes the tenant line (no type inference is rerun)"
+      ( rendersWithLine
+          (tenantContractModelWith pairAccess (boolEntityRefTerm "tenantTerm"))
+          "      tenant: Bool[true] : EntityRef[User]"
+          && rendersWithLine
+            (tenantContractModelWith pairAccess (unitTerm "tenantTerm"))
+            "      tenant: Unit : Unit"
+      )
   ]
   where
+    swappedPairAccess =
+      pairAccess
+        { Internal.tenantIsolationAccessSubjectEndpoint =
+            Ref (synthetic "accessSubject") (EndpointId (RelationId 0) 1)
+        , Internal.tenantIsolationAccessTenantEndpoint =
+            Ref (synthetic "accessTenant") (EndpointId (RelationId 0) 0)
+        }
     swapTwo bindings =
       case bindings of
         Two firstBinding secondBinding -> Two secondBinding firstBinding
@@ -1023,7 +1065,7 @@ actorEntityRefTerm segment =
     , Internal.valueTermNode = Internal.ActorNode (EntityId 0)
     }
 
-boolEntityRefTerm :: Text -> Internal.ValueTerm 'ActorAvailable
+boolEntityRefTerm :: Text -> Internal.ValueTerm availability
 boolEntityRefTerm segment =
   Internal.ValueTerm
     { Internal.valueTermPath = synthetic segment
@@ -1031,7 +1073,7 @@ boolEntityRefTerm segment =
     , Internal.valueTermNode = Internal.BoolNode True
     }
 
-unitTerm :: Text -> Internal.ValueTerm 'ActorAvailable
+unitTerm :: Text -> Internal.ValueTerm availability
 unitTerm segment =
   Internal.ValueTerm
     { Internal.valueTermPath = synthetic segment
@@ -1093,7 +1135,7 @@ docAttribute position name =
         Internal.BoolAttributeType (synthetic (name <> "Type"))
     }
 
-boolValueTerm :: Text -> Bool -> Internal.ValueTerm 'ActorAvailable
+boolValueTerm :: Text -> Bool -> Internal.ValueTerm availability
 boolValueTerm segment flag =
   Internal.ValueTerm
     { Internal.valueTermPath = synthetic segment
@@ -1161,14 +1203,16 @@ createOrderModel arrange =
 -- same-owner missing-member class (an existing entity without the
 -- referenced attribute, an existing enum without the referenced
 -- value, an existing relation without the referenced endpoint, an
--- existing action without the referenced parameter), every
+-- existing action without the referenced parameter, an existing
+-- access relation without the referenced access endpoint), every
 -- cross-ownership class (foreign enum value, foreign ranked value,
 -- foreign endpoint binding, foreign initializer key, foreign
--- authority endpoint, foreign @Argument@ action), both unranked-order
--- classes, all three scope-correspondence classes, and the recursive
--- validation of nested stored term annotations.  Each check pins the
--- exact sorted, deduplicated violation list — never a crash, never
--- placeholder output.
+-- authority endpoint, foreign tenant-access endpoint, foreign
+-- @Argument@ action), both unranked-order classes, all three
+-- scope-correspondence classes, the dangling tenant-access relation,
+-- and the recursive validation of nested stored term annotations.
+-- Each check pins the exact sorted, deduplicated violation list —
+-- never a crash, never placeholder output.
 invariantChecks :: [Check]
 invariantChecks =
   [ check
@@ -1278,6 +1322,60 @@ invariantChecks =
             [ ContractRendererInvariantViolation
                 ["caseAction"]
                 "a resolved action reference does not name an action of the model"
+            ]
+      )
+  , check
+      "a well-formed forged TenantIsolation access renders successfully (control)"
+      ( case renderCoreContract
+          (normalizedDocument (tenantContractModelWith pairAccess (boolEntityRefTerm "tenantTerm"))) of
+          Right _ -> True
+          Left _ -> False
+      )
+  , check
+      "a dangling access relation is an internal invariant at every access site that follows it"
+      ( invariantOutcome danglingAccessRelationModel
+          == Just
+            [ ContractRendererInvariantViolation
+                ["accessRelation"]
+                "a resolved relation reference does not name a relation of the model"
+            , ContractRendererInvariantViolation
+                ["accessSubject"]
+                "a resolved relation reference does not name a relation of the model"
+            , ContractRendererInvariantViolation
+                ["accessTenant"]
+                "a resolved relation reference does not name a relation of the model"
+            ]
+      )
+  , check
+      "a missing access endpoint of the existing access relation is an internal invariant"
+      ( invariantOutcome
+          ( tenantContractModelWith
+              pairAccess
+                { Internal.tenantIsolationAccessSubjectEndpoint =
+                    Ref (synthetic "accessSubject") (EndpointId (RelationId 0) 5)
+                }
+              (boolEntityRefTerm "tenantTerm")
+          )
+          == Just
+            [ ContractRendererInvariantViolation
+                ["accessSubject"]
+                "a resolved endpoint reference does not name an endpoint of the model"
+            ]
+      )
+  , check
+      "an access endpoint owned by a foreign relation is an internal invariant"
+      ( invariantOutcome
+          ( tenantContractModelWith
+              pairAccess
+                { Internal.tenantIsolationAccessTenantEndpoint =
+                    Ref (synthetic "accessTenant") (EndpointId (RelationId 1) 0)
+                }
+              (boolEntityRefTerm "tenantTerm")
+          )
+          == Just
+            [ ContractRendererInvariantViolation
+                ["accessTenant"]
+                "an access endpoint reference does not name an endpoint of the access relation"
             ]
       )
   , check
@@ -1469,6 +1567,23 @@ danglingLookupModel =
                 )
             )
       }
+
+-- | The access relation reference dangling, with both endpoint
+-- identifiers embedding the same dangling relation: every access line
+-- fails closed on the missing relation, at its own reference site.
+danglingAccessRelationModel :: Internal.Model
+danglingAccessRelationModel =
+  tenantContractModelWith
+    Internal.TenantIsolationAccess
+      { Internal.tenantIsolationAccessPath = synthetic "access"
+      , Internal.tenantIsolationAccessRelation =
+          Ref (synthetic "accessRelation") (RelationId 9)
+      , Internal.tenantIsolationAccessSubjectEndpoint =
+          Ref (synthetic "accessSubject") (EndpointId (RelationId 9) 0)
+      , Internal.tenantIsolationAccessTenantEndpoint =
+          Ref (synthetic "accessTenant") (EndpointId (RelationId 9) 1)
+      }
+    (boolEntityRefTerm "tenantTerm")
 
 -- | The @Pair@ effect with one binding naming an endpoint of a
 -- relation other than the bound one.
@@ -1713,21 +1828,63 @@ foreignInitializerModel =
         ]
     }
 
--- | A @TenantIsolation@ case naming an action outside the model.
+-- | The well-formed forged access over the @Pair@ relation: subject
+-- @first@, tenant @second@.
+pairAccess :: Internal.TenantIsolationAccess
+pairAccess =
+  Internal.TenantIsolationAccess
+    { Internal.tenantIsolationAccessPath = synthetic "access"
+    , Internal.tenantIsolationAccessRelation =
+        Ref (synthetic "accessRelation") (RelationId 0)
+    , Internal.tenantIsolationAccessSubjectEndpoint =
+        Ref (synthetic "accessSubject") (EndpointId (RelationId 0) 0)
+    , Internal.tenantIsolationAccessTenantEndpoint =
+        Ref (synthetic "accessTenant") (EndpointId (RelationId 0) 1)
+    }
+
+-- | A @TenantIsolation@ guarantee over the @Pair@ relation with the
+-- given access and case tenant term; the case names the one action.
+tenantContractModelWith
+  :: Internal.TenantIsolationAccess
+  -> Internal.ValueTerm 'ActorFree
+  -> Internal.Model
+tenantContractModelWith access tenantTerm =
+  syntheticTinyModel
+    { Internal.modelRelations = [pairRelation]
+    , Internal.modelGuarantees =
+        [ Internal.TenantIsolationGuarantee
+            (synthetic "guarantee")
+            access
+            ( Internal.TenantIsolationCase
+                { Internal.tenantIsolationCasePath = synthetic "case"
+                , Internal.tenantIsolationCaseAction =
+                    Ref (synthetic "caseAction") (ActionId 0)
+                , Internal.tenantIsolationCaseTenant = tenantTerm
+                , Internal.tenantIsolationCaseProtected = boolTrueAllow
+                }
+                :| []
+            )
+        ]
+    }
+
+-- | A @TenantIsolation@ case naming an action outside the model; the
+-- access itself is well-formed, so the dangling action is the only
+-- inconsistency.
 danglingCaseActionModel :: Internal.Model
 danglingCaseActionModel =
   syntheticTinyModel
-    { Internal.modelGuarantees =
+    { Internal.modelRelations = [pairRelation]
+    , Internal.modelGuarantees =
         [ Internal.TenantIsolationGuarantee
             (synthetic "guarantee")
+            pairAccess
             ( Internal.TenantIsolationCase
                 { Internal.tenantIsolationCasePath = synthetic "case"
                 , Internal.tenantIsolationCaseAction =
                     Ref (synthetic "caseAction") (ActionId 9)
                 , Internal.tenantIsolationCaseTenant =
-                    actorEntityRefTerm "tenantTerm"
+                    boolEntityRefTerm "tenantTerm"
                 , Internal.tenantIsolationCaseProtected = boolTrueAllow
-                , Internal.tenantIsolationCaseTenantAccess = boolTrueAllow
                 }
                 :| []
             )

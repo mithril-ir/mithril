@@ -82,6 +82,7 @@ module Mithril.Core.Internal.Syntax
 
     -- * Guarantees
   , Guarantee (..)
+  , TenantIsolationAccess (..)
   , TenantIsolationCase (..)
   , Authority (..)
   , AbsenceLevel (..)
@@ -106,13 +107,15 @@ import Mithril.Core.Internal.SourcePath (SourcePath, Sourced)
 data ActorAvailability
   = -- | Terms may use the 'ActorTerm' constructor: authenticated-only
     -- actions, the authenticated branch of an @AnyPrincipal@ allow,
-    -- and guarantee case terms.
+    -- and escalation-case scope terms.
     ActorAvailable
   | -- | Terms must not contain an @Actor@ at any depth: the anonymous
-    -- branch of an @AnyPrincipal@ allow and every @AnyPrincipal@
-    -- effect and result.  The 'ActorTerm' constructor does not
-    -- inhabit this index, so the exclusion is checked by the type
-    -- checker, not by a traversal.
+    -- branch of an @AnyPrincipal@ allow, every @AnyPrincipal@ effect
+    -- and result, and the tenant and protected terms of a
+    -- @TenantIsolation@ case (the obligation quantifies over the
+    -- principal, so no case term may mention it).  The 'ActorTerm'
+    -- constructor does not inhabit this index, so the exclusion is
+    -- checked by the type checker, not by a traversal.
     ActorFree
 
 -- | Run-time witness of an 'ActorAvailability' index, used by the
@@ -361,26 +364,47 @@ data PolicyTerm (availability :: ActorAvailability)
 
 -- | A selected guarantee — a proof obligation, established by
 -- nothing in this stage.  Guarantee case terms are resolved in the
--- referenced action's parameter environment with the actor
--- available, exactly as the schema's term families fix.
+-- referenced action's parameter environment, in the actor
+-- availability the schema's term families fix: escalation-case scope
+-- terms with the actor available, @TenantIsolation@ case terms
+-- actor-free.
 data Guarantee
   = -- | @AuthenticatedMutation@ selects every mutation action through
     -- a structurally constant target; it carries no reference beyond
     -- that selector.
     AuthenticatedMutationGuarantee SourcePath
-  | TenantIsolationGuarantee SourcePath (NonEmpty TenantIsolationCase)
+  | TenantIsolationGuarantee
+      SourcePath
+      TenantIsolationAccess
+      (NonEmpty TenantIsolationCase)
   | NoSelfPrivilegeEscalationGuarantee
       SourcePath
       Authority
       (NonEmpty EscalationCase)
 
--- | One @TenantIsolation@ case.
+-- | The @TenantIsolation@ structural access relation: the relation
+-- reference and its two designated endpoints — the subject endpoint
+-- (the acting principal's side) and the tenant endpoint (the tenant's
+-- side), both member names resolved within that relation by the
+-- resolver.  Whether the relation is binary, the endpoints distinct,
+-- and the subject endpoint of entity type @User@ are typechecker
+-- questions.
+data TenantIsolationAccess = TenantIsolationAccess
+  { tenantIsolationAccessPath :: SourcePath
+  , tenantIsolationAccessRelation :: Sourced Text
+  , tenantIsolationAccessSubjectEndpoint :: Sourced Text
+  , tenantIsolationAccessTenantEndpoint :: Sourced Text
+  }
+
+-- | One @TenantIsolation@ case.  Its tenant and protected terms are
+-- structurally actor-free — the schema's actor-free families fix
+-- this, and the type index makes an @Actor@ inside them
+-- unrepresentable.
 data TenantIsolationCase = TenantIsolationCase
   { tenantIsolationCasePath :: SourcePath
   , tenantIsolationCaseAction :: Sourced Text
-  , tenantIsolationCaseTenant :: ValueTerm 'ActorAvailable
-  , tenantIsolationCaseProtected :: PolicyTerm 'ActorAvailable
-  , tenantIsolationCaseTenantAccess :: PolicyTerm 'ActorAvailable
+  , tenantIsolationCaseTenant :: ValueTerm 'ActorFree
+  , tenantIsolationCaseProtected :: PolicyTerm 'ActorFree
   }
 
 -- | The @NoSelfPrivilegeEscalation@ authority description: the

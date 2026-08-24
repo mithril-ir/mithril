@@ -1433,11 +1433,26 @@ guaranteeChecks model =
             _ -> False
       )
   , check
-      "the TenantIsolation case types its terms in Ticket.read's environment"
+      "the TenantIsolation guarantee stores its resolved access identities and types its case terms in Ticket.read's environment"
       ( withGuarantee 1 $ \guarantee ->
           case guarantee of
-            TenantIsolationGuarantee path (tenantCase :| []) ->
+            TenantIsolationGuarantee path access (tenantCase :| []) ->
               hasSegments ["guarantees", "1"] path
+                && hasSegments
+                  ["guarantees", "1", "access"]
+                  (tenantIsolationAccessPath access)
+                && matchesRef
+                  ["guarantees", "1", "access", "relation"]
+                  (RelationId 0)
+                  (tenantIsolationAccessRelation access)
+                && matchesRef
+                  ["guarantees", "1", "access", "subjectEndpoint"]
+                  (EndpointId (RelationId 0) 0)
+                  (tenantIsolationAccessSubjectEndpoint access)
+                && matchesRef
+                  ["guarantees", "1", "access", "tenantEndpoint"]
+                  (EndpointId (RelationId 0) 1)
+                  (tenantIsolationAccessTenantEndpoint access)
                 && hasSegments
                   ["guarantees", "1", "cases", "0"]
                   (tenantIsolationCasePath tenantCase)
@@ -1477,18 +1492,32 @@ guaranteeChecks model =
                          _ -> False
                      _ -> False)
                   (tenantIsolationCaseProtected tenantCase)
-                && isPolicy
-                  ["guarantees", "1", "cases", "0", "tenantAccess"]
-                  (ValuePolicyType BoolType)
-                  (\node -> case node of
-                     LessOrEqualNode ordered left right ->
-                       ordered == OptionalEnumOrderedType (EnumId 0)
-                         && policyTermType left
-                           == OptionalPolicyType (EnumType (EnumId 0))
-                         && policyTermType right
-                           == OptionalPolicyType (EnumType (EnumId 0))
-                     _ -> False)
-                  (tenantIsolationCaseTenantAccess tenantCase)
+            _ -> False
+      )
+  , -- The normalized access identities must equal the shared resolved
+    -- projections: the endpoints the identifiers select in the
+    -- normalized schema are the subject (User-typed) and tenant
+    -- endpoints the typechecker judged, and the stored tenant-term
+    -- annotation names exactly the tenant endpoint's entity.
+    check
+      "the stored access identities agree with the relation's declared endpoints and the tenant term's stored type"
+      ( withGuarantee 1 $ \guarantee ->
+          case guarantee of
+            TenantIsolationGuarantee _ access (tenantCase :| []) ->
+              case modelRelations model of
+                membership : _ ->
+                  case relationEndpoints membership of
+                    Two memberEndpoint organizationEndpoint ->
+                      endpointId memberEndpoint
+                        == refTarget (tenantIsolationAccessSubjectEndpoint access)
+                        && endpointId organizationEndpoint
+                          == refTarget (tenantIsolationAccessTenantEndpoint access)
+                        && refTarget (endpointEntity memberEndpoint) == EntityId 0
+                        && valueTermType (tenantIsolationCaseTenant tenantCase)
+                          == EntityRefType
+                            (refTarget (endpointEntity organizationEndpoint))
+                    One _ -> False
+                [] -> False
             _ -> False
       )
   , check
@@ -1625,8 +1654,8 @@ sharedProjectionChecks model =
             initializerRows
       )
   , check
-      "all 5 attribute-projection annotations equal the shared attribute projection of the projected declarations"
-      ( length projectionRows == 5
+      "all 4 attribute-projection annotations equal the shared attribute projection of the projected declarations"
+      ( length projectionRows == 4
           && all
             (\(target, annotated) ->
                fmap
@@ -1636,8 +1665,8 @@ sharedProjectionChecks model =
             projectionRows
       )
   , check
-      "all 25 Argument annotations equal the shared parameter projection of their declared types"
-      ( length argumentRows == 25
+      "all 24 Argument annotations equal the shared parameter projection of their declared types"
+      ( length argumentRows == 24
           && all
             (\(target, annotated) ->
                fmap
@@ -1647,8 +1676,8 @@ sharedProjectionChecks model =
             argumentRows
       )
   , check
-      "all 6 Lookup annotations are Optional of the shared payload projection of their relations"
-      ( length lookupRows == 6
+      "all 5 Lookup annotations are Optional of the shared payload projection of their relations"
+      ( length lookupRows == 5
           && all
             (\(target, annotated) ->
                fmap
@@ -1677,8 +1706,8 @@ sharedProjectionChecks model =
             setPayloadRows
       )
   , check
-      "all 4 stored ordered readings are the shared classification of both operand annotations"
-      ( length orderedRows == 4
+      "all 3 stored ordered readings are the shared classification of both operand annotations"
+      ( length orderedRows == 3
           && all
             (\(evidence, leftType, rightType) ->
                orderedPolicyType leftType == Just evidence
@@ -1813,7 +1842,7 @@ guaranteeFacts :: Guarantee -> [ProjectionFact]
 guaranteeFacts guarantee =
   case guarantee of
     AuthenticatedMutationGuarantee _ -> []
-    TenantIsolationGuarantee _ cases ->
+    TenantIsolationGuarantee _ _ cases ->
       concatMap tenantCaseFacts (NonEmpty.toList cases)
     NoSelfPrivilegeEscalationGuarantee _ _ cases ->
       concatMap escalationCaseFacts (NonEmpty.toList cases)
@@ -1822,7 +1851,6 @@ tenantCaseFacts :: TenantIsolationCase -> [ProjectionFact]
 tenantCaseFacts tenantCase =
   valueTermFacts (tenantIsolationCaseTenant tenantCase)
     <> policyTermFacts (tenantIsolationCaseProtected tenantCase)
-    <> policyTermFacts (tenantIsolationCaseTenantAccess tenantCase)
 
 escalationCaseFacts :: EscalationCase -> [ProjectionFact]
 escalationCaseFacts escalationCase =

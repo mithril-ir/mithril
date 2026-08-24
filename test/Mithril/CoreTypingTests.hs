@@ -77,9 +77,22 @@
 --   @Bool@ operands (one negative each).
 -- * @Guarantee@: @AuthenticatedMutation@ — carries no terms; typing
 --   accepts it (Acme positive); its truth stays a verification
---   question.  @TenantIsolationCase@ — entity-reference @tenant@ and
---   @Bool@ @protected@\/@tenantAccess@, each with a negative, in the
---   case action's environment.  @Authority@\/@EscalationCase@ —
+--   question.  @TenantIsolationAccess@ — the access relation must be
+--   binary (negative, isolated on a User-endpoint unary relation),
+--   its subject and tenant endpoints distinct (negative; distinctness
+--   is judged only for a binary relation, so the unary mutant reports
+--   the arity alone), and its subject endpoint of the distinguished
+--   @User@ entity's type (negative); positives cover an enum-payload
+--   access relation (Acme) and a Unit-payload one, and forged
+--   dangling\/foreign access references are internal invariants.
+--   @TenantIsolationCase@ — an entity-reference @tenant@ of exactly
+--   the tenant endpoint's entity (a non-entity negative and an
+--   entity-mismatch negative — a non-entity tenant reports only that
+--   fact, never a mismatch cascade) and a @Bool@ @protected@
+--   (negative), both actor-free by construction, in the case
+--   action's environment (nested actor-free positives; a case naming
+--   an @AnyPrincipal@ action stays well-typed — the anonymous branch
+--   is a verifier question).  @Authority@\/@EscalationCase@ —
 --   subject endpoint must reference the distinguished @User@ entity
 --   (negative), scope endpoint distinct from the subject (negative,
 --   with the coverage count suppressed), endpoint coverage
@@ -358,6 +371,33 @@ positiveChecks schema acme =
                 [("Project.read", [])]
             )
       )
+  , positive
+      "a TenantIsolation access over a binary Unit-payload relation"
+      ( appendRelation assignmentRelation
+          . onGuarantee 1 (onKey "access" (setKey "relation" (String "Assignment")))
+      )
+  , positive
+      "a nested actor-free TenantIsolation protected policy"
+      ( onGuarantee 1
+          ( onKey "cases"
+              ( onIndex 0
+                  ( setKey
+                      "protected"
+                      (equalTerm (argumentTerm "project") (argumentTerm "project"))
+                  )
+              )
+          )
+      )
+  , positive
+      "a TenantIsolation case over an AnyPrincipal action stays structurally and type valid"
+      ( appendAction anyPrincipalOrgAction
+          . onGuarantee 1
+            ( onKey "cases"
+                ( appendItem
+                    (tenantCaseValue "Status.ping" (argumentTerm "organization") boolTrueTerm)
+                )
+            )
+      )
   ]
   where
     positive description mutate =
@@ -371,6 +411,27 @@ positiveChecks schema acme =
         "Flagged"
         [endpointDecl "subject" "User"]
         (enumType "MembershipRole")
+    assignmentRelation =
+      relationDecl
+        "Assignment"
+        [endpointDecl "user" "User", endpointDecl "organization" "Organization"]
+        unitType
+    anyPrincipalOrgAction =
+      object
+        [ "name" .= ("Status.ping" :: Text)
+        , "parameters" .= [parameterDecl "organization" (entityRefType "Organization")]
+        , "principalMode" .= ("AnyPrincipal" :: Text)
+        , "classification" .= ("Read" :: Text)
+        , "allow"
+            .= object
+              [ "anonymous" .= boolTrueTerm
+              , "authenticated" .= boolTrueTerm
+              ]
+        , "effect" .= object ["kind" .= ("NoChange" :: Text)]
+        , "result"
+            .= object
+              ["kind" .= ("Observe" :: Text), "entity" .= argumentTerm "organization"]
+        ]
     withUnitParameter =
       \mutate ->
         onAction 0 (onKey "parameters" (appendItem (parameterDecl "token" unitType)))
@@ -696,9 +757,6 @@ enumOrderChecks schema acme =
                 , ["actions", "2", "allow"]
                 , ["actions", "3", "allow", "left"]
                 , ["actions", "4", "allow", "left"]
-                , ["guarantees", "1", "cases", "0", "tenantAccess"]
-                , ["guarantees", "1", "cases", "1", "tenantAccess"]
-                , ["guarantees", "1", "cases", "2", "tenantAccess"]
                 ]
             ]
               ++ [
@@ -737,16 +795,70 @@ guaranteeChecks schema acme =
         )
       ]
   , negative
-      "a TenantIsolation tenantAccess term that is not Bool"
+      "a TenantIsolation tenant term of a different entity than the tenant endpoint (the separation mutant)"
+      ( onGuarantee 1
+          (onKey "cases" (onIndex 0 (setKey "tenant" (argumentTerm "project"))))
+      )
+      [
+        ( ["guarantees", "1", "cases", "0", "tenant"]
+        , "the \"tenant\" term must have type EntityRef \"Organization\" (the entity\
+          \ of the access tenant endpoint \"organization\"), but this term has type\
+          \ EntityRef \"Project\""
+        )
+      ]
+  , negative
+      "a non-entity tenant term reports only that fact, never an entity-mismatch cascade"
       ( onGuarantee 1
           ( onKey "cases"
-              (onIndex 0 (setKey "tenantAccess" (someTerm (enumValueTerm "MembershipRole" "Member"))))
+              (onIndex 0 (setKey "tenant" (enumValueTerm "MembershipRole" "Member")))
           )
       )
       [
-        ( ["guarantees", "1", "cases", "0", "tenantAccess"]
-        , "the \"tenantAccess\" term must have type Bool, but this term has type\
-          \ Optional (Enum \"MembershipRole\")"
+        ( ["guarantees", "1", "cases", "0", "tenant"]
+        , "the \"tenant\" term must be an entity reference, but this term has type\
+          \ Enum \"MembershipRole\""
+        )
+      ]
+  , negative
+      "a TenantIsolation access over an arity-one relation (the separation mutant)"
+      ( appendRelation soloRelation
+          . onGuarantee 1 (const (tenantIsolationValue soloAccess [userTenantCase]))
+      )
+      [
+        ( ["guarantees", "1", "access", "relation"]
+        , "relation \"Solo\" declares 1 endpoint, but the TenantIsolation access\
+          \ requires a binary relation"
+        )
+      ]
+  , negative
+      "a TenantIsolation access naming one endpoint twice (the separation mutant)"
+      ( onGuarantee 1
+          ( const
+              ( tenantIsolationValue
+                  (accessValue "Membership" "user" "user")
+                  [userTenantCase]
+              )
+          )
+      )
+      [
+        ( ["guarantees", "1", "access", "tenantEndpoint"]
+        , "the tenant endpoint duplicates the subject endpoint \"user\""
+        )
+      ]
+  , negative
+      "a TenantIsolation access with a non-User subject endpoint (the separation mutant)"
+      ( onGuarantee 1
+          ( const
+              ( tenantIsolationValue
+                  (accessValue "Membership" "organization" "user")
+                  [userTenantCase]
+              )
+          )
+      )
+      [
+        ( ["guarantees", "1", "access", "subjectEndpoint"]
+        , "the subject endpoint \"organization\" of relation \"Membership\" must reference\
+          \ the distinguished \"User\" entity, but it references entity \"Organization\""
         )
       ]
   , negative
@@ -839,6 +951,15 @@ guaranteeChecks schema acme =
       check
         ("ill-typed: " ++ description)
         (rejectsExactly schema (mutate acme) expected)
+    soloRelation =
+      relationDecl "Solo" [endpointDecl "holder" "User"] unitType
+    soloAccess = accessValue "Solo" "holder" "holder"
+    -- A case whose tenant is EntityRef User, so the access mutants
+    -- above isolate their access violation: with a User tenant
+    -- endpoint the tenant term matches and only the mutated access
+    -- fact is reported.
+    userTenantCase =
+      tenantCaseValue "Membership.addMember" (argumentTerm "target") boolTrueTerm
 
 --------------------------------------------------------------------
 -- Aggregation, determinism, and no-cascade behavior
@@ -993,6 +1114,60 @@ invariantChecks =
                 "a resolved relation reference does not name a relation of the model"
             ]
       )
+  , check
+      "a forged well-formed TenantIsolation access typechecks to a Typed witness (control)"
+      ( case typecheckCoreDocument (tenantAccessDocumentWith gridRef memberRef containerRef) of
+          Right typedDocument -> hasTypedStage typedDocument
+          Left _ -> False
+      )
+  , check
+      "a dangling access relation reference is an internal invariant"
+      ( invariantOutcome
+          ( tenantAccessDocumentWith
+              (Internal.Ref (synthetic "accessRelation") (Internal.RelationId 7))
+              memberRef
+              containerRef
+          )
+          == Just
+            [ TypecheckerInvariantViolation
+                ["accessRelation"]
+                "a resolved relation reference does not name a relation of the model"
+            ]
+      )
+  , check
+      "a dangling access endpoint reference is an internal invariant"
+      ( invariantOutcome
+          ( tenantAccessDocumentWith
+              gridRef
+              memberRef
+              ( Internal.Ref
+                  (synthetic "accessTenant")
+                  (Internal.EndpointId (Internal.RelationId 0) 9)
+              )
+          )
+          == Just
+            [ TypecheckerInvariantViolation
+                ["accessTenant"]
+                "a resolved endpoint reference does not name a endpoint of the model"
+            ]
+      )
+  , check
+      "an access endpoint owned by a foreign relation is an internal invariant"
+      ( invariantOutcome
+          ( tenantAccessDocumentWith
+              gridRef
+              ( Internal.Ref
+                  (synthetic "accessSubject")
+                  (Internal.EndpointId (Internal.RelationId 1) 0)
+              )
+              containerRef
+          )
+          == Just
+            [ TypecheckerInvariantViolation
+                ["accessSubject"]
+                "an access endpoint does not belong to the access relation"
+            ]
+      )
   ]
   where
     invariantOutcome document =
@@ -1000,6 +1175,15 @@ invariantChecks =
         Left (TypecheckerInvariantViolations problems) ->
           Just (NonEmpty.toList problems)
         _ -> Nothing
+    gridRef = Internal.Ref (synthetic "accessRelation") (Internal.RelationId 0)
+    memberRef =
+      Internal.Ref
+        (synthetic "accessSubject")
+        (Internal.EndpointId (Internal.RelationId 0) 0)
+    containerRef =
+      Internal.Ref
+        (synthetic "accessTenant")
+        (Internal.EndpointId (Internal.RelationId 0) 1)
 
 -- | A minimal hand-built resolved model — one @User@ entity and one
 -- parameterless mutation action — whose allow policy is supplied by
@@ -1042,6 +1226,118 @@ resolvedDocumentWith allow = CoreDocument model
 
 synthetic :: Text -> SourcePath
 synthetic segment = memberPath rootPath segment
+
+-- | A forged resolved model carrying a @TenantIsolation@ guarantee
+-- over the binary @Grid@ relation (member : User, container : Org)
+-- beside the unary @Other@ relation (holder : User), with the access
+-- references supplied by each check: with the well-formed references
+-- it typechecks, and dangling or foreign references pin the internal
+-- invariant classification.
+tenantAccessDocumentWith
+  :: Internal.Ref Internal.RelationId
+  -> Internal.Ref Internal.EndpointId
+  -> Internal.Ref Internal.EndpointId
+  -> CoreDocument Resolved
+tenantAccessDocumentWith relationRef subjectRef tenantRef =
+  CoreDocument model
+  where
+    entityOf position name pathSegment =
+      Internal.Entity
+        { Internal.entityId = Internal.EntityId position
+        , Internal.entityPath = synthetic pathSegment
+        , Internal.entityName = Sourced (synthetic (pathSegment <> "Name")) name
+        , Internal.entityAttributes = []
+        }
+    endpointOf relation position name entity =
+      Internal.Endpoint
+        { Internal.endpointId = Internal.EndpointId relation position
+        , Internal.endpointPath = synthetic (name <> "Endpoint")
+        , Internal.endpointName = Sourced (synthetic (name <> "EndpointName")) name
+        , Internal.endpointEntity = Internal.Ref (synthetic (name <> "Entity")) entity
+        }
+    model =
+      Internal.Model
+        { Internal.modelName = Sourced (synthetic "name") "Tiny"
+        , Internal.modelEntities =
+            [entityOf 0 "User" "userEntity", entityOf 1 "Org" "orgEntity"]
+        , Internal.modelEnums = []
+        , Internal.modelRelations =
+            [ Internal.Relation
+                { Internal.relationId = Internal.RelationId 0
+                , Internal.relationPath = synthetic "gridRelation"
+                , Internal.relationName = Sourced (synthetic "gridName") "Grid"
+                , Internal.relationEndpoints =
+                    Two
+                      (endpointOf (Internal.RelationId 0) 0 "member" (Internal.EntityId 0))
+                      (endpointOf (Internal.RelationId 0) 1 "container" (Internal.EntityId 1))
+                , Internal.relationPayload =
+                    Internal.UnitPayloadType (synthetic "gridPayload")
+                }
+            , Internal.Relation
+                { Internal.relationId = Internal.RelationId 1
+                , Internal.relationPath = synthetic "otherRelation"
+                , Internal.relationName = Sourced (synthetic "otherName") "Other"
+                , Internal.relationEndpoints =
+                    One (endpointOf (Internal.RelationId 1) 0 "holder" (Internal.EntityId 0))
+                , Internal.relationPayload =
+                    Internal.UnitPayloadType (synthetic "otherPayload")
+                }
+            ]
+        , Internal.modelActions =
+            [ Internal.Action
+                { Internal.actionId = Internal.ActionId 0
+                , Internal.actionPath = synthetic "action"
+                , Internal.actionName = Sourced (synthetic "actionName") "Tiny.view"
+                , Internal.actionParameters =
+                    [ Internal.Parameter
+                        { Internal.parameterId =
+                            Internal.ParameterId (Internal.ActionId 0) 0
+                        , Internal.parameterPath = synthetic "containerParameter"
+                        , Internal.parameterName =
+                            Sourced (synthetic "containerParameterName") "container"
+                        , Internal.parameterType =
+                            Internal.EntityRefParameterType
+                              (synthetic "containerParameterType")
+                              (Internal.Ref (synthetic "containerParameterEntity") (Internal.EntityId 1))
+                        }
+                    ]
+                , Internal.actionBody =
+                    Internal.AuthenticatedOnlyBody
+                      wellTypedAllow
+                      ( Internal.MutationShape
+                          (Internal.NoChangeEffect (synthetic "effect"))
+                          (synthetic "result")
+                      )
+                }
+            ]
+        , Internal.modelGuarantees =
+            [ Internal.TenantIsolationGuarantee
+                (synthetic "guarantee")
+                Internal.TenantIsolationAccess
+                  { Internal.tenantIsolationAccessPath = synthetic "access"
+                  , Internal.tenantIsolationAccessRelation = relationRef
+                  , Internal.tenantIsolationAccessSubjectEndpoint = subjectRef
+                  , Internal.tenantIsolationAccessTenantEndpoint = tenantRef
+                  }
+                ( Internal.TenantIsolationCase
+                    { Internal.tenantIsolationCasePath = synthetic "case"
+                    , Internal.tenantIsolationCaseAction =
+                        Internal.Ref (synthetic "caseAction") (Internal.ActionId 0)
+                    , Internal.tenantIsolationCaseTenant =
+                        Internal.ArgumentTerm
+                          (synthetic "tenantTerm")
+                          ( Internal.Ref
+                              (synthetic "tenantTermName")
+                              (Internal.ParameterId (Internal.ActionId 0) 0)
+                          )
+                    , Internal.tenantIsolationCaseProtected =
+                        Internal.ValuePolicyTerm
+                          (Internal.BoolTerm (synthetic "protectedTerm") True)
+                    }
+                    :| []
+                )
+            ]
+        }
 
 wellTypedAllow :: Internal.PolicyTerm 'ActorAvailable
 wellTypedAllow =
@@ -1326,6 +1622,33 @@ anyPrincipalDeleteProbe =
           , "target" .= argumentTerm "target"
           ]
     , "result" .= object ["kind" .= ("Done" :: Text)]
+    ]
+
+-- | A TenantIsolation access object.
+accessValue :: Text -> Text -> Text -> Value
+accessValue relation subjectEndpoint tenantEndpoint =
+  object
+    [ "relation" .= relation
+    , "subjectEndpoint" .= subjectEndpoint
+    , "tenantEndpoint" .= tenantEndpoint
+    ]
+
+-- | A TenantIsolation case object.
+tenantCaseValue :: Text -> Value -> Value -> Value
+tenantCaseValue actionName tenant protectedTerm =
+  object
+    [ "action" .= actionName
+    , "tenant" .= tenant
+    , "protected" .= protectedTerm
+    ]
+
+-- | A complete TenantIsolation guarantee value.
+tenantIsolationValue :: Value -> [Value] -> Value
+tenantIsolationValue access cases =
+  object
+    [ "kind" .= ("TenantIsolation" :: Text)
+    , "access" .= access
+    , "cases" .= cases
     ]
 
 -- | A NoSelfPrivilegeEscalation guarantee value.

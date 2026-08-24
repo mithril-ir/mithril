@@ -33,8 +33,11 @@
 -- entity's attribute declaration order — the one ordering
 -- normalization changes (the resolved model lists the name-keyed
 -- initializers in ascending key order).  Guarantee case terms are
--- normalized in their action's environment, and an escalation case's
--- scope term is bound to the authority's scope endpoint.
+-- normalized in their action's environment; a @TenantIsolation@
+-- guarantee's resolved access relation and endpoint identities are
+-- carried over unchanged (never re-resolved or re-judged), and an
+-- escalation case's scope term is bound to the authority's scope
+-- endpoint.
 --
 -- Nothing is simplified, folded, sorted, evaluated, or optimized:
 -- normalization is deterministic structural canonicalization of one
@@ -545,8 +548,10 @@ normalizeGuarantee sig guarantee =
   case guarantee of
     Resolved.AuthenticatedMutationGuarantee path ->
       pure (Normalized.AuthenticatedMutationGuarantee path)
-    Resolved.TenantIsolationGuarantee path cases ->
-      Normalized.TenantIsolationGuarantee path
+    Resolved.TenantIsolationGuarantee path access cases ->
+      Normalized.TenantIsolationGuarantee
+        path
+        (normalizeTenantAccess access)
         <$> traverse (normalizeTenantIsolationCase sig) cases
     Resolved.NoSelfPrivilegeEscalationGuarantee path authority cases ->
       Normalized.NoSelfPrivilegeEscalationGuarantee
@@ -566,6 +571,21 @@ normalizeAuthority authority =
     (Resolved.authorityAbsenceLevel authority)
     (Resolved.authorityPayloadOrder authority)
 
+-- | Carry the resolved @TenantIsolation@ access relation and
+-- endpoint identities into the normalized model unchanged.  Nothing
+-- is re-resolved or re-judged here: the typechecker established (in
+-- the consistency gate above) that the relation is binary, the
+-- endpoints distinct and relation-owned, and the subject endpoint of
+-- the distinguished @User@ entity's type.
+normalizeTenantAccess
+  :: Resolved.TenantIsolationAccess -> Normalized.TenantIsolationAccess
+normalizeTenantAccess access =
+  Normalized.TenantIsolationAccess
+    (Resolved.tenantIsolationAccessPath access)
+    (Resolved.tenantIsolationAccessRelation access)
+    (Resolved.tenantIsolationAccessSubjectEndpoint access)
+    (Resolved.tenantIsolationAccessTenantEndpoint access)
+
 normalizeTenantIsolationCase
   :: Signature -> Resolved.TenantIsolationCase -> Norm Normalized.TenantIsolationCase
 normalizeTenantIsolationCase sig tenantCase =
@@ -576,9 +596,6 @@ normalizeTenantIsolationCase sig tenantCase =
         (Resolved.tenantIsolationCaseAction tenantCase)
         <$> normalizeValue env (Resolved.tenantIsolationCaseTenant tenantCase)
         <*> normalizePolicy env (Resolved.tenantIsolationCaseProtected tenantCase)
-        <*> normalizePolicy
-          env
-          (Resolved.tenantIsolationCaseTenantAccess tenantCase)
 
 -- | Normalize one escalation case, binding its zero-or-one scope
 -- term to the authority's scope endpoint.  The typechecker

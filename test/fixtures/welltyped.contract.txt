@@ -135,10 +135,12 @@ Actions
 Selected guarantees (unverified proof obligations)
   guarantee AuthenticatedMutation (unverified proof obligation)
   guarantee TenantIsolation (unverified proof obligation)
+    access relation: Membership
+    access subject endpoint: member
+    access tenant endpoint: organization
     case for action Ticket.read
       tenant: Attribute[organization](Argument[ticket]) : EntityRef[Organization]
       protected: Bool[true] : Bool
-      tenantAccess: LessOrEqual[order optional Rank, absence as bottom](Some(Enum[Rank.Bronze]), Lookup[Membership](member = Actor[User], organization = Attribute[organization](Argument[ticket]))) : Bool
   guarantee NoSelfPrivilegeEscalation (unverified proof obligation)
     authority relation: Membership
     authority subject endpoint: member

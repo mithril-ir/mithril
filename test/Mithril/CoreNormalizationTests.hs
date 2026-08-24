@@ -381,6 +381,139 @@ invariantChecks =
             ]
       )
   , check
+      "a forged well-formed TenantIsolation guarantee normalizes to a Normalized witness (control)"
+      ( case normalizeCoreDocument (typedDocument (tenantModel id)) of
+          Right normalizedDocument -> hasNormalizedStage normalizedDocument
+          Left _ -> False
+      )
+  , check
+      "a dangling access relation is refused by the consistency gate"
+      ( invariantOutcome
+          ( typedDocument
+              ( tenantModel
+                  ( \access ->
+                      access
+                        { Internal.tenantIsolationAccessRelation =
+                            Internal.Ref
+                              (synthetic "tenantAccessRelation")
+                              (Internal.RelationId 7)
+                        }
+                  )
+              )
+          )
+          == Just
+            [ NormalizerInvariantViolation
+                ["tenantAccessRelation"]
+                "a resolved relation reference does not name a relation of the model"
+            ]
+      )
+  , check
+      "a dangling access subject endpoint is refused by the consistency gate"
+      ( invariantOutcome
+          ( typedDocument
+              ( tenantModel
+                  ( \access ->
+                      access
+                        { Internal.tenantIsolationAccessSubjectEndpoint =
+                            Internal.Ref
+                              (synthetic "tenantAccessSubject")
+                              (Internal.EndpointId (Internal.RelationId 0) 9)
+                        }
+                  )
+              )
+          )
+          == Just
+            [ NormalizerInvariantViolation
+                ["tenantAccessSubject"]
+                "a resolved endpoint reference does not name a endpoint of the model"
+            ]
+      )
+  , check
+      "a dangling access tenant endpoint is refused by the consistency gate"
+      ( invariantOutcome
+          ( typedDocument
+              ( tenantModel
+                  ( \access ->
+                      access
+                        { Internal.tenantIsolationAccessTenantEndpoint =
+                            Internal.Ref
+                              (synthetic "tenantAccessTenant")
+                              (Internal.EndpointId (Internal.RelationId 0) 9)
+                        }
+                  )
+              )
+          )
+          == Just
+            [ NormalizerInvariantViolation
+                ["tenantAccessTenant"]
+                "a resolved endpoint reference does not name a endpoint of the model"
+            ]
+      )
+  , check
+      "an access endpoint owned by a foreign relation is refused by the consistency gate"
+      ( invariantOutcome
+          ( typedDocument
+              ( tenantModel
+                  ( \access ->
+                      access
+                        { Internal.tenantIsolationAccessTenantEndpoint =
+                            Internal.Ref
+                              (synthetic "tenantAccessTenant")
+                              (Internal.EndpointId (Internal.RelationId 1) 0)
+                        }
+                  )
+              )
+          )
+          == Just
+            [ NormalizerInvariantViolation
+                ["tenantAccessTenant"]
+                "an access endpoint does not belong to the access relation"
+            ]
+      )
+  , check
+      "one endpoint used twice resurfaces only under the reclassification prefix"
+      ( invariantOutcome (typedDocument duplicateAccessEndpointModel)
+          == Just
+            [ NormalizerInvariantViolation
+                ["tenantAccessTenant"]
+                "the typed document fails a static-typing judgment:\
+                \ the tenant endpoint duplicates the subject endpoint \"member\""
+            ]
+      )
+  , check
+      "a non-User subject entity resurfaces only under the reclassification prefix"
+      ( invariantOutcome (typedDocument wrongSubjectEntityModel)
+          == Just
+            [ NormalizerInvariantViolation
+                ["tenantAccessSubject"]
+                "the typed document fails a static-typing judgment:\
+                \ the subject endpoint \"member\" of relation \"Grid\" must reference\
+                \ the distinguished \"User\" entity, but it references entity \"Org\""
+            ]
+      )
+  , check
+      "a tenant term inconsistent with the tenant endpoint resurfaces only under the reclassification prefix"
+      ( invariantOutcome (typedDocument mismatchedTenantModel)
+          == Just
+            [ NormalizerInvariantViolation
+                ["tenantTerm"]
+                "the typed document fails a static-typing judgment:\
+                \ the \"tenant\" term must have type EntityRef \"Org\" (the entity of\
+                \ the access tenant endpoint \"container\"), but this term has type\
+                \ EntityRef \"User\""
+            ]
+      )
+  , check
+      "a non-Bool protected term resurfaces only under the reclassification prefix"
+      ( invariantOutcome (typedDocument unitProtectedModel)
+          == Just
+            [ NormalizerInvariantViolation
+                ["protectedTerm"]
+                "the typed document fails a static-typing judgment:\
+                \ the \"protected\" term must have type Bool, but this term has type Unit"
+            ]
+      )
+  , check
       "invariant classification and rendering are deterministic across repeated runs"
       ( renderForged (typedDocument arityMismatchModel)
           == renderForged (typedDocument arityMismatchModel)
@@ -799,6 +932,239 @@ scopedRelation =
           (synthetic "markedPayload")
           (Internal.Ref (synthetic "markedPayloadEnum") (Internal.EnumId 0))
     }
+
+--------------------------------------------------------------------
+-- The forged TenantIsolation family (access relation and case terms)
+--------------------------------------------------------------------
+
+-- | The binary @Grid@ relation (member : User, container : Org, Unit
+-- payload) whose member endpoint references the given entity — @User@
+-- for the well-formed variants, @Org@ for the wrong-subject one.
+gridRelation :: Internal.EntityId -> Internal.Relation
+gridRelation memberEntity =
+  Internal.Relation
+    { Internal.relationId = Internal.RelationId 0
+    , Internal.relationPath = synthetic "gridRelation"
+    , Internal.relationName = Sourced (synthetic "gridName") "Grid"
+    , Internal.relationEndpoints =
+        Two
+          ( Internal.Endpoint
+              { Internal.endpointId = Internal.EndpointId (Internal.RelationId 0) 0
+              , Internal.endpointPath = synthetic "memberEndpoint"
+              , Internal.endpointName = Sourced (synthetic "memberName") "member"
+              , Internal.endpointEntity =
+                  Internal.Ref (synthetic "memberEntity") memberEntity
+              }
+          )
+          ( Internal.Endpoint
+              { Internal.endpointId = Internal.EndpointId (Internal.RelationId 0) 1
+              , Internal.endpointPath = synthetic "containerEndpoint"
+              , Internal.endpointName = Sourced (synthetic "containerName") "container"
+              , Internal.endpointEntity =
+                  Internal.Ref (synthetic "containerEntity") (Internal.EntityId 1)
+              }
+          )
+    , Internal.relationPayload = Internal.UnitPayloadType (synthetic "gridPayload")
+    }
+
+-- | The unary @Other@ relation beside @Grid@, so a foreign-owner
+-- access endpoint names a real endpoint of a real other relation.
+otherRelation :: Internal.Relation
+otherRelation =
+  Internal.Relation
+    { Internal.relationId = Internal.RelationId 1
+    , Internal.relationPath = synthetic "otherRelation"
+    , Internal.relationName = Sourced (synthetic "otherName") "Other"
+    , Internal.relationEndpoints =
+        One
+          ( Internal.Endpoint
+              { Internal.endpointId = Internal.EndpointId (Internal.RelationId 1) 0
+              , Internal.endpointPath = synthetic "holderEndpoint"
+              , Internal.endpointName = Sourced (synthetic "holderName") "holder"
+              , Internal.endpointEntity =
+                  Internal.Ref (synthetic "holderEntity") (Internal.EntityId 0)
+              }
+          )
+    , Internal.relationPayload = Internal.UnitPayloadType (synthetic "otherPayload")
+    }
+
+-- | The well-formed forged access: relation @Grid@, subject @member@,
+-- tenant @container@.
+wellFormedAccess :: Internal.TenantIsolationAccess
+wellFormedAccess =
+  Internal.TenantIsolationAccess
+    { Internal.tenantIsolationAccessPath = synthetic "tenantAccess"
+    , Internal.tenantIsolationAccessRelation =
+        Internal.Ref (synthetic "tenantAccessRelation") (Internal.RelationId 0)
+    , Internal.tenantIsolationAccessSubjectEndpoint =
+        Internal.Ref
+          (synthetic "tenantAccessSubject")
+          (Internal.EndpointId (Internal.RelationId 0) 0)
+    , Internal.tenantIsolationAccessTenantEndpoint =
+        Internal.Ref
+          (synthetic "tenantAccessTenant")
+          (Internal.EndpointId (Internal.RelationId 0) 1)
+    }
+
+-- | An actor-free tenant term referencing the view action's parameter
+-- at the given position (0: @container : Org@, 1: @target : User@).
+tenantArgumentTerm :: Int -> Internal.ValueTerm 'ActorFree
+tenantArgumentTerm position =
+  Internal.ArgumentTerm
+    (synthetic "tenantTerm")
+    ( Internal.Ref
+        (synthetic "tenantTermName")
+        (Internal.ParameterId (Internal.ActionId 0) position)
+    )
+
+boolProtectedTerm :: Internal.PolicyTerm 'ActorFree
+boolProtectedTerm =
+  Internal.ValuePolicyTerm (Internal.BoolTerm (synthetic "protectedTerm") True)
+
+unitProtectedTerm :: Internal.PolicyTerm 'ActorFree
+unitProtectedTerm =
+  Internal.ValuePolicyTerm (Internal.UnitTerm (synthetic "protectedTerm"))
+
+-- | The complete forged TenantIsolation model: @User@ and @Org@
+-- entities, the @Grid@ and @Other@ relations, one action with the
+-- parameters @container : Org@ and @target : User@, and one guarantee
+-- whose access the check adjusts.  The variants below change one
+-- coordinated fact each, so every check pins exactly its intended
+-- refusal branch.
+tenantModel
+  :: (Internal.TenantIsolationAccess -> Internal.TenantIsolationAccess)
+  -> Internal.Model
+tenantModel adjustAccess =
+  tenantModelWith
+    (Internal.EntityId 0)
+    (adjustAccess wellFormedAccess)
+    (tenantArgumentTerm 0)
+    boolProtectedTerm
+
+tenantModelWith
+  :: Internal.EntityId
+  -> Internal.TenantIsolationAccess
+  -> Internal.ValueTerm 'ActorFree
+  -> Internal.PolicyTerm 'ActorFree
+  -> Internal.Model
+tenantModelWith memberEntity access tenantTerm protectedTerm =
+  Internal.Model
+    { Internal.modelName = Sourced (synthetic "name") "Tiny"
+    , Internal.modelEntities =
+        [ Internal.Entity
+            { Internal.entityId = Internal.EntityId 0
+            , Internal.entityPath = synthetic "userEntity"
+            , Internal.entityName = Sourced (synthetic "userEntityName") "User"
+            , Internal.entityAttributes = []
+            }
+        , Internal.Entity
+            { Internal.entityId = Internal.EntityId 1
+            , Internal.entityPath = synthetic "orgEntity"
+            , Internal.entityName = Sourced (synthetic "orgEntityName") "Org"
+            , Internal.entityAttributes = []
+            }
+        ]
+    , Internal.modelEnums = []
+    , Internal.modelRelations = [gridRelation memberEntity, otherRelation]
+    , Internal.modelActions =
+        [ Internal.Action
+            { Internal.actionId = Internal.ActionId 0
+            , Internal.actionPath = synthetic "action"
+            , Internal.actionName = Sourced (synthetic "actionName") "Tiny.view"
+            , Internal.actionParameters =
+                [ Internal.Parameter
+                    { Internal.parameterId =
+                        Internal.ParameterId (Internal.ActionId 0) 0
+                    , Internal.parameterPath = synthetic "containerParameter"
+                    , Internal.parameterName =
+                        Sourced (synthetic "containerParameterName") "container"
+                    , Internal.parameterType =
+                        Internal.EntityRefParameterType
+                          (synthetic "containerParameterType")
+                          ( Internal.Ref
+                              (synthetic "containerParameterEntity")
+                              (Internal.EntityId 1)
+                          )
+                    }
+                , Internal.Parameter
+                    { Internal.parameterId =
+                        Internal.ParameterId (Internal.ActionId 0) 1
+                    , Internal.parameterPath = synthetic "targetParameter"
+                    , Internal.parameterName =
+                        Sourced (synthetic "targetParameterName") "target"
+                    , Internal.parameterType =
+                        Internal.EntityRefParameterType
+                          (synthetic "targetParameterType")
+                          ( Internal.Ref
+                              (synthetic "targetParameterEntity")
+                              (Internal.EntityId 0)
+                          )
+                    }
+                ]
+            , Internal.actionBody =
+                Internal.AuthenticatedOnlyBody trueAllow noChangeShape
+            }
+        ]
+    , Internal.modelGuarantees =
+        [ Internal.TenantIsolationGuarantee
+            (synthetic "guarantee")
+            access
+            ( Internal.TenantIsolationCase
+                { Internal.tenantIsolationCasePath = synthetic "case"
+                , Internal.tenantIsolationCaseAction =
+                    Internal.Ref (synthetic "caseAction") (Internal.ActionId 0)
+                , Internal.tenantIsolationCaseTenant = tenantTerm
+                , Internal.tenantIsolationCaseProtected = protectedTerm
+                }
+                :| []
+            )
+        ]
+    }
+
+-- | The tenant endpoint duplicating the subject endpoint, with the
+-- case tenant term retargeted at the @User@-typed parameter so the
+-- duplication is the only reported fact.
+duplicateAccessEndpointModel :: Internal.Model
+duplicateAccessEndpointModel =
+  tenantModelWith
+    (Internal.EntityId 0)
+    wellFormedAccess
+      { Internal.tenantIsolationAccessTenantEndpoint =
+          Internal.Ref
+            (synthetic "tenantAccessTenant")
+            (Internal.EndpointId (Internal.RelationId 0) 0)
+      }
+    (tenantArgumentTerm 1)
+    boolProtectedTerm
+
+-- | The subject (member) endpoint referencing @Org@ instead of the
+-- distinguished @User@ entity; everything else stays consistent.
+wrongSubjectEntityModel :: Internal.Model
+wrongSubjectEntityModel =
+  tenantModelWith
+    (Internal.EntityId 1)
+    wellFormedAccess
+    (tenantArgumentTerm 0)
+    boolProtectedTerm
+
+-- | A tenant term of @EntityRef User@ against the @Org@-typed tenant
+-- endpoint.
+mismatchedTenantModel :: Internal.Model
+mismatchedTenantModel =
+  tenantModelWith
+    (Internal.EntityId 0)
+    wellFormedAccess
+    (tenantArgumentTerm 1)
+    boolProtectedTerm
+
+-- | A @Unit@-typed protected term.
+unitProtectedModel :: Internal.Model
+unitProtectedModel =
+  tenantModelWith
+    (Internal.EntityId 0)
+    wellFormedAccess
+    (tenantArgumentTerm 0)
+    unitProtectedTerm
 
 -- | An escalation case naming no scope term although its authority
 -- declares a scope endpoint — the converse of 'strayScopeModel'.
