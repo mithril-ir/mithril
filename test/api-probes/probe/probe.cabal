@@ -7,9 +7,9 @@ description:
   exactly as an external package would write them (depending on
   mithril-ir as an external package, never by adding its src/ to a
   module search path).  One executable — probe-control — is the
-  legitimate external-consumer control and must COMPILE; the seventeen
-  attack executables must each FAIL to compile for their intended
-  boundary reason.  The driver test/api-probes/run-api-probes.sh
+  legitimate external-consumer control and must COMPILE; the
+  twenty-one attack executables must each FAIL to compile for their
+  intended boundary reason.  The driver test/api-probes/run-api-probes.sh
   builds them one by one and treats a failing control, a compiling
   attack, or an attack failing with an unintended message as a broken
   API boundary.
@@ -27,11 +27,11 @@ flag werror
   manual:      True
   default:     False
 
--- Every probe component — the control and the seventeen attacks —
--- imports this stanza, so all eighteen compile under the same warning
--- set as the repository's own components, with -Werror active; the
--- driver verifies both from the generated build plan and from this
--- file.
+-- Every probe component — the control and the twenty-one attacks —
+-- imports this stanza, so all twenty-two compile under the same
+-- warning set as the repository's own components, with -Werror
+-- active; the driver verifies both from the generated build plan and
+-- from this file.
 common probe
   default-language: GHC2021
   hs-source-dirs:   .
@@ -163,3 +163,28 @@ executable probe-contract-typed
 executable probe-hidden-contract
   import:  probe
   main-is: HiddenContract.hs
+
+-- Attack 18: pass a merely Typed document to the public verifier,
+-- bypassing normalization.
+executable probe-verify-typed
+  import:  probe
+  main-is: VerifyTyped.hs
+
+-- Attack 19: import the hidden module that owns the verifier's
+-- support gate, obligation generator, and checker-independent
+-- orchestration (also the only route to the runner-injection seam).
+executable probe-hidden-verify
+  import:  probe
+  main-is: HiddenVerify.hs
+
+-- Attack 20: import the hidden module that owns the
+-- compile-time-embedded trusted Agda kernel bytes.
+executable probe-hidden-agda-kernel
+  import:  probe
+  main-is: HiddenAgdaKernel.hs
+
+-- Attack 21: import the hidden module that owns the production Agda
+-- checker runner (the verifier's file/process boundary).
+executable probe-hidden-agda-checker
+  import:  probe
+  main-is: HiddenAgdaChecker.hs

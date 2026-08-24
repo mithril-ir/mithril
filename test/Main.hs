@@ -27,6 +27,7 @@ import qualified Mithril.CoreRepresentationTests
 import qualified Mithril.CoreResolutionTests
 import qualified Mithril.CoreTypingTests
 import qualified Mithril.CoreValidationTests
+import qualified Mithril.CoreVerificationTests
 import qualified Mithril.NormalizedModelTests
 import Mithril.Test (runGroups)
 
@@ -42,5 +43,6 @@ main =
     , ("Core normalization", Mithril.CoreNormalizationTests.tests)
     , ("Normalized model", Mithril.NormalizedModelTests.tests)
     , ("Core contract", Mithril.CoreContractTests.tests)
+    , ("Core verification", Mithril.CoreVerificationTests.tests)
     , ("CLI process", Mithril.CLIProcessTests.tests)
     ]

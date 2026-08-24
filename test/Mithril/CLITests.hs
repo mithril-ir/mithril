@@ -3,10 +3,10 @@
 -- Every check calls the public surface directly; no CLI logic is
 -- duplicated here.  The pre-existing bootstrap behaviors (no
 -- arguments, help, short help, version, unknown arguments, extra
--- arguments) are pinned alongside the @validate FILE@ and
--- @contract FILE@ grammars, and the argument-escaping checks pin
--- that no user-supplied argument can add physical lines or terminal
--- controls to a diagnostic.
+-- arguments) are pinned alongside the @validate FILE@,
+-- @contract FILE@, and @verify FILE@ grammars, and the
+-- argument-escaping checks pin that no user-supplied argument can
+-- add physical lines or terminal controls to a diagnostic.
 module Mithril.CLITests
   ( tests
   ) where
@@ -71,6 +71,18 @@ checks =
       "contract with extra arguments is rejected naming the extras"
       (isRejectionMentioning "surplus" (parseCommand ["contract", "doc.mir.json", "surplus"]))
   , check
+      "verify FILE parses"
+      (parseCommand ["verify", "doc.mir.json"] == Right (Verify "doc.mir.json"))
+  , check
+      "verify without FILE is rejected mentioning FILE"
+      (isRejectionMentioning "FILE" (parseCommand ["verify"]))
+  , check
+      "verify with extra arguments is rejected naming the extras"
+      (isRejectionMentioning "surplus" (parseCommand ["verify", "doc.mir.json", "surplus"]))
+  , check
+      "a dash-prefixed verify FILE stays a file, never an option"
+      (parseCommand ["verify", "--frobnicate"] == Right (Verify "--frobnicate"))
+  , check
       "help contains a Usage: section"
       ("Usage:" `isInfixOf` renderHelp)
   , check
@@ -105,9 +117,35 @@ checks =
           && ("is not a semantic diff" `isInfixOf` renderHelp)
       )
   , check
-      "help states that no compiler stage beyond validate and contract is implemented"
-      ( "No other compiler stage is implemented yet: no verifier, no\n\
-        \proof generation or checking, and no target code generation.\n"
+      "help lists the verify command"
+      ("verify FILE" `isInfixOf` renderHelp)
+  , check
+      "help scopes verify to the one supported obligation under Agda 2.8.0"
+      ( ("exactly one proof slice" `isInfixOf` renderHelp)
+          && ("Agda 2.8.0" `isInfixOf` renderHelp)
+          && ("--safe --no-libraries --ignore-interfaces" `isInfixOf` renderHelp)
+      )
+  , check
+      "help states that canonical Acme and the other families remain unverified"
+      ( ("including the canonical" `isInfixOf` renderHelp)
+          && ("TenantIsolation and AuthenticatedMutation" `isInfixOf` renderHelp)
+          && ("remain unverified" `isInfixOf` renderHelp)
+      )
+  , check
+      "help states that verify never reports a violation"
+      ( ("verify never reports a violation" `isInfixOf` renderHelp)
+          && ("unsupported, not a proved violation" `isInfixOf` renderHelp)
+          && ("never a semantic verdict" `isInfixOf` renderHelp)
+      )
+  , check
+      "help names the verifier's trusted components"
+      ( "the embedded Agda kernel, the Agda toolchain, and the support"
+          `isInfixOf` renderHelp
+      )
+  , check
+      "help states that no compiler stage beyond the three commands is implemented"
+      ( "No other compiler stage is implemented yet: no complete verifier,\n\
+        \no semantic diff, and no target code generation.\n"
           `isInfixOf` renderHelp
       )
   , check

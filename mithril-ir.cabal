@@ -42,10 +42,31 @@ description:
   semantic optimization, and no canonical equality between
   differently authored documents is claimed — and contract rendering
   is deterministic restatement only: it evaluates no policy, proves
-  and checks nothing, and is not a semantic diff.  No verifier,
-  policy evaluator, proof generator or checker, runtime enforcement,
-  or target generator is implemented yet, and acceptance neither
-  verifies a model nor establishes any guarantee.
+  and checks nothing, and is not a semantic diff.
+  @mithril verify FILE@ runs the same complete pipeline and then the
+  first connected verifier slice: a pure deterministic support gate
+  over the normalized document and, for exactly one supported
+  obligation shape — a document selecting exactly one Acme-derived
+  NoSelfPrivilegeEscalation obligation whose normalized structure
+  corresponds to the mechanized safe changeRole proof rule of the
+  Agda spike — a deterministically generated Agda obligation module,
+  materialized together with trusted kernel modules embedded at
+  compile time into a fresh isolated workspace and checked by
+  exactly Agda 2.8.0 with --safe --no-libraries --ignore-interfaces.
+  A supported document reports VERIFIED (exit 0); everything else is
+  UNSUPPORTED (exit 3) with deterministic reasons — including the
+  canonical Acme example, whose TenantIsolation and
+  AuthenticatedMutation obligations remain unverified, documents
+  selecting no or several guarantees, and semantically equivalent
+  but differently authored shapes — and every checker problem is a
+  tool failure (exit 2), never a semantic verdict: no violation
+  outcome exists in this milestone.  The Haskell generator, the
+  embedded Agda kernel, the external Agda toolchain, and the support
+  rule itself remain trusted components.  No other compiler stage is
+  implemented: no complete verifier, no policy evaluator, no
+  semantic diff, no runtime enforcement, and no target generator,
+  and acceptance by validate, contract, or an unsupported verify
+  neither verifies a model nor establishes any guarantee.
 homepage:           https://github.com/mithril-ir/mithril
 bug-reports:        https://github.com/mithril-ir/mithril/issues
 license:            Apache-2.0
@@ -66,7 +87,18 @@ extra-doc-files:    README.md
 -- golden security contracts, and the API-boundary probe material are
 -- consumed by the test suite and the documented probe command, so
 -- source distributions must carry them too.
+-- The five agda/Mithril kernel modules listed here are the trusted
+-- Agda kernel sources embedded into the library at compile time
+-- (Mithril.Core.Internal.AgdaKernel) for the verifier's isolated
+-- checking workspaces; like the schema they are never installed as
+-- package data and never read from the repository at run time, so
+-- they belong in the source distribution but not in data-files.
 extra-source-files:
+    agda/Mithril/Base.agda
+    agda/Mithril/Core.agda
+    agda/Mithril/Effect.agda
+    agda/Mithril/Guarantee.agda
+    agda/Mithril/Policy.agda
     cabal.project
     cabal.project.probes
     core/schema.json
@@ -75,10 +107,13 @@ extra-source-files:
     test/api-probes/probe/*.hs
     test/api-probes/probe/probe.cabal
     test/api-probes/run-api-probes.sh
+    test/fixtures/acme-nspe-unsafe.mir.json
+    test/fixtures/acme-nspe.mir.json
     test/fixtures/acme.contract.txt
     test/fixtures/coverage.mir.json
     test/fixtures/malformed.mir.json
     test/fixtures/near-core.mir.json
+    test/fixtures/nspe.generated.agda
     test/fixtures/unknown-name.mir.json
     test/fixtures/welltyped.contract.txt
     test/fixtures/welltyped.mir.json
@@ -145,6 +180,7 @@ library core-internal
     Mithril.Core.Internal.SourcePath
     Mithril.Core.Internal.StaticType
     Mithril.Core.Internal.Syntax
+    Mithril.Core.Internal.Verify
 
   build-depends:
     , aeson >= 2.2 && < 2.3
@@ -157,11 +193,13 @@ library
     Mithril.CLI
     Mithril.Command.Contract
     Mithril.Command.Validate
+    Mithril.Command.Verify
     Mithril.Core.Contract
     Mithril.Core.Normalization
     Mithril.Core.Resolution
     Mithril.Core.Typing
     Mithril.Core.Validation
+    Mithril.Core.Verification
 
   -- Mithril.Core.Internal.BundledSchema owns the compile-time-embedded
   -- bytes of core/schema.json; Report owns the frontend's diagnostic
@@ -183,8 +221,20 @@ library
   -- coercing one pipeline stage into another, reaching the
   -- typechecker's, normalizer's, or contract renderer's internals,
   -- or validating against anything but the canonical schema.
+  -- Mithril.Core.Internal.AgdaKernel owns the compile-time-embedded
+  -- bytes of the trusted Agda kernel modules, and
+  -- Mithril.Core.Internal.AgdaChecker owns the one process boundary
+  -- to the external Agda 2.8.0 checker (fresh isolated workspaces,
+  -- version pinning, outcome classification); both stay hidden so no
+  -- downstream package can read the embedded kernel or invoke the
+  -- checker outside the staged pipeline.  The verifier's support
+  -- gate, generator, and orchestration live in the private
+  -- core-internal sublibrary (Mithril.Core.Internal.Verify), behind
+  -- the public Mithril.Core.Verification boundary.
   other-modules:
     Mithril.Command.Internal.Diagnostic
+    Mithril.Core.Internal.AgdaChecker
+    Mithril.Core.Internal.AgdaKernel
     Mithril.Core.Internal.BundledSchema
     Mithril.Core.Internal.Contract
     Mithril.Core.Internal.Decode
@@ -192,16 +242,25 @@ library
     Mithril.Core.Internal.Report
     Mithril.Core.Internal.Typecheck
 
-  -- template-haskell serves exactly one purpose: embedding
+  -- template-haskell serves exactly two purposes: embedding
   -- core/schema.json into the library at compile time, so that no
   -- runtime package-data lookup (Paths_mithril_ir/mithril_ir_datadir)
-  -- can substitute the grammar that mints the StructurallyValid stage.
+  -- can substitute the grammar that mints the StructurallyValid
+  -- stage, and embedding the trusted Agda kernel modules the same
+  -- way, so no runtime lookup can substitute the kernel the verifier
+  -- materializes.  directory, filepath, and process are the GHC boot
+  -- libraries behind the verifier's production checker boundary
+  -- only: fresh isolated workspaces and the external Agda 2.8.0
+  -- process invocation.
   build-depends:
     , aeson >= 2.2 && < 2.3
     , bytestring >= 0.12 && < 0.13
     , containers >= 0.7 && < 0.8
+    , directory >= 1.3 && < 1.4
+    , filepath >= 1.5 && < 1.6
     , jsonschema >= 0.3.0.1 && < 0.4
     , mithril-ir:core-internal
+    , process >= 1.6 && < 1.7
     , regex-tdfa >= 1.3.1 && < 1.4
     , template-haskell >= 2.23 && < 2.24
     , text >= 2.1 && < 2.2
@@ -231,6 +290,7 @@ test-suite mithril-ir-test
     Mithril.CoreResolutionTests
     Mithril.CoreTypingTests
     Mithril.CoreValidationTests
+    Mithril.CoreVerificationTests
     Mithril.NormalizedModelTests
     Mithril.Test
     Mithril.TestEnv
