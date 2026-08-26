@@ -1,0 +1,5 @@
+# Mithril ownership marker of a Wasp Confinement Profile v0 root.  DO NOT EDIT.
+# mithril wasp generate replaces a nonempty root as a whole only when this file
+# is byte-exact and every entry of the root is a managed path of the profile's
+# fixed inventory; an unmarked nonempty root is never replaced.
+mithril-wasp-bundle wasp-confinement-profile-v0

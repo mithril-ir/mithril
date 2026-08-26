@@ -8,7 +8,7 @@
 # cabal.project.probes, so hidden modules (including the private
 # core-internal sublibrary), abstract types, and nominal roles are
 # enforced exactly as any downstream consumer would experience them.
-# All twenty-two downstream components carry the repository warning set
+# All thirty downstream components carry the repository warning set
 # with -Werror; this script verifies that from the generated build
 # plan, from probe.cabal, from every downstream probe source (no
 # module-level OPTIONS_GHC pragma may sidestep the command line),
@@ -33,12 +33,22 @@
 # Requires a POSIX shell and the pinned GHC/cabal toolchain.  It may
 # be run from anywhere (it changes to the repository root itself).
 # Every invocation allocates its own build root with mktemp -d, with
-# downstream/ and internal/ children and the build log inside it, so
-# two simultaneous invocations cannot consume or overwrite each
-# other's plans, binaries, or diagnostics.  The one EXIT trap below
-# is the single cleanup path: it removes the whole root — and nothing
-# this invocation did not create — on success, on ordinary failure,
-# and on a handled signal (HUP, INT, and TERM re-enter it via exit).
+# downstream/, internal/, and visible-build/ children and the build
+# log inside it, and EVERY cabal build and cabal exec below names one
+# of those children with an explicit --builddir — the downstream
+# probe package, the in-package probes, and the forced-visible
+# library build and compilations alike — so no phase reads or writes
+# the repository's default dist-newstyle, and two simultaneous
+# invocations cannot consume or overwrite each other's plans,
+# binaries, or diagnostics (test/api-probes/test-run-api-probes.sh
+# proves both from a clean copy of the repository).  The isolation is
+# also self-checked at the end of each run: a default dist-newstyle
+# that did not exist at the start must still not exist, and one that
+# did must contain nothing newer than this run's start stamp.  The one
+# EXIT trap below is the single cleanup path: it removes the whole
+# root — and nothing this invocation did not create — on success, on
+# ordinary failure, and on a handled signal (HUP, INT, and TERM
+# re-enter it via exit).
 
 set -eu
 
@@ -53,7 +63,17 @@ trap 'exit 143' TERM
 
 downstream_dir=$build_root/downstream
 internal_dir=$build_root/internal
+visible_build=$build_root/visible-build
+visible_dir=$build_root/visible
 log=$build_root/build.log
+stamp=$build_root/stamp
+: >"$stamp"
+if [ -e dist-newstyle ]; then
+  default_builddir_existed=yes
+else
+  default_builddir_existed=no
+fi
+echo "build root: $build_root (downstream, internal, and forced-visible build directories all below it)"
 
 # -v2 makes cabal record every compiler invocation it runs in the
 # build log ("GHC response file arguments: ..." — the pinned cabal
@@ -77,8 +97,8 @@ fail() {
 
 # --- Downstream warning-policy verification ----------------------
 #
-# All twenty-two downstream components — the control plus the
-# twenty-one attacks — must compile under the repository warning set
+# All thirty downstream components — the control plus the
+# twenty-nine attacks — must compile under the repository warning set
 # with an EFFECTIVE -Werror.  Four cooperating executable checks, using POSIX awk and
 # grep only (no optional tooling).  Three run once, right after the
 # control build: the downstream build plan just generated must list
@@ -174,7 +194,7 @@ if [ ! -f "$plan" ]; then
   fail "the downstream build plan was not generated at $plan"
 fi
 
-probe_components='probe-control probe-hidden-import probe-constructor-use probe-coerce-parsed probe-coerce-valid probe-coerce-value probe-hidden-resolved probe-hidden-syntax probe-extract-value probe-coerce-typed probe-hidden-typecheck probe-forge-typed probe-coerce-normalized probe-forge-normalized probe-hidden-normalized probe-hidden-normalizer probe-contract-typed probe-hidden-contract probe-verify-typed probe-hidden-verify probe-hidden-agda-kernel probe-hidden-agda-checker'
+probe_components='probe-control probe-hidden-import probe-constructor-use probe-coerce-parsed probe-coerce-valid probe-coerce-value probe-hidden-resolved probe-hidden-syntax probe-extract-value probe-coerce-typed probe-hidden-typecheck probe-forge-typed probe-coerce-normalized probe-forge-normalized probe-hidden-normalized probe-hidden-normalizer probe-contract-typed probe-hidden-contract probe-verify-typed probe-hidden-verify probe-hidden-agda-kernel probe-hidden-agda-checker probe-wasp-parsed probe-wasp-valid probe-wasp-resolved probe-wasp-typed probe-hidden-nspe-support-plan probe-hidden-wasp probe-hidden-wasp-confinement probe-hidden-wasp-filesystem'
 
 if ! awk -v names="$probe_components" '
   { buffer = buffer $0 }
@@ -229,7 +249,7 @@ echo "ok: the downstream plan and probe.cabal give every probe component the wer
 # command-line arguments, so a probe source could weaken the warning
 # policy invisibly to verify_policy.  Every downstream probe source —
 # all *.hs in test/api-probes/probe, the one shared hs-source-dirs of
-# all twenty-two components — is therefore checked structurally before any
+# all thirty components — is therefore checked structurally before any
 # probe is accepted: the pragma's presence is rejected outright, with
 # no attempt to reconstruct GHC's post-pragma warning state.  Only a
 # real pragma opener ("{-#", then the pragma name, case-insensitive,
@@ -395,6 +415,105 @@ expect probe-hidden-agda-checker \
   "Mithril\.Core\.Internal\.AgdaChecker" \
   "it is a hidden module in the package .{1,3}mithril-ir-[0-9.]+"
 
+# The four stage attacks on the public Wasp emitter: like
+# probe-contract-typed, the emitter's parameter type prints with its
+# hidden-sublibrary qualification, and GHC wraps the two type names
+# onto separate lines.
+expect probe-wasp-parsed \
+  "match type .{1,3}Parsed.{1,3}" \
+  "with .{1,3}mithril-ir-[0-9.]+:core-internal:Mithril\.Core\.Internal\.Document\.Normalized" \
+  "In the first argument of .{1,3}renderWaspBundle"
+
+expect probe-wasp-valid \
+  "match type .{1,3}StructurallyValid.{1,3}" \
+  "with .{1,3}mithril-ir-[0-9.]+:core-internal:Mithril\.Core\.Internal\.Document\.Normalized" \
+  "In the first argument of .{1,3}renderWaspBundle"
+
+expect probe-wasp-resolved \
+  "match type .{1,3}Resolved.{1,3}" \
+  "with .{1,3}mithril-ir-[0-9.]+:core-internal:Mithril\.Core\.Internal\.Document\.Normalized" \
+  "In the first argument of .{1,3}renderWaspBundle"
+
+expect probe-wasp-typed \
+  "match type .{1,3}Typed.{1,3}" \
+  "with .{1,3}mithril-ir-[0-9.]+:core-internal:Mithril\.Core\.Internal\.Document\.Normalized" \
+  "In the first argument of .{1,3}renderWaspBundle"
+
+expect probe-hidden-nspe-support-plan \
+  "Could not load module" \
+  "Mithril\.Core\.Internal\.NspeSupportPlan" \
+  "member of the hidden package .{1,3}mithril-ir-[0-9.]+:core-internal"
+
+# The [^C] guard keeps this pattern from matching the *WaspConfinement*
+# module of the probe below: the emitter module's name ends at "Wasp",
+# so the next character in the diagnostic is GHC's closing quote.
+expect probe-hidden-wasp \
+  "Could not load module" \
+  "Mithril\.Core\.Internal\.Wasp[^C]" \
+  "member of the hidden package .{1,3}mithril-ir-[0-9.]+:core-internal"
+
+expect probe-hidden-wasp-confinement \
+  "Could not load module" \
+  "Mithril\.Core\.Internal\.WaspConfinement" \
+  "member of the hidden package .{1,3}mithril-ir-[0-9.]+:core-internal"
+
+expect probe-hidden-wasp-filesystem \
+  "Could not load module" \
+  "Mithril\.Core\.Internal\.WaspFilesystem" \
+  "member of the hidden package .{1,3}mithril-ir-[0-9.]+:core-internal"
+
+# --- Forced-visible warning-clean compilation of every hidden probe --
+#
+# A hidden-module attack must fail ONLY because its module is hidden.
+# Each is therefore compiled once more with the module deliberately
+# made visible — the library's own source directories on GHC's search
+# path, the project's package environment supplied by cabal exec, the
+# exact repository warning set, and an unweakened -Werror — and must
+# then compile and link with zero warnings.  Without this, a probe's
+# failure could rest on an incidental diagnostic (an unused import,
+# say) instead of the boundary, and the normal driver above would
+# never notice.  The compiled modules share one output directory, so
+# the library sources compile once for all probes.  The library build
+# that supplies the package environment and every cabal exec that
+# uses it name this run's own visible-build/ directory with an
+# explicit --builddir, and the package environment cabal exec hands
+# ghc is proven to come from that directory before any probe is
+# compiled — the repository's default dist-newstyle is neither read
+# nor written by this phase.
+
+mkdir -p "$visible_dir"
+hidden_probes='HiddenImport HiddenResolved HiddenSyntax HiddenTypecheck HiddenNormalized HiddenNormalizer HiddenContract HiddenVerify HiddenAgdaKernel HiddenAgdaChecker HiddenNspeSupportPlan HiddenWasp HiddenWaspConfinement HiddenWaspFilesystem'
+
+if ! cabal build -v0 --builddir="$visible_build" lib:mithril-ir >"$log" 2>&1; then
+  fail "the library did not build in the run-owned forced-visible build directory; the forced-visible probe compilations need its package environment"
+fi
+if [ ! -f "$visible_build/cache/plan.json" ]; then
+  fail "the forced-visible library build left no plan in the run-owned build directory $visible_build"
+fi
+if ! cabal exec -v2 --builddir="$visible_build" -- ghc --version >"$log" 2>&1; then
+  fail "cabal exec did not run ghc with the run-owned forced-visible build directory"
+fi
+if ! grep -F -q -- "-package-env=$visible_build/" "$log"; then
+  fail "cabal exec did not hand ghc a package environment from the run-owned build directory $visible_build"
+fi
+echo "ok: the forced-visible phase builds and resolves its package environment inside $visible_build"
+
+for probe in $hidden_probes; do
+  # shellcheck disable=SC2086 # the warning set is a deliberate word list
+  if ! cabal exec -v0 --builddir="$visible_build" -- ghc -v0 -XGHC2021 -isrc -isrc-internal \
+      -outputdir "$visible_dir" $required_options \
+      -o "$visible_dir/$probe" "test/api-probes/probe/$probe.hs" >"$log" 2>&1; then
+    fail "$probe does not compile when its hidden module is made visible, so its attack failure would not rest on the boundary alone"
+  fi
+  if grep -i -q "warning" "$log"; then
+    fail "$probe compiled with warnings when its hidden module was made visible"
+  fi
+  if [ ! -x "$visible_dir/$probe" ]; then
+    fail "$probe compiled but did not link when its hidden module was made visible"
+  fi
+  echo "ok: $probe compiles and links warning-free under the repository warning set when its hidden module is made visible"
+done
+
 # --- In-package identifier non-coercion probes -------------------
 #
 # These are executables of mithril-ir itself (test/api-probes/internal),
@@ -444,5 +563,23 @@ expect_internal probe-internal-coerce-relation-action \
   "match representation of type .{1,3}RelationId" \
   "with that of .{1,3}ActionId" \
   "arising from a use of .{1,3}coerce"
+
+# --- Build-directory isolation self-check ------------------------
+#
+# No phase above may have created or written the repository's default
+# dist-newstyle: every cabal invocation named a build directory below
+# this run's root.
+
+if [ "$default_builddir_existed" = no ]; then
+  if [ -e dist-newstyle ]; then
+    fail "the probe driver created the repository's default dist-newstyle; every phase must build below its own run root"
+  fi
+else
+  touched=$(find dist-newstyle -newer "$stamp" -print 2>/dev/null | head -n 1)
+  if [ -n "$touched" ]; then
+    fail "the probe driver wrote into the repository's default dist-newstyle ($touched); every phase must build below its own run root"
+  fi
+fi
+echo "ok: the repository's default dist-newstyle was neither created nor written by this run"
 
 echo "All API-boundary probes behaved as intended."

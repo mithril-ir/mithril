@@ -5,7 +5,7 @@
 -- handles, choosing the exit status — belong to the executable's
 -- @Main@ module.
 --
--- The tool understands the self-describing invocations plus three
+-- The tool understands the self-describing invocations plus five
 -- real commands: @validate FILE@, JSON parsing plus structural Core
 -- v0 validation plus complete name resolution plus complete static
 -- typing plus deterministic normalization, @contract FILE@, the same
@@ -14,8 +14,10 @@
 -- @verify FILE@, the same complete pipeline followed by the first
 -- connected verifier slice: a deterministic support gate and, for
 -- exactly one supported Acme-derived NoSelfPrivilegeEscalation
--- obligation shape, generated Agda checked by exactly Agda 2.8.0.
--- No other compiler stage exists yet.
+-- obligation shape, generated Agda checked by exactly Agda 2.8.0, and
+-- @wasp generate CORE_FILE WASP_ROOT@ and @wasp check CORE_FILE
+-- WASP_ROOT@, the Wasp Confinement Profile v0 of that same verified
+-- slice.  No other compiler stage exists.
 module Mithril.CLI
   ( Command (..)
   , parseCommand
@@ -43,13 +45,22 @@ data Command
     -- normalized document against the one implemented support rule,
     -- checking the generated obligation with Agda 2.8.0.
     Verify FilePath
+  | -- | Run the complete @validate@ pipeline and the verify gate on
+    -- CORE_FILE, then write the closed Wasp bundle of the verified
+    -- slice into WASP_ROOT and check its confinement.
+    WaspGenerate FilePath FilePath
+  | -- | Run the same pipeline and gate on CORE_FILE, regenerate the
+    -- bundle without writing, and check that WASP_ROOT is exactly
+    -- the closed profile.
+    WaspCheck FilePath FilePath
   deriving (Eq, Show)
 
 -- | Interpret raw command-line arguments.
 --
 -- Exactly these invocations are accepted: no arguments (help),
--- @--help@, @-h@, @--version@, @validate FILE@, @contract FILE@, and
--- @verify FILE@.
+-- @--help@, @-h@, @--version@, @validate FILE@, @contract FILE@,
+-- @verify FILE@, @wasp generate CORE_FILE WASP_ROOT@, and @wasp check
+-- CORE_FILE WASP_ROOT@.
 -- Anything else — an unknown argument, a missing FILE, or extra
 -- arguments after a complete invocation — yields a deterministic
 -- error message intended for stderr.  Every user-supplied argument
@@ -61,6 +72,7 @@ parseCommand [] = Right ShowHelp
 parseCommand ("validate" : rest) = fileCommand "validate" Validate rest
 parseCommand ("contract" : rest) = fileCommand "contract" Contract rest
 parseCommand ("verify" : rest) = fileCommand "verify" Verify rest
+parseCommand ("wasp" : rest) = waspCommand rest
 parseCommand (argument : rest) =
   case recognize argument of
     Nothing -> Left (unknownArgumentError argument)
@@ -79,6 +91,27 @@ fileCommand commandName construct rest =
     [] -> Left (missingFileError commandName)
     (_file : extras) ->
       Left (extraArgumentsError (commandName ++ " FILE") extras)
+
+-- | Interpret the argument list after the @wasp@ command name: a
+-- subcommand, @generate@ or @check@, followed by exactly CORE_FILE
+-- and WASP_ROOT.  Neither argument is ever an option, and anything
+-- after the two is rejected.
+waspCommand :: [String] -> Either String Command
+waspCommand rest =
+  case rest of
+    [] -> Left missingWaspSubcommandError
+    ("generate" : more) -> twoArguments "wasp generate" WaspGenerate more
+    ("check" : more) -> twoArguments "wasp check" WaspCheck more
+    (subcommand : _) -> Left (unknownWaspSubcommandError subcommand)
+
+twoArguments
+  :: String -> (FilePath -> FilePath -> Command) -> [String] -> Either String Command
+twoArguments commandName construct arguments =
+  case arguments of
+    [coreFile, root] -> Right (construct coreFile root)
+    (_coreFile : _root : extras) ->
+      Left (extraArgumentsError (commandName ++ " CORE_FILE WASP_ROOT") extras)
+    _ -> Left (missingWaspArgumentsError commandName)
 
 -- | Map a single recognized option to its command.
 recognize :: String -> Maybe Command
@@ -130,6 +163,25 @@ missingFileError commandName =
     ++ "' requires exactly one FILE argument\n"
     ++ usageHint
 
+-- | Deterministic error for @wasp@ without its subcommand.
+missingWaspSubcommandError :: String
+missingWaspSubcommandError =
+  "mithril: 'wasp' requires a subcommand: generate or check\n" ++ usageHint
+
+-- | Deterministic error for an unrecognized @wasp@ subcommand.
+unknownWaspSubcommandError :: String -> String
+unknownWaspSubcommandError subcommand =
+  "mithril: unknown wasp subcommand " ++ displayArgument subcommand ++ "\n" ++ usageHint
+
+-- | Deterministic error for a @wasp@ subcommand without exactly its
+-- two arguments.
+missingWaspArgumentsError :: String -> String
+missingWaspArgumentsError commandName =
+  "mithril: '"
+    ++ commandName
+    ++ "' requires exactly two arguments: CORE_FILE WASP_ROOT\n"
+    ++ usageHint
+
 usageHint :: String
 usageHint = "Run 'mithril --help' for usage."
 
@@ -159,6 +211,18 @@ renderHelp =
     , "                         a single selected NoSelfPrivilegeEscalation"
     , "                         obligation matching the mechanized proof"
     , "                         shape, checked by Agda 2.8.0."
+    , "  mithril wasp generate CORE_FILE WASP_ROOT"
+    , "                         Run the complete validate pipeline and the"
+    , "                         verify gate on CORE_FILE (VERIFIED required),"
+    , "                         then install the closed Wasp 0.25.0 application"
+    , "                         of that document as a complete root at WASP_ROOT"
+    , "                         (initialized when absent or empty, replaced as a"
+    , "                         whole when owned) and check its confinement."
+    , "  mithril wasp check CORE_FILE WASP_ROOT"
+    , "                         Regenerate the same bundle without writing and"
+    , "                         check that WASP_ROOT is exactly the closed"
+    , "                         profile: every managed file byte-identical,"
+    , "                         nothing else present."
     , ""
     , "validate performs JSON parsing, structural Core v0 validation"
     , "against the supported profile of core/schema.json (compiled into"
@@ -196,8 +260,32 @@ renderHelp =
     , "tool failure (exit 2), never a semantic verdict. The generator,"
     , "the embedded Agda kernel, the Agda toolchain, and the support"
     , "rule itself remain trusted components."
-    , "No other compiler stage is implemented yet: no complete verifier,"
-    , "no semantic diff, and no target code generation."
+    , "wasp generate and wasp check implement the Wasp Confinement Profile v0"
+    , "for exactly the one supported NoSelfPrivilegeEscalation slice, which both"
+    , "require to be VERIFIED first: a normal Wasp 0.25.0 application on"
+    , "PostgreSQL whose specification, Prisma schema, dependency configuration,"
+    , "generated Action, client shell, ownership marker, and manifest are"
+    , "managed inputs regenerated from the same typed normalized Core the"
+    , "verifier consumed, with fixed target names (never authored names) for"
+    , "every identifier, file, and route. check walks the source root without"
+    , "following symbolic links, rejects hard links, and rejects every missing,"
+    , "altered, or unexpected input (exit 4); generate stages the complete"
+    , "bundle beside the root, checks it, swaps it into place as a whole,"
+    , "refuses an unmarked nonempty root or an unmanaged path without mutation"
+    , "(exit 4), refuses root paths with dot, empty, or trailing-separator"
+    , "components, linked ancestors, a linked root, or an existing backup"
+    , "sibling (exit 1), creates the root private (mode 0700 whatever the"
+    , "umask), and finishes with the same check."
+    , "A document outside the support rule is UNSUPPORTED (exit 3). Wasp, Node,"
+    , "Prisma, PostgreSQL, the templates, and the lowering remain trusted; no"
+    , "semantic-preservation theorem exists; the confinement claim covers the"
+    , "source snapshot at the time of checking, not concurrent same-user"
+    , "mutation after it, privileged users, checker or CI compromise,"
+    , "dependency compromise, external database credential holders, or"
+    , "tampering after the Wasp build; this is not a general Wasp backend, a"
+    , "whole-product generator, a complete verifier, or a runtime sandbox."
+    , "No other compiler stage is implemented: no complete verifier, no"
+    , "semantic diff, and no target generation beyond this one slice."
     ]
 
 -- | Version line for the given package version string.

@@ -24,11 +24,18 @@ module Mithril.CLIProcessTests
   ( tests
   ) where
 
-import Data.List (isInfixOf, isPrefixOf)
+import Data.Bits ((.&.))
+import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Char8 as Char8
+import Data.List (intercalate, isInfixOf, isPrefixOf, sort)
 import System.Directory
-  ( createDirectory
+  ( canonicalizePath
+  , createDirectory
+  , doesPathExist
   , getPermissions
   , getTemporaryDirectory
+  , listDirectory
+  , removeDirectory
   , removeDirectoryRecursive
   , removeFile
   , setOwnerExecutable
@@ -38,6 +45,7 @@ import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
 import System.IO (hClose, openTempFile)
+import System.Posix.Files (fileMode, getSymbolicLinkStatus)
 import System.Process
   ( CreateProcess (..)
   , proc
@@ -72,7 +80,9 @@ tests = do
       ( expectations
           <> contractExpectations acmeContract welltypedContract
           <> verifyExpectations
+          <> waspExpectations
       )
+  waspGenerateChecks <- waspProcessChecks
   helpTriple <- invokeMithril ["--help"]
   overrideChecks <- datadirOverrideChecks
   verifierToolFailureChecks <- verifierCheckerOverrideChecks
@@ -91,6 +101,7 @@ tests = do
          ]
       <> overrideChecks
       <> verifierToolFailureChecks
+      <> waspGenerateChecks
 
 -- | Spawn the real executable with the inherited environment and no
 -- stdin, capturing everything it observably does.
@@ -681,3 +692,359 @@ datadirOverrideChecks = do
           "hostile datadir override: near-Core is still rejected structurally"
           (nearCoreTriple == (ExitFailure 1, "", nearCoreStderr))
       ]
+
+-- | The pinned @wasp@ invocation matrix.  The committed fixture is
+-- CONFINED against the supported single-obligation document (exit 0,
+-- the deterministic report alone on stdout); the canonical Acme
+-- document is UNSUPPORTED to the wasp commands with exit 3; input
+-- failures keep the byte-exact validate diagnostics and
+-- classification; a missing root is an unusable root with exit 1;
+-- and the wasp grammar errors mirror the other commands'.  Each
+-- expectation runs twice through 'expectationChecks', pinning
+-- repetition determinism.
+waspExpectations :: [CliExpectation]
+waspExpectations =
+  [ CliExpectation
+      { cliName = "wasp check reports the committed fixture confined"
+      , cliArgs = ["wasp", "check", nspePath, waspFixtureRoot]
+      , cliExit = ExitSuccess
+      , cliStdout = confinedReport waspFixtureRoot "CONFINED" <> "\n"
+      , cliStderr = ""
+      }
+  , CliExpectation
+      { cliName = "wasp check reports the canonical Acme document unsupported with exit 3"
+      , cliArgs = ["wasp", "check", acmePath, waspFixtureRoot]
+      , cliExit = ExitFailure 3
+      , cliStdout =
+          "examples/acme/acme.mir.json: UNSUPPORTED by the implemented Wasp support rule\n\
+          \  /guarantees: the document selects 3 guarantee obligations, but only a document selecting exactly one NoSelfPrivilegeEscalation obligation is supported\n\
+          \  /guarantees/0: the AuthenticatedMutation guarantee family is not supported by the verifier\n\
+          \  /guarantees/1: the TenantIsolation guarantee family is not supported by the verifier\n"
+      , cliStderr = ""
+      }
+  , CliExpectation
+      { cliName = "wasp generate reports the unsafe variant unsupported with exit 3 and writes nothing"
+      , cliArgs = ["wasp", "generate", unsafeNspePath, "test/fixtures/never-created"]
+      , cliExit = ExitFailure 3
+      , cliStdout =
+          "test/fixtures/acme-nspe-unsafe.mir.json: UNSUPPORTED by the implemented Wasp support rule\n\
+          \  /actions/4/allow/right: the second operand of the allow policy must itself be the conjunction And(actor/subject guard, subject membership)\n"
+      , cliStderr = ""
+      }
+  , CliExpectation
+      { cliName = "wasp check rejects malformed JSON with the validate bytes"
+      , cliArgs = ["wasp", "check", "test/fixtures/malformed.mir.json", waspFixtureRoot]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "test/fixtures/malformed.mir.json: invalid JSON\n\
+          \  Unexpected end-of-input, expecting key literal\n"
+      }
+  , CliExpectation
+      { cliName = "wasp generate rejects the ill-typed coverage fixture with the validate bytes"
+      , cliArgs = ["wasp", "generate", "test/fixtures/coverage.mir.json", "test/fixtures/never-created"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr = coverageTypingStderr
+      }
+  , CliExpectation
+      { cliName = "wasp check on a missing root is an unusable root with exit 1"
+      , cliArgs = ["wasp", "check", nspePath, "test/fixtures/does-not-exist"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr = "test/fixtures/does-not-exist: unusable Wasp root\n  does not exist\n"
+      }
+  , CliExpectation
+      { cliName = "wasp check on a root that is a file is an unusable root with exit 1"
+      , cliArgs = ["wasp", "check", nspePath, nspePath]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr = "test/fixtures/acme-nspe.mir.json: unusable Wasp root\n  is not a directory\n"
+      }
+  , CliExpectation
+      { cliName = "wasp without a subcommand is a usage error"
+      , cliArgs = ["wasp"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "mithril: 'wasp' requires a subcommand: generate or check\n\
+          \Run 'mithril --help' for usage.\n"
+      }
+  , CliExpectation
+      { cliName = "an unknown wasp subcommand is a usage error"
+      , cliArgs = ["wasp", "frobnicate"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "mithril: unknown wasp subcommand 'frobnicate'\n\
+          \Run 'mithril --help' for usage.\n"
+      }
+  , CliExpectation
+      { cliName = "wasp generate with one argument is a usage error"
+      , cliArgs = ["wasp", "generate", nspePath]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "mithril: 'wasp generate' requires exactly two arguments: CORE_FILE WASP_ROOT\n\
+          \Run 'mithril --help' for usage.\n"
+      }
+  , CliExpectation
+      { cliName = "an extra argument after wasp check CORE_FILE WASP_ROOT is a usage error"
+      , cliArgs = ["wasp", "check", nspePath, waspFixtureRoot, "surplus"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "mithril: unexpected extra arguments after 'wasp check CORE_FILE WASP_ROOT': 'surplus'\n\
+          \Run 'mithril --help' for usage.\n"
+      }
+  ]
+
+waspFixtureRoot :: FilePath
+waspFixtureRoot = "test/fixtures/wasp-acme"
+
+-- | The deterministic report of a confined or generated root: the
+-- verdict line, the summary lines, and the closed path inventory.
+confinedReport :: FilePath -> String -> String
+confinedReport root verdict =
+  intercalate
+    "\n"
+    ( [ root ++ ": " ++ verdict ++ " (Wasp Confinement Profile v0)"
+      , "  core: test/fixtures/acme-nspe.mir.json"
+      , "  verification: VERIFIED by the production verifier before the bundle was rendered"
+      , "  guarantee: NoSelfPrivilegeEscalation"
+      , "  case action: \"Membership.changeRole\""
+      , "  operation: mithrilCaseAction (POST /operations/mithril-case-action)"
+      , "  target: Wasp 0.25.0, PostgreSQL, Prisma runtime supplied by Wasp"
+      , "  managed files: 14"
+      ]
+        <> map ("    " ++) waspInventory
+    )
+
+waspInventory :: [String]
+waspInventory =
+  [ ".gitignore"
+  , ".mithril-wasp-profile"
+  , ".npmrc"
+  , ".wasproot"
+  , "main.wasp.ts"
+  , "mithril.manifest.json"
+  , "package.json"
+  , "schema.prisma"
+  , "src/MainPage.tsx"
+  , "src/mithrilCaseAction.ts"
+  , "tsconfig.json"
+  , "tsconfig.src.json"
+  , "tsconfig.wasp.json"
+  , "vite.config.ts"
+  ]
+
+-- | The generate path against the real process: a fresh scratch root
+-- is generated (exit 0, the GENERATED report with the verification
+-- and confinement lines, byte-identical to the committed fixture),
+-- checked (exit 0), tampered (the privilege floor of the generated
+-- Action lowered) and rejected (exit 4, the exact NOT CONFINED report
+-- on stdout, nothing on stderr), regenerated over the tampered owned
+-- root (exit 0, the bundle recovered as a whole), a root holding an
+-- unmanaged file refuses generation with exit 4 and stays untouched,
+-- a root argument with a trailing separator (absolute or relative,
+-- generate or check) is an unusable root with exit 1 before anything
+-- is created, an occupied backup sibling path refuses generation with
+-- exit 1 and touches neither the root nor the occupying entry, a
+-- generation under @umask 000@ still installs a root with the private
+-- permission bits 0700 (byte-identical and confined), and — with a
+-- fake @agda@ ahead on PATH — a verifier tool failure exits 2 and
+-- neither creates a root nor replaces an existing one.
+waspProcessChecks :: IO [Check]
+waspProcessChecks = do
+  temporaryBase <- canonicalizePath =<< getTemporaryDirectory
+  baseEnvironment <- getEnvironment
+  (anchorPath, handle) <- openTempFile temporaryBase "mithril-wasp-process.txt"
+  hClose handle
+  let scratch = anchorPath ++ ".d"
+      root = scratch </> "app"
+      collisionRoot = scratch </> "occupied"
+      fakeDirectory = scratch </> "fake-agda"
+      fakeProgram = fakeDirectory </> "agda"
+      neverCreated = scratch </> "never-created"
+  createDirectory scratch
+  generated <- invokeMithril ["wasp", "generate", nspePath, root]
+  generatedAgain <- invokeMithril ["wasp", "generate", nspePath, root]
+  checked <- invokeMithril ["wasp", "check", nspePath, root]
+  fixtureBytes <- mapM (\path -> ByteString.readFile (waspFixtureRoot </> path)) waspInventory
+  generatedBytes <- mapM (\path -> ByteString.readFile (root </> path)) waspInventory
+  let operationFile = root </> "src" </> "mithrilCaseAction.ts"
+  operation <- ByteString.readFile operationFile
+  writeFile operationFile (replaceOnce "const floorRank = 1;" "const floorRank = 0;" (Char8.unpack operation))
+  tampered <- invokeMithril ["wasp", "check", nspePath, root]
+  recovered <- invokeMithril ["wasp", "generate", nspePath, root]
+  recoveredBytes <- mapM (\path -> ByteString.readFile (root </> path)) waspInventory
+  createDirectory collisionRoot
+  writeFile (collisionRoot </> "notes.txt") "keep\n"
+  collision <- invokeMithril ["wasp", "generate", nspePath, collisionRoot]
+  collisionEntries <- listDirectory collisionRoot
+  trailingGenerate <- invokeMithril ["wasp", "generate", nspePath, neverCreated ++ "/"]
+  neverCreatedAfterTrailing <- doesPathExist neverCreated
+  trailingCheck <- invokeMithril ["wasp", "check", nspePath, waspFixtureRoot ++ "/"]
+  relativeTrailing <- invokeMithril ["wasp", "generate", nspePath, "test/fixtures/never-created/"]
+  relativeTrailingExists <- doesPathExist "test/fixtures/never-created"
+  let backupSibling = root ++ ".mithril-wasp-backup"
+  createDirectory backupSibling
+  occupiedBackup <- invokeMithril ["wasp", "generate", nspePath, root]
+  occupiedBackupEntries <- listDirectory backupSibling
+  afterOccupiedBackup <- mapM (\path -> ByteString.readFile (root </> path)) waspInventory
+  removeDirectory backupSibling
+  let umaskRoot = scratch </> "umask-app"
+  umaskGenerated <-
+    readProcessWithExitCode
+      "sh"
+      ["-c", "umask 000 && exec mithril wasp generate \"$1\" \"$2\"", "sh", nspePath, umaskRoot]
+      ""
+  umaskBits <- permissionBitsOf umaskRoot
+  umaskChecked <- invokeMithril ["wasp", "check", nspePath, umaskRoot]
+  umaskBytes <- mapM (\path -> ByteString.readFile (umaskRoot </> path)) waspInventory
+  rootBits <- permissionBitsOf root
+  createDirectory fakeDirectory
+  writeFile fakeProgram
+    "#!/bin/sh\n\
+    \if [ \"$1\" = \"--version\" ]; then echo \"Agda version 2.7.0\"; exit 0; fi\n\
+    \exit 1\n"
+  fakePermissions <- getPermissions fakeProgram
+  setPermissions fakeProgram (setOwnerExecutable True fakePermissions)
+  let fakeEnvironment =
+        [ (name, if name == "PATH" then fakeDirectory ++ ":" ++ value else value)
+        | (name, value) <- baseEnvironment
+        ]
+      invokeFake arguments =
+        readCreateProcessWithExitCode (proc "mithril" arguments) {env = Just fakeEnvironment} ""
+  verifierFailureFresh <- invokeFake ["wasp", "generate", nspePath, neverCreated]
+  neverCreatedExists <- doesPathExist neverCreated
+  verifierFailureExisting <- invokeFake ["wasp", "generate", nspePath, root]
+  afterVerifierFailure <- mapM (\path -> ByteString.readFile (root </> path)) waspInventory
+  scratchEntries <- listDirectory scratch
+  removeDirectoryRecursive scratch
+  removeFile anchorPath
+  pure
+    [ check
+        "wasp generate into a fresh root exits 0 with the GENERATED report"
+        ( generated
+            == ( ExitSuccess
+               , confinedReport root "GENERATED" <> "\n  confinement: CONFINED\n"
+               , ""
+               )
+        )
+    , check
+        "wasp generate into the managed root again is byte-identical"
+        (generatedAgain == generated)
+    , check
+        "the generated root is byte-identical to the committed fixture"
+        (generatedBytes == fixtureBytes)
+    , check
+        "wasp check of the generated root exits 0 with the CONFINED report"
+        (checked == (ExitSuccess, confinedReport root "CONFINED" <> "\n", ""))
+    , check
+        "a tampered generated Action fails wasp check with exit 4 and the exact report"
+        ( tampered
+            == ( ExitFailure 4
+               , root
+                   ++ ": NOT CONFINED (Wasp Confinement Profile v0)\n\
+                      \  src/mithrilCaseAction.ts: the generated Action differs from the regenerated bundle (edited generated authorization)\n"
+               , ""
+               )
+        )
+    , check
+        "wasp generate over the tampered owned root recovers the complete bundle with exit 0"
+        (recovered == generated && recoveredBytes == fixtureBytes)
+    , check
+        "wasp generate refuses an unmarked root holding an unmanaged file with exit 4 and writes nothing"
+        ( collision
+            == ( ExitFailure 4
+               , collisionRoot
+                   ++ ": NOT CONFINED (Wasp Confinement Profile v0)\n\
+                      \  .mithril-wasp-profile: the root carries no byte-exact Mithril ownership marker, so it is not an owned Wasp Confinement Profile v0 root (an unmarked nonempty root is never replaced)\n\
+                      \  notes.txt: an unexpected file is not part of the closed path inventory\n"
+               , ""
+               )
+            && collisionEntries == ["notes.txt"]
+        )
+    , check
+        "a trailing separator on an absolute root is an unusable root with exit 1 and creates nothing"
+        ( trailingGenerate == (ExitFailure 1, "", neverCreated ++ "/: unusable Wasp root\n  " ++ emptyComponentReason ++ "\n")
+            && not neverCreatedAfterTrailing
+        )
+    , check
+        "a trailing separator on the checked root is an unusable root with exit 1"
+        (trailingCheck == (ExitFailure 1, "", waspFixtureRoot ++ "/: unusable Wasp root\n  " ++ emptyComponentReason ++ "\n"))
+    , check
+        "a trailing separator on a relative root is an unusable root with exit 1 and creates nothing"
+        ( relativeTrailing == (ExitFailure 1, "", "test/fixtures/never-created/: unusable Wasp root\n  " ++ emptyComponentReason ++ "\n")
+            && not relativeTrailingExists
+        )
+    , check
+        "an occupied backup sibling path refuses generation with exit 1 and touches neither the root nor the entry"
+        ( occupiedBackup
+            == ( ExitFailure 1
+               , ""
+               , root
+                   ++ ": unusable Wasp root\n  its backup path "
+                   ++ backupSibling
+                   ++ " already exists (a directory) and is never replaced; move it away first\n"
+               )
+            && null occupiedBackupEntries
+            && afterOccupiedBackup == fixtureBytes
+        )
+    , check
+        "generation under umask 000 installs a private (0700) root that is byte-identical and confined"
+        ( umaskGenerated
+            == ( ExitSuccess
+               , confinedReport umaskRoot "GENERATED" <> "\n  confinement: CONFINED\n"
+               , ""
+               )
+            && umaskBits == 0o700
+            && umaskChecked == (ExitSuccess, confinedReport umaskRoot "CONFINED" <> "\n", "")
+            && umaskBytes == fixtureBytes
+        )
+    , check
+        "generation under the ambient umask installs a private (0700) root"
+        (rootBits == 0o700)
+    , check
+        "a verifier tool failure exits 2 with the verify diagnostic and creates no root"
+        ( verifierFailureFresh
+            == ( ExitFailure 2
+               , ""
+               , "mithril: internal Core verifier error: the checker is not\
+                 \ exactly Agda 2.8.0\n  reported: Agda version 2.7.0\n"
+               )
+            && not neverCreatedExists
+        )
+    , check
+        "a verifier tool failure exits 2 and replaces nothing in an existing owned root"
+        ( verifierFailureExisting
+            == ( ExitFailure 2
+               , ""
+               , "mithril: internal Core verifier error: the checker is not\
+                 \ exactly Agda 2.8.0\n  reported: Agda version 2.7.0\n"
+               )
+            && afterVerifierFailure == fixtureBytes
+            && sort scratchEntries == ["app", "fake-agda", "occupied", "umask-app"]
+        )
+    ]
+  where
+    emptyComponentReason =
+      "contains an empty path component (a doubled or trailing separator); pass a path without empty components"
+    permissionBitsOf path = do
+      metadata <- getSymbolicLinkStatus path
+      pure (fileMode metadata .&. 0o777)
+
+-- | Replace the first occurrence of a substring.
+replaceOnce :: String -> String -> String -> String
+replaceOnce needle replacement haystack =
+  case breakOn haystack of
+    Just (before, after) -> before ++ replacement ++ after
+    Nothing -> haystack
+  where
+    breakOn text
+      | needle `isPrefixOf` text = Just ("", drop (length needle) text)
+      | otherwise =
+          case text of
+            [] -> Nothing
+            c : rest -> fmap (\(before, after) -> (c : before, after)) (breakOn rest)

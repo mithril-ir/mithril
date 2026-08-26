@@ -15,8 +15,10 @@
 -- contract renderer ("Mithril.Core.Contract", its first implemented
 -- consumer), the Agda backend (implemented so far as the
 -- single-obligation verifier slice behind "Mithril.Core.Verification",
--- its second consumer), and the future target emitters
--- are required to share.  Relative to the typed document's resolved
+-- its second consumer), and the target adapters (implemented so far
+-- as the Wasp Confinement Profile v0 behind "Mithril.Core.Wasp", the
+-- first target adapter consuming normalized Core; further adapter
+-- formats remain open) are required to share.  Relative to the typed document's resolved
 -- model, normalization
 --
 -- * stamps every term with the static type the typechecker

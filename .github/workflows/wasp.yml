@@ -1,0 +1,183 @@
+name: Wasp
+
+# The real Wasp 0.25.0 / PostgreSQL vertical test of the one generated
+# slice (the Wasp Confinement Profile v0 of the supported
+# NoSelfPrivilegeEscalation fixture): the stub-driven self-tests of the
+# harness library (the physical working directory under a symlinked
+# TMPDIR, database ownership, identity-bound process termination,
+# cleanup), deterministic generation into a private working root
+# (resolved to its physical path) compared byte-for-byte with the
+# committed fixture, the confinement check of that fresh root and its
+# private 0700 mode, the same generation under umask 000 with a real
+# install and build, the renamed-model install/build matrix, then — in that freshly generated
+# root itself, never a copy of the fixture — wasp install, compile,
+# migrate-dev, and build, the built server, and the external HTTP
+# battery that exercises the generated Action through Wasp's real
+# generated HTTP and authentication path (uniform 401/400/403 answers
+# with the complete authority relation unchanged, the allowed path, the
+# trigger-proven three-attempt P2034 retry and pinned 409 and 500, and
+# barrier-proven concurrency).  Two jobs cover the two database
+# branches of the harness: a PostgreSQL 16 service container reached
+# through MITHRIL_PG_ADMIN_URL (the run owns and drops only the
+# database it created), and a private cluster initialized by the
+# runner's PostgreSQL 16 binaries with initdb.  The ordinary Haskell
+# workflow stays independent of Wasp, Node, and PostgreSQL; these jobs
+# pin the exact target toolchain: Wasp 0.25.0 installed from npm,
+# Node.js 24, PostgreSQL 16, and Agda 2.8.0 (the generate step runs
+# the verifier gate).  Everything the harness does with the database
+# directly — bootstrap, temporary triggers, sequences — is test-only
+# machinery outside the confinement claim.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  service:
+    name: Wasp 0.25.0 + PostgreSQL 16 service (administrative URL)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: source
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: source
+
+      - name: Set up GHC and cabal-install
+        uses: haskell-actions/setup@cd0d9bdd65b20557f41bea4dbe43d0b5fbbfe553 # v2.11.0
+        with:
+          ghc-version: "9.12.4"
+          cabal-version: "3.18.1.0"
+          cabal-update: true
+
+      - name: Install Agda 2.8.0
+        uses: agda/agda-setup-action@c931d59d76a036d1bed9f322cc12cc105bda7881 # v1
+        with:
+          agda-version: "2.8.0"
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+
+      - name: Install Wasp 0.25.0
+        run: npm install -g @wasp.sh/wasp-cli@0.25.0
+        env:
+          WASP_TELEMETRY_DISABLE: "1"
+
+      - name: Confirm the pinned toolchain
+        run: |
+          wasp version
+          test "$(wasp version </dev/null | tail -n 1 | tr -d '[:space:]')" = "0.25.0"
+          node --version
+          psql --version
+          agda --version
+
+      - name: Build the host tool
+        run: cabal build exe:mithril
+
+      # Stubbed database and kill commands plus a fake proc tree; the
+      # symlinked-TMPDIR scenario runs the built tool (and its Agda gate).
+      - name: Harness self-tests (working directory, database ownership, identity-bound termination, cleanup)
+        run: sh test/wasp-integration/test-harness.sh
+
+      - name: Wasp/PostgreSQL vertical test (administrative-URL branch)
+        run: sh test/wasp-integration/run-wasp-integration.sh
+        env:
+          MITHRIL_PG_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/postgres
+          WASP_TELEMETRY_DISABLE: "1"
+
+  initdb:
+    name: Wasp 0.25.0 + private PostgreSQL 16 cluster (initdb)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: source
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: source
+
+      - name: Set up GHC and cabal-install
+        uses: haskell-actions/setup@cd0d9bdd65b20557f41bea4dbe43d0b5fbbfe553 # v2.11.0
+        with:
+          ghc-version: "9.12.4"
+          cabal-version: "3.18.1.0"
+          cabal-update: true
+
+      - name: Install Agda 2.8.0
+        uses: agda/agda-setup-action@c931d59d76a036d1bed9f322cc12cc105bda7881 # v1
+        with:
+          agda-version: "2.8.0"
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+
+      - name: Install Wasp 0.25.0
+        run: npm install -g @wasp.sh/wasp-cli@0.25.0
+        env:
+          WASP_TELEMETRY_DISABLE: "1"
+
+      # The runner image ships PostgreSQL 16; the package is installed
+      # only if its server binaries are missing.
+      - name: Ensure the PostgreSQL 16 server binaries
+        run: |
+          if [ ! -x /usr/lib/postgresql/16/bin/initdb ]; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-16
+          fi
+          /usr/lib/postgresql/16/bin/initdb --version
+
+      - name: Confirm the pinned toolchain
+        run: |
+          wasp version
+          test "$(wasp version </dev/null | tail -n 1 | tr -d '[:space:]')" = "0.25.0"
+          node --version
+          psql --version
+          agda --version
+
+      - name: Build the host tool
+        run: cabal build exe:mithril
+
+      # Stubbed database and kill commands plus a fake proc tree; the
+      # symlinked-TMPDIR scenario runs the built tool (and its Agda gate).
+      - name: Harness self-tests (working directory, database ownership, identity-bound termination, cleanup)
+        run: sh test/wasp-integration/test-harness.sh
+
+      - name: Wasp/PostgreSQL vertical test (private initdb cluster branch)
+        run: sh test/wasp-integration/run-wasp-integration.sh
+        env:
+          MITHRIL_PG_BIN: /usr/lib/postgresql/16/bin
+          WASP_TELEMETRY_DISABLE: "1"

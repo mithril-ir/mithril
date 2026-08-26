@@ -7,7 +7,9 @@
 -- rejected, no downstream code can even name the representation's
 -- types — and so none can construct resolved nodes, mint an
 -- identifier, or coerce between identifier namespaces (EntityId vs
--- EnumId, or one owner's AttributeId vs another's).
+-- EnumId, or one owner's AttributeId vs another's).  Both imported
+-- constructors are consumed, so visibility could never surface an
+-- incidental unused-import failure instead of the boundary.
 module Main
   ( main
   ) where
@@ -15,4 +17,4 @@ module Main
 import Mithril.Core.Internal.Resolved (EntityId (..), Model (..))
 
 main :: IO ()
-main = pure ()
+main = EntityId `seq` Model `seq` pure ()

@@ -62,11 +62,51 @@ description:
   tool failure (exit 2), never a semantic verdict: no violation
   outcome exists in this milestone.  The Haskell generator, the
   embedded Agda kernel, the external Agda toolchain, and the support
-  rule itself remain trusted components.  No other compiler stage is
-  implemented: no complete verifier, no policy evaluator, no
-  semantic diff, no runtime enforcement, and no target generator,
-  and acceptance by validate, contract, or an unsupported verify
-  neither verifies a model nor establishes any guarantee.
+  rule itself remain trusted components.
+  @mithril wasp generate CORE_FILE WASP_ROOT@ and @mithril wasp check
+  CORE_FILE WASP_ROOT@ implement the first confined target slice, the
+  Wasp Confinement Profile v0: after the same complete pipeline and
+  the verify gate (VERIFIED required), the one shared
+  NoSelfPrivilegeEscalation support plan the verifier consumed is
+  lowered deterministically into a closed Wasp 0.25.0 application on
+  PostgreSQL — main.wasp.ts, schema.prisma, the one authenticated
+  Action declaration and its generated TypeScript implementation
+  (Wasp authentication, context.user.id as the only identity,
+  argument validation, authorization reads and the SetRelation write
+  in one Prisma interactive transaction at Serializable isolation
+  with a bounded deterministic P2034 retry, no raw SQL), the
+  dependency, TypeScript, and Vite configuration, a minimal static
+  client shell, a fixed-bytes ownership marker, and a deterministic
+  manifest — fourteen managed files whose identifiers, filenames, and
+  route are fixed role-derived target names, never authored names.
+  generate stages the complete bundle beside the root, checks it,
+  and installs it as a whole (an absent or empty root is initialized;
+  an owned root is replaced by whole-directory renames with rollback;
+  an unmarked nonempty root or any unmanaged path is refused without
+  mutation), refuses root paths with dot, empty, or trailing-separator
+  components, linked ancestors or roots, and an occupied backup
+  sibling path (never touched), installs the root private (mode 0700
+  whatever the umask), and finishes with the confinement check;
+  check performs no writes, walks the complete source root without
+  following symbolic links, rejects hard links, compares every
+  managed file byte-for-byte with the regenerated bundle, and rejects
+  missing, altered, and unexpected inputs (exit 4) with deterministic
+  sorted diagnostics.  The authority is the regenerated closed path
+  inventory plus exact bytes; the denylist scan only labels bypasses.
+  The pure renderer attests supported-shape lowering only; VERIFIED
+  provenance is stated by the command after the verifier reported it.
+  Wasp, Node, Prisma, PostgreSQL, the templates, and the lowering
+  remain trusted; no semantic-preservation theorem exists; the
+  confinement claim covers the source snapshot at the time of
+  checking, not concurrent same-user mutation after it, privileged
+  users, checker or CI compromise, dependency compromise, external
+  database-credential holders, or tampering after the Wasp build;
+  this is not a general Wasp backend, a whole-product generator, a
+  complete verifier, or a runtime sandbox.  No other compiler stage is
+  implemented: no complete verifier, no policy evaluator, no semantic
+  diff, no runtime enforcement, and no target generation beyond this
+  one slice, and acceptance by validate, contract, or an unsupported
+  verify neither verifies a model nor establishes any guarantee.
 homepage:           https://github.com/mithril-ir/mithril
 bug-reports:        https://github.com/mithril-ir/mithril/issues
 license:            Apache-2.0
@@ -84,9 +124,21 @@ extra-doc-files:    README.md
 -- never installed as package data and never looked up at run time, so
 -- it belongs in the source distribution but not in data-files.  The
 -- handwritten Acme example, the invalid test fixtures, the frozen
--- golden security contracts, and the API-boundary probe material are
--- consumed by the test suite and the documented probe command, so
--- source distributions must carry them too.
+-- golden security contracts, and the API-boundary probe material
+-- (the probe package, the driver, and the driver's own isolation
+-- self-test) are consumed by the test suite and the documented probe
+-- commands, so source distributions must carry them too.
+-- The generated Wasp fixture under test/fixtures/wasp-acme is the
+-- reviewed golden output of 'mithril wasp generate' for the supported
+-- fixture (pinned byte-for-byte by the test suite and CI, regenerated
+-- only through the tool, never hand-edited); the rename variants under
+-- test/fixtures/wasp-renames are the supported documents whose renamed
+-- declarations the test suite renders and the Wasp job compiles and
+-- builds; and the six files under test/wasp-integration are the
+-- test-only Wasp/PostgreSQL harness (its library, its self-tests, the
+-- HTTP battery, and the battery's concurrency helpers with their own
+-- hermetic regression) outside the confinement claim.  All belong in the
+-- source distribution and not in data-files.
 -- The five agda/Mithril kernel modules listed here are the trusted
 -- Agda kernel sources embedded into the library at compile time
 -- (Mithril.Core.Internal.AgdaKernel) for the verifier's isolated
@@ -107,6 +159,7 @@ extra-source-files:
     test/api-probes/probe/*.hs
     test/api-probes/probe/probe.cabal
     test/api-probes/run-api-probes.sh
+    test/api-probes/test-run-api-probes.sh
     test/fixtures/acme-nspe-unsafe.mir.json
     test/fixtures/acme-nspe.mir.json
     test/fixtures/acme.contract.txt
@@ -115,8 +168,35 @@ extra-source-files:
     test/fixtures/near-core.mir.json
     test/fixtures/nspe.generated.agda
     test/fixtures/unknown-name.mir.json
+    test/fixtures/wasp-acme/.gitignore
+    test/fixtures/wasp-acme/.mithril-wasp-profile
+    test/fixtures/wasp-acme/.npmrc
+    test/fixtures/wasp-acme/.wasproot
+    test/fixtures/wasp-acme/main.wasp.ts
+    test/fixtures/wasp-acme/mithril.manifest.json
+    test/fixtures/wasp-acme/package.json
+    test/fixtures/wasp-acme/schema.prisma
+    test/fixtures/wasp-acme/src/MainPage.tsx
+    test/fixtures/wasp-acme/src/mithrilCaseAction.ts
+    test/fixtures/wasp-acme/tsconfig.json
+    test/fixtures/wasp-acme/tsconfig.src.json
+    test/fixtures/wasp-acme/tsconfig.wasp.json
+    test/fixtures/wasp-acme/vite.config.ts
+    test/fixtures/wasp-renames/acronyms-digits.mir.json
+    test/fixtures/wasp-renames/declaration-order.mir.json
+    test/fixtures/wasp-renames/leading-characters.mir.json
+    test/fixtures/wasp-renames/reserved-words.mir.json
+    test/fixtures/wasp-renames/same-target-spelling.mir.json
+    test/fixtures/wasp-renames/string-scope.mir.json
+    test/fixtures/wasp-renames/wasp-auth-names.mir.json
     test/fixtures/welltyped.contract.txt
     test/fixtures/welltyped.mir.json
+    test/wasp-integration/battery.mjs
+    test/wasp-integration/concurrency.mjs
+    test/wasp-integration/concurrency.test.mjs
+    test/wasp-integration/lib.sh
+    test/wasp-integration/run-wasp-integration.sh
+    test/wasp-integration/test-harness.sh
 
 source-repository head
   type:     git
@@ -157,8 +237,12 @@ common shared
 -- representation (Document, Resolved, SourcePath, Syntax), the
 -- shared static type language with the one statement of the
 -- declared-type projections and the ordered-comparison shape
--- (StaticType), and the explicit typed normalized representation
--- (Normalized) live in this
+-- (StaticType), the explicit typed normalized representation
+-- (Normalized), the one shared NoSelfPrivilegeEscalation support
+-- gate and plan (NspeSupportPlan), the verifier slice (Verify), the
+-- Wasp emitter (Wasp), the pure Wasp confinement checker
+-- (WaspConfinement), and the effectful Wasp filesystem boundary
+-- (WaspFilesystem) live in this
 -- package-private named sublibrary.  That is an internal
 -- testability and encapsulation mechanism, not a packaging or
 -- distribution decision: visibility: private means no other package
@@ -176,15 +260,30 @@ library core-internal
   exposed-modules:
     Mithril.Core.Internal.Document
     Mithril.Core.Internal.Normalized
+    Mithril.Core.Internal.NspeSupportPlan
     Mithril.Core.Internal.Resolved
     Mithril.Core.Internal.SourcePath
     Mithril.Core.Internal.StaticType
     Mithril.Core.Internal.Syntax
     Mithril.Core.Internal.Verify
+    Mithril.Core.Internal.Wasp
+    Mithril.Core.Internal.WaspConfinement
+    Mithril.Core.Internal.WaspFilesystem
 
+  -- directory, filepath, and unix serve exactly the Wasp filesystem
+  -- boundary (Mithril.Core.Internal.WaspFilesystem): root-path
+  -- validation with no-follow metadata, the link-count-aware
+  -- snapshot walker, and the whole-directory installation swap.  The
+  -- unix package is the explicit POSIX dependency of that boundary
+  -- (Linux is the exercised platform).
   build-depends:
     , aeson >= 2.2 && < 2.3
+    , bytestring >= 0.12 && < 0.13
+    , containers >= 0.7 && < 0.8
+    , directory >= 1.3 && < 1.4
+    , filepath >= 1.5 && < 1.6
     , text >= 2.1 && < 2.2
+    , unix >= 2.8 && < 2.9
 
 library
   import:          shared
@@ -194,12 +293,14 @@ library
     Mithril.Command.Contract
     Mithril.Command.Validate
     Mithril.Command.Verify
+    Mithril.Command.Wasp
     Mithril.Core.Contract
     Mithril.Core.Normalization
     Mithril.Core.Resolution
     Mithril.Core.Typing
     Mithril.Core.Validation
     Mithril.Core.Verification
+    Mithril.Core.Wasp
 
   -- Mithril.Core.Internal.BundledSchema owns the compile-time-embedded
   -- bytes of core/schema.json; Report owns the frontend's diagnostic
@@ -230,7 +331,15 @@ library
   -- checker outside the staged pipeline.  The verifier's support
   -- gate, generator, and orchestration live in the private
   -- core-internal sublibrary (Mithril.Core.Internal.Verify), behind
-  -- the public Mithril.Core.Verification boundary.
+  -- the public Mithril.Core.Verification boundary; the shared
+  -- NoSelfPrivilegeEscalation support gate and plan both backends
+  -- consume (Mithril.Core.Internal.NspeSupportPlan), the Wasp emitter
+  -- (Mithril.Core.Internal.Wasp), the pure confinement checker
+  -- (Mithril.Core.Internal.WaspConfinement), and the effectful Wasp
+  -- filesystem boundary with its fault-injection seam
+  -- (Mithril.Core.Internal.WaspFilesystem) live there too, behind the
+  -- public Mithril.Core.Wasp boundary and the Mithril.Command.Wasp CLI
+  -- boundary.
   other-modules:
     Mithril.Command.Internal.Diagnostic
     Mithril.Core.Internal.AgdaChecker
@@ -291,15 +400,17 @@ test-suite mithril-ir-test
     Mithril.CoreTypingTests
     Mithril.CoreValidationTests
     Mithril.CoreVerificationTests
+    Mithril.CoreWaspTests
     Mithril.NormalizedModelTests
     Mithril.Test
     Mithril.TestEnv
 
   -- process runs the actually-built mithril executable (provided on
   -- PATH by build-tool-depends) for the process-level CLI regression
-  -- tests; directory and filepath exist only so the schema-override
-  -- regressions can build and reliably remove a collision-safe
-  -- scratch data directory.  The private core-internal sublibrary is
+  -- tests; directory and filepath let the schema-override and Wasp
+  -- filesystem regressions build and reliably remove collision-safe
+  -- scratch directories, and unix lets the Wasp confinement
+  -- regressions create the hard links they must see rejected.  The private core-internal sublibrary is
   -- the deliberate white-box seam: it lets Mithril.CoreModelTests
   -- inspect the real resolved model produced by the public pipeline
   -- without exposing any internal module to code outside this
@@ -313,6 +424,7 @@ test-suite mithril-ir-test
     , mithril-ir:core-internal
     , process >= 1.6 && < 1.7
     , text >= 2.1 && < 2.2
+    , unix >= 2.8 && < 2.9
   build-tool-depends:
     mithril-ir:mithril
 

@@ -12,7 +12,9 @@
 -- "Mithril.NormalizedModelTests" (white-box inspection of the real
 -- normalized model through the package-private sublibrary),
 -- "Mithril.CoreContractTests" (the security-contract rendering
--- boundary), and "Mithril.CLIProcessTests" (the real executable as a
+-- boundary), "Mithril.CoreVerificationTests" (the verifier boundary),
+-- "Mithril.CoreWaspTests" (the Wasp target and confinement
+-- boundaries), and "Mithril.CLIProcessTests" (the real executable as a
 -- process).
 module Main
   ( main
@@ -28,6 +30,7 @@ import qualified Mithril.CoreResolutionTests
 import qualified Mithril.CoreTypingTests
 import qualified Mithril.CoreValidationTests
 import qualified Mithril.CoreVerificationTests
+import qualified Mithril.CoreWaspTests
 import qualified Mithril.NormalizedModelTests
 import Mithril.Test (runGroups)
 
@@ -44,5 +47,6 @@ main =
     , ("Normalized model", Mithril.NormalizedModelTests.tests)
     , ("Core contract", Mithril.CoreContractTests.tests)
     , ("Core verification", Mithril.CoreVerificationTests.tests)
+    , ("Core wasp", Mithril.CoreWaspTests.tests)
     , ("CLI process", Mithril.CLIProcessTests.tests)
     ]

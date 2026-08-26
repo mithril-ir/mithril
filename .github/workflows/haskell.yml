@@ -23,9 +23,15 @@ name: Haskell
 # the verify command implements exactly the one obligation slice: the
 # canonical Acme document stays unsupported (its TenantIsolation and
 # AuthenticatedMutation obligations remain unverified), and a checker
-# problem is a tool failure, never a semantic verdict. Agda 2.8.0 is
+# problem is a tool failure, never a semantic verdict; and 'mithril wasp
+# check CORE_FILE WASP_ROOT' regenerates the closed Wasp Confinement
+# Profile v0 of that same slice (VERIFIED required) and pins the committed fixture
+# test/fixtures/wasp-acme byte-for-byte without touching Wasp, Node, or
+# PostgreSQL (the real Wasp 0.25.0 / PostgreSQL vertical test runs in
+# its own workflow, wasp.yml). Agda 2.8.0 is
 # installed here because the verifier's end-to-end checks (in the
-# test suite and the explicit verify steps below) invoke the real
+# test suite, the explicit verify steps below, and the wasp check
+# step's verifier gate) invoke the real
 # checker; the standalone Agda spike keeps its own workflow.
 
 on:
@@ -46,7 +52,7 @@ jobs:
   build:
     name: Build and test
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: source
@@ -87,6 +93,12 @@ jobs:
       - name: API-boundary compile-fail probes
         run: sh test/api-probes/run-api-probes.sh
 
+      # The driver's build isolation: from a clean copy of the sources,
+      # two concurrent driver runs must both succeed with disjoint build
+      # roots and leave no default dist-newstyle behind.
+      - name: Probe-driver build isolation (clean copy, two concurrent runs)
+        run: sh test/api-probes/test-run-api-probes.sh
+
       - name: Validate Acme Core document
         run: cabal run mithril -- validate examples/acme/acme.mir.json
 
@@ -112,6 +124,13 @@ jobs:
             echo "expected exit 3, got $status" >&2
             exit 1
           fi
+
+      # The Wasp Confinement Profile v0 of the supported slice (VERIFIED
+      # required by the command): the committed
+      # generated fixture must be exactly the fresh bundle (exit 0); the
+      # commands need no Wasp, Node, or PostgreSQL installation.
+      - name: Check the committed Wasp fixture against a fresh bundle
+        run: cabal run mithril -- wasp check test/fixtures/acme-nspe.mir.json test/fixtures/wasp-acme
 
       - name: Run mithril --help
         run: cabal run mithril -- --help
