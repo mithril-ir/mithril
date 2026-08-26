@@ -3,8 +3,9 @@
 -- All argument interpretation and rendering is pure and lives in
 -- "Mithril.CLI"; the validate boundary lives in
 -- "Mithril.Command.Validate", the contract boundary in
--- "Mithril.Command.Contract", and the verify boundary in
--- "Mithril.Command.Verify".  This module only wires together the
+-- "Mithril.Command.Contract", the verify boundary in
+-- "Mithril.Command.Verify", and the wasp boundary in
+-- "Mithril.Command.Wasp".  This module only wires together the
 -- process arguments, stdout, stderr, the package version, and the
 -- exit status.
 module Main
@@ -35,6 +36,14 @@ import Mithril.Command.Verify
   , verifyCoreFile
   , verifyFailureExitCode
   , verifySuccessExitCode
+  )
+import Mithril.Command.Wasp
+  ( checkWaspApp
+  , generateWaspApp
+  , renderWaspFailure
+  , renderWaspSuccess
+  , waspFailureExitCode
+  , waspSuccessExitCode
   )
 import Paths_mithril_ir (version)
 
@@ -74,6 +83,24 @@ main = do
         Left failure -> do
           TextIO.hPutStrLn stderr (renderVerifyFailure failure)
           exitWith (verifyFailureExitCode failure)
+    Right (WaspGenerate coreFile root) ->
+      waspOutcome coreFile (generateWaspApp coreFile root)
+    Right (WaspCheck coreFile root) ->
+      waspOutcome coreFile (checkWaspApp coreFile root)
     Left problem -> do
       hPutStrLn stderr problem
       exitFailure
+  where
+    -- Both wasp commands share one outcome contract: every completed
+    -- outcome (generated, confined, unsupported, not confined) prints
+    -- its deterministic report to stdout with nothing on stderr and
+    -- exits 0, 3, or 4; every failure prints to stderr.
+    waspOutcome coreFile run = do
+      outcome <- run
+      case outcome of
+        Right success -> do
+          TextIO.putStrLn (renderWaspSuccess coreFile success)
+          exitWith (waspSuccessExitCode success)
+        Left failure -> do
+          TextIO.hPutStrLn stderr (renderWaspFailure failure)
+          exitWith (waspFailureExitCode failure)

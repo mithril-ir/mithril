@@ -4,7 +4,7 @@
 -- ordinary external package — so hidden modules, abstract types, and
 -- nominal roles are enforced exactly as any downstream consumer would
 -- experience them.  The control executable must COMPILE, proving the
--- probe environment sound; the twenty-one attack executables must
+-- probe environment sound; the twenty-nine attack executables must
 -- FAIL to compile, each for its intended boundary reason.  The probes are
 -- deliberately not part of the default project, so ordinary builds
 -- and tests never touch them.

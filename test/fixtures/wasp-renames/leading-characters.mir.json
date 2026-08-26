@@ -1,0 +1,446 @@
+{
+  "format": "mithril-core",
+  "formatVersion": "0",
+  "name": "Z",
+  "schema": {
+    "entities": [
+      {
+        "name": "User",
+        "attributes": []
+      },
+      {
+        "name": "A",
+        "attributes": []
+      },
+      {
+        "name": "Project",
+        "attributes": [
+          {
+            "name": "organization",
+            "type": {
+              "kind": "EntityRef",
+              "entity": "A"
+            }
+          }
+        ]
+      }
+    ],
+    "enums": [
+      {
+        "name": "Za0",
+        "values": [
+          "A0",
+          "Z9"
+        ],
+        "order": [
+          "A0",
+          "Z9"
+        ]
+      }
+    ],
+    "relations": [
+      {
+        "name": "Zz",
+        "endpoints": [
+          {
+            "name": "a",
+            "entity": "User"
+          },
+          {
+            "name": "z9",
+            "entity": "A"
+          }
+        ],
+        "payload": {
+          "kind": "Enum",
+          "enum": "Za0"
+        }
+      }
+    ]
+  },
+  "actions": [
+    {
+      "name": "Project.read",
+      "parameters": [
+        {
+          "name": "project",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Project"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Read",
+      "allow": {
+        "kind": "LessOrEqual",
+        "left": {
+          "kind": "Some",
+          "value": {
+            "kind": "Enum",
+            "enum": "Za0",
+            "value": "A0"
+          }
+        },
+        "right": {
+          "kind": "Lookup",
+          "relation": "Zz",
+          "endpoints": [
+            {
+              "kind": "Actor"
+            },
+            {
+              "kind": "Attribute",
+              "source": {
+                "kind": "Argument",
+                "name": "project"
+              },
+              "attribute": "organization"
+            }
+          ]
+        }
+      },
+      "effect": {
+        "kind": "NoChange"
+      },
+      "result": {
+        "kind": "Observe",
+        "entity": {
+          "kind": "Argument",
+          "name": "project"
+        }
+      }
+    },
+    {
+      "name": "Project.create",
+      "parameters": [
+        {
+          "name": "organization",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "A"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "LessOrEqual",
+        "left": {
+          "kind": "Some",
+          "value": {
+            "kind": "Enum",
+            "enum": "Za0",
+            "value": "A0"
+          }
+        },
+        "right": {
+          "kind": "Lookup",
+          "relation": "Zz",
+          "endpoints": [
+            {
+              "kind": "Actor"
+            },
+            {
+              "kind": "Argument",
+              "name": "organization"
+            }
+          ]
+        }
+      },
+      "effect": {
+        "kind": "CreateEntity",
+        "entity": "Project",
+        "attributes": {
+          "organization": {
+            "kind": "Argument",
+            "name": "organization"
+          }
+        }
+      },
+      "result": {
+        "kind": "Created"
+      }
+    },
+    {
+      "name": "Project.delete",
+      "parameters": [
+        {
+          "name": "project",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Project"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "LessOrEqual",
+        "left": {
+          "kind": "Some",
+          "value": {
+            "kind": "Enum",
+            "enum": "Za0",
+            "value": "Z9"
+          }
+        },
+        "right": {
+          "kind": "Lookup",
+          "relation": "Zz",
+          "endpoints": [
+            {
+              "kind": "Actor"
+            },
+            {
+              "kind": "Attribute",
+              "source": {
+                "kind": "Argument",
+                "name": "project"
+              },
+              "attribute": "organization"
+            }
+          ]
+        }
+      },
+      "effect": {
+        "kind": "DeleteEntity",
+        "target": {
+          "kind": "Argument",
+          "name": "project"
+        }
+      },
+      "result": {
+        "kind": "Done"
+      }
+    },
+    {
+      "name": "Membership.addMember",
+      "parameters": [
+        {
+          "name": "target",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        },
+        {
+          "name": "organization",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "A"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "And",
+        "left": {
+          "kind": "LessOrEqual",
+          "left": {
+            "kind": "Some",
+            "value": {
+              "kind": "Enum",
+              "enum": "Za0",
+              "value": "Z9"
+            }
+          },
+          "right": {
+            "kind": "Lookup",
+            "relation": "Zz",
+            "endpoints": [
+              {
+                "kind": "Actor"
+              },
+              {
+                "kind": "Argument",
+                "name": "organization"
+              }
+            ]
+          }
+        },
+        "right": {
+          "kind": "Equal",
+          "left": {
+            "kind": "Lookup",
+            "relation": "Zz",
+            "endpoints": [
+              {
+                "kind": "Argument",
+                "name": "target"
+              },
+              {
+                "kind": "Argument",
+                "name": "organization"
+              }
+            ]
+          },
+          "right": {
+            "kind": "None",
+            "payloadType": {
+              "kind": "Enum",
+              "enum": "Za0"
+            }
+          }
+        }
+      },
+      "effect": {
+        "kind": "SetRelation",
+        "relation": "Zz",
+        "endpoints": [
+          {
+            "kind": "Argument",
+            "name": "target"
+          },
+          {
+            "kind": "Argument",
+            "name": "organization"
+          }
+        ],
+        "payload": {
+          "kind": "Enum",
+          "enum": "Za0",
+          "value": "A0"
+        }
+      },
+      "result": {
+        "kind": "Done"
+      }
+    },
+    {
+      "name": "Zz.a",
+      "parameters": [
+        {
+          "name": "a0",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        },
+        {
+          "name": "zz",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "A"
+          }
+        },
+        {
+          "name": "z",
+          "type": {
+            "kind": "Enum",
+            "enum": "Za0"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "And",
+        "left": {
+          "kind": "LessOrEqual",
+          "left": {
+            "kind": "Some",
+            "value": {
+              "kind": "Enum",
+              "enum": "Za0",
+              "value": "Z9"
+            }
+          },
+          "right": {
+            "kind": "Lookup",
+            "relation": "Zz",
+            "endpoints": [
+              {
+                "kind": "Actor"
+              },
+              {
+                "kind": "Argument",
+                "name": "zz"
+              }
+            ]
+          }
+        },
+        "right": {
+          "kind": "And",
+          "left": {
+            "kind": "Not",
+            "value": {
+              "kind": "Equal",
+              "left": {
+                "kind": "Actor"
+              },
+              "right": {
+                "kind": "Argument",
+                "name": "a0"
+              }
+            }
+          },
+          "right": {
+            "kind": "IsSome",
+            "value": {
+              "kind": "Lookup",
+              "relation": "Zz",
+              "endpoints": [
+                {
+                  "kind": "Argument",
+                  "name": "a0"
+                },
+                {
+                  "kind": "Argument",
+                  "name": "zz"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "effect": {
+        "kind": "SetRelation",
+        "relation": "Zz",
+        "endpoints": [
+          {
+            "kind": "Argument",
+            "name": "a0"
+          },
+          {
+            "kind": "Argument",
+            "name": "zz"
+          }
+        ],
+        "payload": {
+          "kind": "Argument",
+          "name": "z"
+        }
+      },
+      "result": {
+        "kind": "Done"
+      }
+    }
+  ],
+  "guarantees": [
+    {
+      "kind": "NoSelfPrivilegeEscalation",
+      "authority": {
+        "relation": "Zz",
+        "subjectEndpoint": "a",
+        "scopeEndpoints": [
+          "z9"
+        ],
+        "absenceLevel": "Bottom",
+        "payloadOrder": "Za0"
+      },
+      "cases": [
+        {
+          "action": "Zz.a",
+          "scope": [
+            {
+              "kind": "Argument",
+              "name": "zz"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

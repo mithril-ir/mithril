@@ -6,7 +6,9 @@
 -- outside the staged pipeline, construct raw typing problems, or
 -- reach the internal type language at all.  The public surface is
 -- exactly Mithril.Core.Typing, whose only producer of a typed
--- document is typecheckCoreDocument.
+-- document is typecheckCoreDocument.  The imported pass is consumed,
+-- so visibility could never surface an incidental unused-import
+-- failure instead of the boundary.
 module Main
   ( main
   ) where
@@ -14,4 +16,4 @@ module Main
 import Mithril.Core.Internal.Typecheck (checkModel)
 
 main :: IO ()
-main = pure ()
+main = checkModel `seq` pure ()

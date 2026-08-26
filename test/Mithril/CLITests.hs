@@ -4,7 +4,8 @@
 -- duplicated here.  The pre-existing bootstrap behaviors (no
 -- arguments, help, short help, version, unknown arguments, extra
 -- arguments) are pinned alongside the @validate FILE@,
--- @contract FILE@, and @verify FILE@ grammars, and the
+-- @contract FILE@, @verify FILE@, @wasp generate CORE_FILE WASP_ROOT@,
+-- and @wasp check CORE_FILE WASP_ROOT@ grammars, and the
 -- argument-escaping checks pin that no user-supplied argument can
 -- add physical lines or terminal controls to a diagnostic.
 module Mithril.CLITests
@@ -83,6 +84,59 @@ checks =
       "a dash-prefixed verify FILE stays a file, never an option"
       (parseCommand ["verify", "--frobnicate"] == Right (Verify "--frobnicate"))
   , check
+      "wasp generate CORE_FILE WASP_ROOT parses"
+      ( parseCommand ["wasp", "generate", "doc.mir.json", "app"]
+          == Right (WaspGenerate "doc.mir.json" "app")
+      )
+  , check
+      "wasp check CORE_FILE WASP_ROOT parses"
+      ( parseCommand ["wasp", "check", "doc.mir.json", "app"]
+          == Right (WaspCheck "doc.mir.json" "app")
+      )
+  , check
+      "wasp without a subcommand is rejected naming both subcommands"
+      ( parseCommand ["wasp"]
+          == Left
+            "mithril: 'wasp' requires a subcommand: generate or check\n\
+            \Run 'mithril --help' for usage."
+      )
+  , check
+      "an unknown wasp subcommand is rejected naming it"
+      ( parseCommand ["wasp", "frobnicate", "a", "b"]
+          == Left
+            "mithril: unknown wasp subcommand 'frobnicate'\n\
+            \Run 'mithril --help' for usage."
+      )
+  , check
+      "wasp generate with one argument is rejected naming both arguments"
+      ( parseCommand ["wasp", "generate", "doc.mir.json"]
+          == Left
+            "mithril: 'wasp generate' requires exactly two arguments: CORE_FILE WASP_ROOT\n\
+            \Run 'mithril --help' for usage."
+      )
+  , check
+      "wasp check without arguments is rejected naming both arguments"
+      ( parseCommand ["wasp", "check"]
+          == Left
+            "mithril: 'wasp check' requires exactly two arguments: CORE_FILE WASP_ROOT\n\
+            \Run 'mithril --help' for usage."
+      )
+  , check
+      "wasp check with extra arguments is rejected naming the extras"
+      ( parseCommand ["wasp", "check", "doc.mir.json", "app", "surplus"]
+          == Left
+            "mithril: unexpected extra arguments after 'wasp check CORE_FILE WASP_ROOT': \
+            \'surplus'\nRun 'mithril --help' for usage."
+      )
+  , check
+      "dash-prefixed wasp arguments stay paths, never options"
+      ( parseCommand ["wasp", "generate", "--core", "--root"]
+          == Right (WaspGenerate "--core" "--root")
+      )
+  , check
+      "a hostile wasp subcommand renders escaped on two lines"
+      (rejectsOnTwoLines ["wasp", "bad\narg"] "\\n")
+  , check
       "help contains a Usage: section"
       ("Usage:" `isInfixOf` renderHelp)
   , check
@@ -143,9 +197,42 @@ checks =
           `isInfixOf` renderHelp
       )
   , check
-      "help states that no compiler stage beyond the three commands is implemented"
-      ( "No other compiler stage is implemented yet: no complete verifier,\n\
-        \no semantic diff, and no target code generation.\n"
+      "help lists both wasp commands with their two arguments"
+      ( ("wasp generate CORE_FILE WASP_ROOT" `isInfixOf` renderHelp)
+          && ("wasp check CORE_FILE WASP_ROOT" `isInfixOf` renderHelp)
+      )
+  , check
+      "help scopes the wasp commands to the one confined slice on Wasp 0.25.0 and PostgreSQL"
+      ( ("Wasp Confinement Profile v0" `isInfixOf` renderHelp)
+          && ("Wasp 0.25.0 application on\nPostgreSQL" `isInfixOf` renderHelp)
+          && ("exactly the one supported NoSelfPrivilegeEscalation slice, which both\nrequire to be VERIFIED first" `isInfixOf` renderHelp)
+      )
+  , check
+      "help states the confinement boundary and the wasp exit classifications"
+      ( ("without\nfollowing symbolic links" `isInfixOf` renderHelp)
+          && ("unexpected input (exit 4)" `isInfixOf` renderHelp)
+          && ("support rule is UNSUPPORTED (exit 3)" `isInfixOf` renderHelp)
+          && ("swaps it into place as a whole" `isInfixOf` renderHelp)
+          && ("rejects hard links" `isInfixOf` renderHelp)
+          && ("refuses an unmarked nonempty root or an unmanaged path without mutation" `isInfixOf` renderHelp)
+      )
+  , check
+      "help names the Wasp trusted components and the wasp non-claims"
+      ( ("Wasp, Node,\nPrisma, PostgreSQL, the templates, and the lowering remain trusted" `isInfixOf` renderHelp)
+          && ("no\nsemantic-preservation theorem exists" `isInfixOf` renderHelp)
+          && ("this is not a general Wasp backend, a\nwhole-product generator, a complete verifier, or a runtime sandbox" `isInfixOf` renderHelp)
+          && ("not concurrent same-user\nmutation after it, privileged users, checker or CI compromise,\ndependency compromise, external database credential holders, or\ntampering after the Wasp build" `isInfixOf` renderHelp)
+      )
+  , check
+      "help states the root-path grammar, the backup-sibling refusal, and the private root mode"
+      ( ("refuses root paths with dot, empty, or trailing-separator\ncomponents" `isInfixOf` renderHelp)
+          && ("or an existing backup\nsibling (exit 1)" `isInfixOf` renderHelp)
+          && ("creates the root private (mode 0700 whatever the\numask)" `isInfixOf` renderHelp)
+      )
+  , check
+      "help states that no compiler stage beyond the five commands is implemented"
+      ( "No other compiler stage is implemented: no complete verifier, no\n\
+        \semantic diff, and no target generation beyond this one slice.\n"
           `isInfixOf` renderHelp
       )
   , check

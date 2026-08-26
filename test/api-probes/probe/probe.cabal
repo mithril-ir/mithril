@@ -8,7 +8,7 @@ description:
   mithril-ir as an external package, never by adding its src/ to a
   module search path).  One executable — probe-control — is the
   legitimate external-consumer control and must COMPILE; the
-  twenty-one attack executables must each FAIL to compile for their
+  twenty-nine attack executables must each FAIL to compile for their
   intended boundary reason.  The driver test/api-probes/run-api-probes.sh
   builds them one by one and treats a failing control, a compiling
   attack, or an attack failing with an unintended message as a broken
@@ -27,8 +27,8 @@ flag werror
   manual:      True
   default:     False
 
--- Every probe component — the control and the twenty-one attacks —
--- imports this stanza, so all twenty-two compile under the same
+-- Every probe component — the control and the twenty-nine attacks —
+-- imports this stanza, so all thirty compile under the same
 -- warning set as the repository's own components, with -Werror
 -- active; the driver verifies both from the generated build plan and
 -- from this file.
@@ -188,3 +188,52 @@ executable probe-hidden-agda-kernel
 executable probe-hidden-agda-checker
   import:  probe
   main-is: HiddenAgdaChecker.hs
+
+-- Attack 22: pass a merely Parsed document to the public Wasp
+-- emitter, bypassing every later stage.
+executable probe-wasp-parsed
+  import:  probe
+  main-is: WaspParsed.hs
+
+-- Attack 23: pass a merely StructurallyValid document to the public
+-- Wasp emitter, bypassing resolution, typing, and normalization.
+executable probe-wasp-valid
+  import:  probe
+  main-is: WaspValid.hs
+
+-- Attack 24: pass a merely Resolved document to the public Wasp
+-- emitter, bypassing typing and normalization.
+executable probe-wasp-resolved
+  import:  probe
+  main-is: WaspResolved.hs
+
+-- Attack 25: pass a merely Typed document to the public Wasp emitter,
+-- bypassing normalization.
+executable probe-wasp-typed
+  import:  probe
+  main-is: WaspTyped.hs
+
+-- Attack 26: import the hidden module that owns the one shared
+-- NoSelfPrivilegeEscalation support gate and plan.
+executable probe-hidden-nspe-support-plan
+  import:  probe
+  main-is: HiddenNspeSupportPlan.hs
+
+-- Attack 27: import the hidden module that owns the Wasp emitter (the
+-- fixed target names, the templates, and the bundle constructor).
+executable probe-hidden-wasp
+  import:  probe
+  main-is: HiddenWasp.hs
+
+-- Attack 28: import the hidden module that owns the pure Wasp
+-- confinement checker.
+executable probe-hidden-wasp-confinement
+  import:  probe
+  main-is: HiddenWaspConfinement.hs
+
+-- Attack 29: import the hidden module that owns the effectful Wasp
+-- filesystem boundary (root validation, the snapshot walker, and the
+-- installation swap with its fault-injection seam).
+executable probe-hidden-wasp-filesystem
+  import:  probe
+  main-is: HiddenWaspFilesystem.hs

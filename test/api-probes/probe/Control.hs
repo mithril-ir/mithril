@@ -1,7 +1,7 @@
 -- Control (must compile): the legitimate public pipeline, written
 -- exactly as a downstream consumer would write it — through
--- normalization and on into the public contract and verifier APIs,
--- so each boundary's one accepted input (a normalized document
+-- normalization and on into the public contract, Wasp emitter, and
+-- verifier APIs, so each boundary's one accepted input (a normalized document
 -- obtained through the public pipeline) is demonstrably reachable
 -- from outside.  The verifier action is referenced but deliberately
 -- not executed, so compiling (or even running) this probe never
@@ -25,6 +25,7 @@ import Mithril.Core.Validation
   , validateCoreDocument
   )
 import Mithril.Core.Verification (verifyCoreDocument)
+import Mithril.Core.Wasp (renderWaspBundle)
 
 main :: IO ()
 main =
@@ -49,9 +50,12 @@ main =
                           case renderCoreContract normalizedDocument of
                             Left _ -> putStrLn "internal contract renderer error"
                             Right _contract ->
-                              -- The verifier boundary accepts the same
-                              -- normalized document; forcing the IO
-                              -- action's closure proves reachability
-                              -- without ever running the checker.
-                              verifyCoreDocument normalizedDocument
-                                `seq` putStrLn "contract rendered, verifier reachable"
+                              case renderWaspBundle normalizedDocument of
+                                Left _ -> putStrLn "wasp bundle refused"
+                                Right _bundle ->
+                                  -- The verifier boundary accepts the same
+                                  -- normalized document; forcing the IO
+                                  -- action's closure proves reachability
+                                  -- without ever running the checker.
+                                  verifyCoreDocument normalizedDocument
+                                    `seq` putStrLn "contract rendered, wasp bundle rendered, verifier reachable"

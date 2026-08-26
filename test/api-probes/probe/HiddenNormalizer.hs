@@ -6,7 +6,9 @@
 -- outside the staged pipeline or construct raw invariant violations.
 -- The public surface is exactly Mithril.Core.Normalization, whose
 -- normalizeCoreDocument is the only direct public producer of the
--- typed-to-normalized stage transition.
+-- typed-to-normalized stage transition.  The imported pass is
+-- consumed, so visibility could never surface an incidental
+-- unused-import failure instead of the boundary.
 module Main
   ( main
   ) where
@@ -14,4 +16,4 @@ module Main
 import Mithril.Core.Internal.Normalize (normalizeModel)
 
 main :: IO ()
-main = pure ()
+main = normalizeModel `seq` pure ()

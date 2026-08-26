@@ -7,7 +7,9 @@
 -- dependency like this one.  Because the import itself is rejected,
 -- no downstream code can even name the normalized model's types —
 -- and so none can construct normalized nodes or recover the internal
--- model from a normalized document.
+-- model from a normalized document.  Both imported constructors are
+-- consumed, so visibility could never surface an incidental
+-- unused-import failure instead of the boundary.
 module Main
   ( main
   ) where
@@ -15,4 +17,4 @@ module Main
 import Mithril.Core.Internal.Normalized (Model (..), ValueTerm (..))
 
 main :: IO ()
-main = pure ()
+main = Model `seq` ValueTerm `seq` pure ()

@@ -1,0 +1,446 @@
+{
+  "format": "mithril-core",
+  "formatVersion": "0",
+  "name": "Class",
+  "schema": {
+    "entities": [
+      {
+        "name": "User",
+        "attributes": []
+      },
+      {
+        "name": "Function",
+        "attributes": []
+      },
+      {
+        "name": "Project",
+        "attributes": [
+          {
+            "name": "organization",
+            "type": {
+              "kind": "EntityRef",
+              "entity": "Function"
+            }
+          }
+        ]
+      }
+    ],
+    "enums": [
+      {
+        "name": "Object",
+        "values": [
+          "Delete",
+          "Export"
+        ],
+        "order": [
+          "Delete",
+          "Export"
+        ]
+      }
+    ],
+    "relations": [
+      {
+        "name": "Constructor",
+        "endpoints": [
+          {
+            "name": "delete",
+            "entity": "User"
+          },
+          {
+            "name": "export",
+            "entity": "Function"
+          }
+        ],
+        "payload": {
+          "kind": "Enum",
+          "enum": "Object"
+        }
+      }
+    ]
+  },
+  "actions": [
+    {
+      "name": "Project.read",
+      "parameters": [
+        {
+          "name": "project",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Project"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Read",
+      "allow": {
+        "kind": "LessOrEqual",
+        "left": {
+          "kind": "Some",
+          "value": {
+            "kind": "Enum",
+            "enum": "Object",
+            "value": "Delete"
+          }
+        },
+        "right": {
+          "kind": "Lookup",
+          "relation": "Constructor",
+          "endpoints": [
+            {
+              "kind": "Actor"
+            },
+            {
+              "kind": "Attribute",
+              "source": {
+                "kind": "Argument",
+                "name": "project"
+              },
+              "attribute": "organization"
+            }
+          ]
+        }
+      },
+      "effect": {
+        "kind": "NoChange"
+      },
+      "result": {
+        "kind": "Observe",
+        "entity": {
+          "kind": "Argument",
+          "name": "project"
+        }
+      }
+    },
+    {
+      "name": "Project.create",
+      "parameters": [
+        {
+          "name": "organization",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Function"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "LessOrEqual",
+        "left": {
+          "kind": "Some",
+          "value": {
+            "kind": "Enum",
+            "enum": "Object",
+            "value": "Delete"
+          }
+        },
+        "right": {
+          "kind": "Lookup",
+          "relation": "Constructor",
+          "endpoints": [
+            {
+              "kind": "Actor"
+            },
+            {
+              "kind": "Argument",
+              "name": "organization"
+            }
+          ]
+        }
+      },
+      "effect": {
+        "kind": "CreateEntity",
+        "entity": "Project",
+        "attributes": {
+          "organization": {
+            "kind": "Argument",
+            "name": "organization"
+          }
+        }
+      },
+      "result": {
+        "kind": "Created"
+      }
+    },
+    {
+      "name": "Project.delete",
+      "parameters": [
+        {
+          "name": "project",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Project"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "LessOrEqual",
+        "left": {
+          "kind": "Some",
+          "value": {
+            "kind": "Enum",
+            "enum": "Object",
+            "value": "Export"
+          }
+        },
+        "right": {
+          "kind": "Lookup",
+          "relation": "Constructor",
+          "endpoints": [
+            {
+              "kind": "Actor"
+            },
+            {
+              "kind": "Attribute",
+              "source": {
+                "kind": "Argument",
+                "name": "project"
+              },
+              "attribute": "organization"
+            }
+          ]
+        }
+      },
+      "effect": {
+        "kind": "DeleteEntity",
+        "target": {
+          "kind": "Argument",
+          "name": "project"
+        }
+      },
+      "result": {
+        "kind": "Done"
+      }
+    },
+    {
+      "name": "Membership.addMember",
+      "parameters": [
+        {
+          "name": "target",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        },
+        {
+          "name": "organization",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Function"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "And",
+        "left": {
+          "kind": "LessOrEqual",
+          "left": {
+            "kind": "Some",
+            "value": {
+              "kind": "Enum",
+              "enum": "Object",
+              "value": "Export"
+            }
+          },
+          "right": {
+            "kind": "Lookup",
+            "relation": "Constructor",
+            "endpoints": [
+              {
+                "kind": "Actor"
+              },
+              {
+                "kind": "Argument",
+                "name": "organization"
+              }
+            ]
+          }
+        },
+        "right": {
+          "kind": "Equal",
+          "left": {
+            "kind": "Lookup",
+            "relation": "Constructor",
+            "endpoints": [
+              {
+                "kind": "Argument",
+                "name": "target"
+              },
+              {
+                "kind": "Argument",
+                "name": "organization"
+              }
+            ]
+          },
+          "right": {
+            "kind": "None",
+            "payloadType": {
+              "kind": "Enum",
+              "enum": "Object"
+            }
+          }
+        }
+      },
+      "effect": {
+        "kind": "SetRelation",
+        "relation": "Constructor",
+        "endpoints": [
+          {
+            "kind": "Argument",
+            "name": "target"
+          },
+          {
+            "kind": "Argument",
+            "name": "organization"
+          }
+        ],
+        "payload": {
+          "kind": "Enum",
+          "enum": "Object",
+          "value": "Delete"
+        }
+      },
+      "result": {
+        "kind": "Done"
+      }
+    },
+    {
+      "name": "Constructor.prototype",
+      "parameters": [
+        {
+          "name": "function",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        },
+        {
+          "name": "class",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Function"
+          }
+        },
+        {
+          "name": "new",
+          "type": {
+            "kind": "Enum",
+            "enum": "Object"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "And",
+        "left": {
+          "kind": "LessOrEqual",
+          "left": {
+            "kind": "Some",
+            "value": {
+              "kind": "Enum",
+              "enum": "Object",
+              "value": "Export"
+            }
+          },
+          "right": {
+            "kind": "Lookup",
+            "relation": "Constructor",
+            "endpoints": [
+              {
+                "kind": "Actor"
+              },
+              {
+                "kind": "Argument",
+                "name": "class"
+              }
+            ]
+          }
+        },
+        "right": {
+          "kind": "And",
+          "left": {
+            "kind": "Not",
+            "value": {
+              "kind": "Equal",
+              "left": {
+                "kind": "Actor"
+              },
+              "right": {
+                "kind": "Argument",
+                "name": "function"
+              }
+            }
+          },
+          "right": {
+            "kind": "IsSome",
+            "value": {
+              "kind": "Lookup",
+              "relation": "Constructor",
+              "endpoints": [
+                {
+                  "kind": "Argument",
+                  "name": "function"
+                },
+                {
+                  "kind": "Argument",
+                  "name": "class"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "effect": {
+        "kind": "SetRelation",
+        "relation": "Constructor",
+        "endpoints": [
+          {
+            "kind": "Argument",
+            "name": "function"
+          },
+          {
+            "kind": "Argument",
+            "name": "class"
+          }
+        ],
+        "payload": {
+          "kind": "Argument",
+          "name": "new"
+        }
+      },
+      "result": {
+        "kind": "Done"
+      }
+    }
+  ],
+  "guarantees": [
+    {
+      "kind": "NoSelfPrivilegeEscalation",
+      "authority": {
+        "relation": "Constructor",
+        "subjectEndpoint": "delete",
+        "scopeEndpoints": [
+          "export"
+        ],
+        "absenceLevel": "Bottom",
+        "payloadOrder": "Object"
+      },
+      "cases": [
+        {
+          "action": "Constructor.prototype",
+          "scope": [
+            {
+              "kind": "Argument",
+              "name": "class"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

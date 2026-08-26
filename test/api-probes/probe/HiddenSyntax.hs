@@ -4,7 +4,9 @@
 -- package-private core-internal sublibrary of mithril-ir
 -- (visibility: private), so it is hidden from an external package
 -- dependency like this one, and no downstream code can construct
--- syntax nodes or actor-context witnesses.
+-- syntax nodes or actor-context witnesses.  Every imported
+-- constructor is consumed, so visibility could never surface an
+-- incidental unused-import failure instead of the boundary.
 module Main
   ( main
   ) where
@@ -12,4 +14,4 @@ module Main
 import Mithril.Core.Internal.Syntax (ActorContext (..), Document (..))
 
 main :: IO ()
-main = pure ()
+main = WithActor `seq` WithoutActor `seq` Document `seq` pure ()
