@@ -41,14 +41,32 @@
 //   * genuine concurrency: a temporary barrier trigger makes each
 //     update wait until two transactions have reached it (a run that
 //     serialized the two requests would wait out the barrier and be
-//     counted as a timeout, failing the round); every round admits
-//     only serial outcomes, never write skew, and the complete
-//     relation after every round is exactly the expected one;
+//     counted as a timeout, failing the round); the two requests are
+//     dispatched over independent, non-pooled connections
+//     (settleConcurrent over independentRequest) so they cannot
+//     head-of-line block each other, and the barrier's give-up
+//     deadline is held strictly below Prisma's interactive-transaction
+//     timeout (test/wasp-integration/concurrency.mjs) so a
+//     non-overlapping round records a clean barrier timeout instead of
+//     racing the transaction timeout into a 500 and a torn connection;
+//     a client transport failure is collected and reported as a pinned
+//     failure naming the request, never an uninformative top-level
+//     throw, and never hides the state, arrival, and timeout evidence
+//     or the temporary-object cleanup; every round admits only serial
+//     outcomes, never write skew, and the complete relation after
+//     every round is exactly the expected one;
 //   * every temporary trigger, function, and sequence is removed and
 //     its removal verified.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+
+import {
+  barrierDeadlineInterval,
+  independentRequest,
+  renderTransportFailure,
+  settleConcurrent,
+} from "./concurrency.mjs";
 
 const serverUrl = required("MITHRIL_WASP_SERVER_URL");
 const manifest = JSON.parse(readFileSync(required("MITHRIL_WASP_MANIFEST"), "utf8"));
@@ -171,6 +189,17 @@ async function changeRole(session, target, scope, newValue) {
   return post(route, { json: args }, session);
 }
 
+// The same real request, but over its own dedicated, non-pooled
+// connection (concurrency section only): two of these dispatched at
+// once use two independent sockets and genuinely overlap.
+function changeRoleIndependent(session, target, scope, newValue) {
+  const args = {};
+  args[subjectArgument] = target;
+  args[scopeArgument] = scope;
+  args[payloadArgument] = newValue;
+  return independentRequest(serverUrl, route, { body: { json: args }, session });
+}
+
 async function waitForServer() {
   for (let attempt = 0; attempt < 120; attempt += 1) {
     try {
@@ -247,7 +276,7 @@ function installBarrierTrigger() {
     `create sequence mithril_test_arrivals;
      create sequence mithril_test_timeouts;
      create function mithril_test_barrier() returns trigger language plpgsql as $$
-     declare deadline timestamptz := clock_timestamp() + interval '5 seconds';
+     declare deadline timestamptz := clock_timestamp() + interval '${barrierDeadlineInterval()}';
      begin
        perform nextval('mithril_test_arrivals');
        loop
@@ -456,6 +485,7 @@ async function main() {
   installBarrierTrigger();
   const rounds = 12;
   const outcomes = [];
+  const transportFailures = [];
   let consistentRounds = 0;
   let overlappingRounds = 0;
   try {
@@ -463,10 +493,23 @@ async function main() {
       setMembership(admin, scope, top);
       setMembership(peer, scope, top);
       sql(`select setval('mithril_test_arrivals', 1, false); select setval('mithril_test_timeouts', 1, false);`);
-      const [first, second] = await Promise.all([
-        changeRole(adminSession, peer, scope, bottom),
-        changeRole(peerSession, admin, scope, bottom),
-      ]);
+      // Two real HTTP requests over two independent, non-pooled
+      // connections, collected with Promise.allSettled: a transport
+      // rejection is recorded, not thrown, so the state, arrival, and
+      // timeout evidence below is always read and the temporary
+      // objects are always cleaned up.
+      const labels = ["admin demotes peer", "peer demotes admin"];
+      const { observations, transportFailures: roundTransport } = await settleConcurrent(
+        [
+          () => changeRoleIndependent(adminSession, peer, scope, bottom),
+          () => changeRoleIndependent(peerSession, admin, scope, bottom),
+        ],
+        labels,
+      );
+      const [first, second] = observations;
+      for (const failure of roundTransport) {
+        transportFailures.push(`round ${round} ${renderTransportFailure(failure)}`);
+      }
       const state = relationState();
       const arrivals = sequenceValue("mithril_test_arrivals");
       const timeouts = sequenceValue("mithril_test_timeouts");
@@ -474,16 +517,19 @@ async function main() {
       const peerValue = state.includes(`${scope}:${peer}=${top}`) ? top : bottom;
       const expectedState = (adminV, peerV) =>
         concurrentBase.replace(`${scope}:${admin}=${top}`, `${scope}:${admin}=${adminV}`).replace(`${scope}:${peer}=${top}`, `${scope}:${peer}=${peerV}`);
-      const serialA = first.status === 200 && second.status !== 200 && state === expectedState(top, bottom);
-      const serialB = second.status === 200 && first.status !== 200 && state === expectedState(bottom, top);
-      const neither = first.status !== 200 && second.status !== 200 && state === expectedState(top, top);
-      const statusesPinned = [first.status, second.status].every((s) => [200, 403, 409].includes(s));
-      const bodiesPinned = [first, second].every(
+      const firstStatus = first === null ? "transport-failure" : first.status;
+      const secondStatus = second === null ? "transport-failure" : second.status;
+      const bothObserved = first !== null && second !== null;
+      const serialA = bothObserved && first.status === 200 && second.status !== 200 && state === expectedState(top, bottom);
+      const serialB = bothObserved && second.status === 200 && first.status !== 200 && state === expectedState(bottom, top);
+      const neither = bothObserved && first.status !== 200 && second.status !== 200 && state === expectedState(top, top);
+      const statusesPinned = bothObserved && [first.status, second.status].every((s) => [200, 403, 409].includes(s));
+      const bodiesPinned = bothObserved && [first, second].every(
         (r) => (r.status === 403 && r.text === body403) || (r.status === 409 && r.text === body409) || (r.status === 200 && r.text === body200),
       );
       const consistent = (serialA || serialB || neither) && statusesPinned && bodiesPinned;
-      const overlapping = arrivals.isCalled && arrivals.lastValue >= 2 && !timeouts.isCalled;
-      outcomes.push(`${first.status}/${second.status}:${adminValue}/${peerValue}:arrivals=${arrivals.lastValue}:timeouts=${timeouts.isCalled ? timeouts.lastValue : 0}`);
+      const overlapping = bothObserved && arrivals.isCalled && arrivals.lastValue >= 2 && !timeouts.isCalled;
+      outcomes.push(`${firstStatus}/${secondStatus}:${adminValue}/${peerValue}:arrivals=${arrivals.lastValue}:timeouts=${timeouts.isCalled ? timeouts.lastValue : 0}`);
       if (consistent) {
         consistentRounds += 1;
       }
@@ -495,6 +541,7 @@ async function main() {
     removeTestObjects();
   }
   console.log(`concurrency outcomes: ${outcomes.join(" ")}`);
+  check("no concurrent round suffered a client transport failure", transportFailures.length === 0, transportFailures.join(" | "));
   check(`every concurrent round admits only serial outcomes with the complete relation as expected (${consistentRounds}/${rounds})`, consistentRounds === rounds);
   check(`both transactions reached the barrier in every round (no serialized execution, no timeout) (${overlappingRounds}/${rounds})`, overlappingRounds === rounds);
   check("no concurrent round demoted both actors (no write skew)", outcomes.every((o) => !o.includes(`:${bottom}/${bottom}:`)));

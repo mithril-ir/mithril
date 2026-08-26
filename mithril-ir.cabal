@@ -134,9 +134,10 @@ extra-doc-files:    README.md
 -- only through the tool, never hand-edited); the rename variants under
 -- test/fixtures/wasp-renames are the supported documents whose renamed
 -- declarations the test suite renders and the Wasp job compiles and
--- builds; and the four files under test/wasp-integration are the
--- test-only Wasp/PostgreSQL harness (its library, its self-tests, and
--- the HTTP battery) outside the confinement claim.  All belong in the
+-- builds; and the six files under test/wasp-integration are the
+-- test-only Wasp/PostgreSQL harness (its library, its self-tests, the
+-- HTTP battery, and the battery's concurrency helpers with their own
+-- hermetic regression) outside the confinement claim.  All belong in the
 -- source distribution and not in data-files.
 -- The five agda/Mithril kernel modules listed here are the trusted
 -- Agda kernel sources embedded into the library at compile time
@@ -191,6 +192,8 @@ extra-source-files:
     test/fixtures/welltyped.contract.txt
     test/fixtures/welltyped.mir.json
     test/wasp-integration/battery.mjs
+    test/wasp-integration/concurrency.mjs
+    test/wasp-integration/concurrency.test.mjs
     test/wasp-integration/lib.sh
     test/wasp-integration/run-wasp-integration.sh
     test/wasp-integration/test-harness.sh

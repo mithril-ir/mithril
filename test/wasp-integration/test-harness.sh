@@ -37,7 +37,13 @@
 #   8. a TMPDIR reached through a symbolic link: mktemp succeeds, the
 #      working directory is the physical path, mithril wasp generate
 #      succeeds below it, and cleanup removes exactly the physical
-#      working directory, leaving the link and its target untouched.
+#      working directory, leaving the link and its target untouched;
+#   9. the concurrency helpers of the HTTP battery
+#      (test/wasp-integration/concurrency.test.mjs, node only): the
+#      barrier deadline stays strictly and substantially below Prisma's
+#      transaction timeout, a client transport rejection is a pinned
+#      failure naming the request, and two concurrent requests use two
+#      independent sockets.
 #
 # Test-only tooling outside the confinement claim.
 
@@ -322,6 +328,20 @@ assert_contains "the generated root was confined" "$sandbox/symlinked-tmpdir.out
 if [ -e "$workdir" ]; then bad "cleanup removed the physical working directory"; else ok "cleanup removed the physical working directory"; fi
 if [ -L "$sandbox/link-tmp" ] && [ "$(readlink "$sandbox/link-tmp")" = "$real_tmp" ]; then ok "the TMPDIR symbolic link is untouched"; else bad "the TMPDIR symbolic link is untouched"; fi
 if [ "$(ls -A "$real_tmp")" = sentinel ] && [ "$(cat "$real_tmp/sentinel")" = sentinel ]; then ok "the link target holds only its sentinel after cleanup"; else bad "the link target holds only its sentinel after cleanup"; ls -la "$real_tmp" >&2; fi
+
+echo "== 9. HTTP battery concurrency helpers (node only) =="
+regression_out=$sandbox/concurrency.test.out
+if node "$repo_root/test/wasp-integration/concurrency.test.mjs" >"$regression_out" 2>&1; then
+  regression_status=0
+else
+  regression_status=$?
+fi
+assert_status "the concurrency-helper regression terminates with exit 0" "$regression_status" 0
+assert_contains "the barrier deadline is strictly below Prisma's transaction timeout" "$regression_out" "the barrier deadline is strictly below Prisma's interactive-transaction timeout"
+assert_contains "a transport rejection is reported as a pinned failure naming the request" "$regression_out" "the rendered transport failure names the request, the message, the code, and the cause"
+assert_contains "two concurrent requests use two independent sockets" "$regression_out" "two distinct client sockets"
+assert_contains "the regression reports all its checks passed" "$regression_out" "All concurrency-helper regression checks passed."
+if grep -q "^FAIL:" "$regression_out"; then bad "the concurrency-helper regression reported a FAIL line"; cat "$regression_out" >&2; else ok "the concurrency-helper regression reported no FAIL line"; fi
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures harness self-test(s) failed" >&2
