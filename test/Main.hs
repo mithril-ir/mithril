@@ -11,6 +11,8 @@
 -- "Mithril.CoreNormalizationTests" (normalization boundary),
 -- "Mithril.NormalizedModelTests" (white-box inspection of the real
 -- normalized model through the package-private sublibrary),
+-- "Mithril.DistinguishedUserTests" (provenance of the distinguished
+-- @User@ anchor from resolution through typing to normalization),
 -- "Mithril.CoreContractTests" (the security-contract rendering
 -- boundary), "Mithril.CoreVerificationTests" (the verifier boundary),
 -- "Mithril.CoreWaspTests" (the Wasp target and confinement
@@ -31,6 +33,7 @@ import qualified Mithril.CoreTypingTests
 import qualified Mithril.CoreValidationTests
 import qualified Mithril.CoreVerificationTests
 import qualified Mithril.CoreWaspTests
+import qualified Mithril.DistinguishedUserTests
 import qualified Mithril.NormalizedModelTests
 import Mithril.Test (runGroups)
 
@@ -45,6 +48,7 @@ main =
     , ("Core typing", Mithril.CoreTypingTests.tests)
     , ("Core normalization", Mithril.CoreNormalizationTests.tests)
     , ("Normalized model", Mithril.NormalizedModelTests.tests)
+    , ("Distinguished User", Mithril.DistinguishedUserTests.tests)
     , ("Core contract", Mithril.CoreContractTests.tests)
     , ("Core verification", Mithril.CoreVerificationTests.tests)
     , ("Core wasp", Mithril.CoreWaspTests.tests)

@@ -55,6 +55,18 @@
 --   in their action's environment, and a @NoSelfPrivilegeEscalation@
 --   case's zero-or-one scope term is paired with the authority's
 --   scope endpoint ('ScopeBinding').
+-- * /The distinguished @User@ identity as an independent anchor./
+--   'modelUserEntity' carries the canonical identity of the
+--   distinguished @User@ entity exactly as the resolver designated it
+--   once ('Resolved.modelUserEntity': the unique schema-designated
+--   declaration, the entity every @Actor@ term denotes and every
+--   guarantee subject endpoint was typechecked to reference),
+--   validated by the typechecker against the declaration it names,
+--   carried by its signature, and propagated here — so a backend
+--   checks subject and @Actor@ evidence against one independently
+--   carried identity instead of re-deriving it from an authored
+--   name, a declaration position, or the very evidence it is
+--   checking.
 --
 -- Declaration names and every source path survive as
 -- diagnostic/rendering metadata only: resolved linkage and equality
@@ -175,6 +187,17 @@ import Mithril.Core.Internal.Syntax
 -- across independent pipeline runs.
 data Model = Model
   { modelName :: Sourced Text
+  , modelUserEntity :: EntityId
+    -- ^ The canonical identity of the distinguished @User@ entity —
+    -- selected once by the resolver, validated by the typechecker,
+    -- propagated through its signature by the normalizer (module
+    -- header): the one anchor a backend compares an authority
+    -- subject entity and every stored @Actor@ entity against.  It is
+    -- evidence, not a
+    -- lookup key: the gate that consumes it validates the entity it
+    -- names through the same canonical preflight as every other
+    -- identity, and a mismatch is an internal invariant violation,
+    -- never a supported document.
   , modelEntities :: [Entity]
   , modelEnums :: [EnumDefinition]
   , modelRelations :: [Relation]

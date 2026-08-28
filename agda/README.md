@@ -18,18 +18,26 @@ model, and the canonical JSON document itself — remains unverified.
 One narrow automated connection now exists on the host-tool side:
 `mithril verify FILE` embeds five of these modules (`Mithril.Base`,
 `Mithril.Core`, `Mithril.Policy`, `Mithril.Effect`, `Mithril.Guarantee`) at
-compile time as its trusted generic kernel, and — for exactly one supported
-normalized obligation shape, structurally corresponding to the safe
-`changeRole` proof rule below — generates an obligation module against them
-and checks it with exactly Agda 2.8.0 in safe mode inside an isolated
-workspace. The hand-written `Mithril.Acme` slice is never imported by
-generated code and remains an authored experiment; the generated module
-re-proves the same rule per supported document. Changing any of the five
-kernel modules changes the verifier's trusted computing base: keep both
+compile time as its trusted generic kernel, and — for one supported
+normalized guarantee family, the fixed NoSelfPrivilegeEscalation family of
+this kernel: one selected guarantee whose non-empty case collection is
+classified case by case as exact rule-1 change-other cases (structurally
+corresponding to the safe `changeRole` proof rule below) and/or exact
+rule-2 bounded-self-update cases (an authenticated principal writing its own
+authority tuple to a payload bounded by its pre-state authority) — generates
+an obligation module with one proof group per case against them and checks
+it with exactly Agda 2.8.0 in safe mode inside an isolated workspace. The
+hand-written `Mithril.Acme` slice is never imported by generated code and
+remains an authored experiment; the generated module re-proves the matching
+rule for every selected case of a supported document. Changing any of the
+five kernel modules changes the verifier's trusted computing base: keep both
 checks below and the Haskell test suite passing. No general verifier or
-general JSON-to-Agda lowering exists — everything outside that single
-obligation shape is UNSUPPORTED to the tool, and no violation is ever
-reported by it.
+general JSON-to-Agda lowering exists — everything outside that one guarantee
+family and its two exact case rules is UNSUPPORTED to the tool, and no
+violation is ever reported by it. The tool's Wasp Confinement Profile v0
+lowers only exactly one rule-1 case, so a document verified with a rule-2
+case or with several cases has no Wasp counterpart and is UNSUPPORTED to
+`mithril wasp generate|check`.
 
 ## Checking
 

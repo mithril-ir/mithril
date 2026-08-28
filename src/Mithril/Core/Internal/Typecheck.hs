@@ -124,8 +124,11 @@
 --
 -- Shapes the typechecker cannot interpret — identifier references
 -- outside the model, owner disagreements, an @Actor@ term that does
--- not carry the distinguished entity — are impossible after
--- successful name resolution.  They are 'TypecheckerInvariantViolation's
+-- not carry the distinguished entity, a stored distinguished-@User@
+-- anchor whose declaration drifted after resolution (renamed,
+-- duplicated, or displaced; 'checkDistinguishedUser') — are
+-- impossible after successful name resolution.  They are
+-- 'TypecheckerInvariantViolation's
 -- (frontend drift or a resolver\/typechecker bug, exit status 2),
 -- kept apart from user 'TypeViolation's and dominating them, and the
 -- checker is total: it walks the whole model, aggregates everything
@@ -145,7 +148,13 @@
 -- 'orderedVerdict' (built on the shared 'orderedPolicyType' shape and
 -- yielding the 'Mithril.Core.Internal.StaticType.OrderedType'
 -- evidence a normalized comparison stores), plus the signature
--- lookups and term-path projections the normalizer's walk needs.
+-- lookups and term-path projections the normalizer's walk needs, and
+-- the distinguished @User@ identity ('signatureUser') — the
+-- resolver's stored designation, validated by the checking pass
+-- ('checkDistinguishedUser') and never reselected by name here —
+-- which the normalizer carries into the normalized model as the one
+-- independent anchor later backends check subject and @Actor@
+-- evidence against.
 -- Together with the declared-type projections of
 -- "Mithril.Core.Internal.StaticType" this is the one statement of the
 -- Core v0 typing judgment: the normalizer calls these functions to
@@ -167,6 +176,7 @@ module Mithril.Core.Internal.Typecheck
   , Check
   , Signature
   , buildSignature
+  , signatureUser
   , Env (..)
   , inferValue
   , inferPolicy
@@ -199,6 +209,7 @@ import Mithril.Core.Internal.Resolved
 import Mithril.Core.Internal.SourcePath
   ( SourcePath
   , Sourced (..)
+  , rootPath
   , sourcePathSegments
   )
 import Mithril.Core.Internal.StaticType
@@ -301,9 +312,10 @@ boolPolicyType = ValuePolicyType BoolType
 --------------------------------------------------------------------
 
 -- | The typing signature of a resolved model: every declaration
--- keyed by its own identifier, plus the distinguished @User@ entity.
--- Built once per model; identifier lookups that miss are internal
--- invariant violations, never user errors.
+-- keyed by its own identifier, plus the distinguished @User@
+-- identity the resolver stored.  Built once per model; identifier
+-- lookups that miss are internal invariant violations, never user
+-- errors.
 data Signature = Signature
   { signatureEntities :: Map EntityId Entity
   , signatureAttributes :: Map AttributeId Attribute
@@ -312,11 +324,12 @@ data Signature = Signature
   , signatureEndpoints :: Map EndpointId Endpoint
   , signatureActions :: Map ActionId Action
   , signatureParameters :: Map ParameterId Parameter
-  , signatureUser :: Maybe EntityId
-    -- ^ The distinguished @User@ entity — the same name-designated
-    -- entity the resolver gives every @Actor@ term.  'Nothing' after
-    -- successful resolution is drift, reported as an invariant at
-    -- the first site that needs it.
+  , signatureUser :: EntityId
+    -- ^ The distinguished @User@ identity the resolver stored in the
+    -- model ('modelUserEntity'), carried as is — the same identity
+    -- the resolver gives every @Actor@ term.  'checkDistinguishedUser'
+    -- validates the declaration it names before the checking pass
+    -- relies on it; no judgment here selects a @User@ by name.
   }
 
 buildSignature :: Model -> Signature
@@ -351,20 +364,70 @@ buildSignature model =
           | action <- actions
           , parameter <- actionParameters action
           ]
-    , signatureUser =
-        case
-          [ entityId entity
-          | entity <- entities
-          , sourcedValue (entityName entity) == distinguishedUserEntity
-          ]
-        of
-          found : _ -> Just found
-          [] -> Nothing
+    , signatureUser = modelUserEntity model
     }
   where
     entities = modelEntities model
     relations = modelRelations model
     actions = modelActions model
+
+-- | Validate the distinguished @User@ anchor the resolver stored in
+-- the model ('modelUserEntity', carried as 'signatureUser') as
+-- internal evidence before any judgment relies on it: the anchor must
+-- name the canonical entity declaration at exactly the position its
+-- identifier denotes — present, storing that same identifier, and the
+-- declaration the signature holds under it — that declaration must
+-- carry the schema-designated @User@ name, and no other entity of the
+-- model may carry that name.  Every failure is drift of the resolved
+-- model after successful resolution: an internal invariant, never a
+-- user error, and never a reason to select another declaration — the
+-- typechecker propagates the resolver's designation, it does not
+-- search for one.
+checkDistinguishedUser :: Signature -> Model -> Check ()
+checkDistinguishedUser sig model =
+  case canonical of
+    Nothing ->
+      invariant
+        rootPath
+        (anchorLabel <> " does not name the canonical entity declaration at its position")
+    Just entity -> designated entity *> traverse_ undesignated others
+  where
+    anchor@(EntityId position) = signatureUser sig
+    anchorLabel =
+      "the distinguished "
+        <> quoted distinguishedUserEntity
+        <> " anchor the resolver stored (entity "
+        <> Text.pack (show position)
+        <> ")"
+    positioned = zip [0 ..] (modelEntities model)
+    canonical =
+      case [entity | (index, entity) <- positioned, index == position] of
+        [entity]
+          | entityId entity == anchor
+          , Map.lookup anchor (signatureEntities sig) == Just entity ->
+              Just entity
+        _ -> Nothing
+    others = [entity | (index, entity) <- positioned, index /= position]
+    designated entity
+      | sourcedValue (entityName entity) == distinguishedUserEntity = pure ()
+      | otherwise =
+          invariant
+            (sourcedPath (entityName entity))
+            ( "the entity "
+                <> anchorLabel
+                <> " names is declared as "
+                <> quoted (sourcedValue (entityName entity))
+            )
+    undesignated entity
+      | sourcedValue (entityName entity) == distinguishedUserEntity =
+          invariant
+            (sourcedPath (entityName entity))
+            ( "an entity other than the one "
+                <> anchorLabel
+                <> " names is declared as "
+                <> quoted distinguishedUserEntity
+            )
+      | otherwise = pure ()
 
 -- | Look up a resolved reference, classifying a miss as an internal
 -- invariant at the reference's own path.
@@ -521,11 +584,9 @@ inferValue env term =
             else
               parameterSig sig parameterRef `andThen` \parameter ->
                 pure (parameterStaticType (parameterType parameter))
-    ActorTerm path userEntity ->
-      case signatureUser sig of
-        Just distinguished
-          | distinguished == userEntity -> pure (EntityRefType userEntity)
-        _ ->
+    ActorTerm path userEntity
+      | userEntity == signatureUser sig -> pure (EntityRefType userEntity)
+      | otherwise ->
           invariant
             path
             ( "an Actor term does not reference the distinguished "
@@ -1015,29 +1076,20 @@ checkTenantAccess sig access =
 -- access and the @NoSelfPrivilegeEscalation@ authority.
 checkSubjectEndpointEntity
   :: Signature -> Relation -> Endpoint -> Ref EndpointId -> Check ()
-checkSubjectEndpointEntity sig relation subject ref =
-  case signatureUser sig of
-    Nothing ->
-      invariant
+checkSubjectEndpointEntity sig relation subject ref
+  | refTarget (endpointEntity subject) == signatureUser sig = pure ()
+  | otherwise =
+      flagged
         (refPath ref)
-        ( "the resolved model declares no distinguished "
+        ( "the subject endpoint "
+            <> quoted (sourcedValue (endpointName subject))
+            <> " of relation "
+            <> quoted (sourcedValue (relationName relation))
+            <> " must reference the distinguished "
             <> quoted distinguishedUserEntity
-            <> " entity"
+            <> " entity, but it references entity "
+            <> entityLabel sig (refTarget (endpointEntity subject))
         )
-    Just user
-      | refTarget (endpointEntity subject) == user -> pure ()
-      | otherwise ->
-          flagged
-            (refPath ref)
-            ( "the subject endpoint "
-                <> quoted (sourcedValue (endpointName subject))
-                <> " of relation "
-                <> quoted (sourcedValue (relationName relation))
-                <> " must reference the distinguished "
-                <> quoted distinguishedUserEntity
-                <> " entity, but it references entity "
-                <> entityLabel sig (refTarget (endpointEntity subject))
-            )
 
 -- | One @TenantIsolation@ case, checked in its named action's
 -- parameter environment against the access relation's tenant
@@ -1227,15 +1279,17 @@ checkEscalationCase sig scopeEndpoint escalationCase =
 -- The model
 --------------------------------------------------------------------
 
--- | Check a complete resolved model: every enum declaration, every
--- action, and every guarantee.  Entity, relation, attribute,
--- parameter, and payload declarations carry only resolved references
--- that name resolution already established, so no further judgment
--- applies to them.  Problems aggregate across the whole model; the
--- caller partitions, normalizes, and classifies them.
+-- | Check a complete resolved model: the resolver-stored
+-- distinguished-@User@ anchor ('checkDistinguishedUser'), every enum
+-- declaration, every action, and every guarantee.  Entity, relation,
+-- attribute, parameter, and payload declarations carry only resolved
+-- references that name resolution already established, so no further
+-- judgment applies to them.  Problems aggregate across the whole
+-- model; the caller partitions, normalizes, and classifies them.
 checkModel :: Model -> Collect TypingProblem ()
 checkModel model =
-  traverse_ (checkEnum sig) (modelEnums model)
+  checkDistinguishedUser sig model
+    *> traverse_ (checkEnum sig) (modelEnums model)
     *> traverse_ (checkAction sig) (modelActions model)
     *> traverse_ (checkGuarantee sig) (modelGuarantees model)
   where

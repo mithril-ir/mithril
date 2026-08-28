@@ -442,6 +442,39 @@ verifyExpectations =
       , cliStderr = ""
       }
   , CliExpectation
+      { -- The two-case fixture: the rule-1 change-other case and the
+        -- rule-2 bounded-self-update case, verified under the real
+        -- Agda 2.8.0 checker with the per-case report — every case's
+        -- zero-based position, rule, action, and checked theorems.
+        cliName = "verify verifies the two-case self-update fixture with the per-case report"
+      , cliArgs = ["verify", selfUpdatePath]
+      , cliExit = ExitSuccess
+      , cliStdout =
+          "test/fixtures/acme-nspe-self-update.mir.json: VERIFIED\n\
+          \  guarantee: NoSelfPrivilegeEscalation\n\
+          \  cases: 2\n\
+          \  case 0: rule 1 (change-other), action \"Membership.changeRole\"\n\
+          \    theorems: case-scope-is-scope-argument, policy-actor-distinct, actor-authority-unchanged, no-self-escalation\n\
+          \  case 1: rule 2 (bounded-self-update), action \"Membership.changeOwnRole\"\n\
+          \    theorems: case-scope-is-scope-argument, policy-bounds-payload, actor-authority-written, no-self-escalation\n\
+          \  checker: Agda 2.8.0 with --safe --no-libraries --ignore-interfaces\n\
+          \  scope: all 2 selected cases of the one selected NoSelfPrivilegeEscalation obligation of this document are verified; no other guarantee, action, or authority writer is\n"
+      , cliStderr = ""
+      }
+  , CliExpectation
+      { -- The dangerous mutation (floor lowered to Member, guard
+        -- removed, membership check kept) is a genuine semantic
+        -- counterexample, but the verifier still reports it
+        -- UNSUPPORTED — never a violation verdict.
+        cliName = "verify reports the dangerous self-promotion mutation unsupported, not violated"
+      , cliArgs = ["verify", dangerousPath]
+      , cliExit = ExitFailure 3
+      , cliStdout =
+          "test/fixtures/acme-nspe-dangerous.mir.json: UNSUPPORTED by the implemented verifier support rule\n\
+          \  /actions/4/allow/right: the second operand of the allow policy must itself be the conjunction And(actor/subject guard, subject membership)\n"
+      , cliStderr = ""
+      }
+  , CliExpectation
       { cliName = "verify rejects malformed JSON with the validate bytes"
       , cliArgs = ["verify", "test/fixtures/malformed.mir.json"]
       , cliExit = ExitFailure 1
@@ -517,6 +550,20 @@ nspePath = "test/fixtures/acme-nspe.mir.json"
 
 unsafeNspePath :: FilePath
 unsafeNspePath = "test/fixtures/acme-nspe-unsafe.mir.json"
+
+selfUpdatePath :: FilePath
+selfUpdatePath = "test/fixtures/acme-nspe-self-update.mir.json"
+
+dangerousPath :: FilePath
+dangerousPath = "test/fixtures/acme-nspe-dangerous.mir.json"
+
+-- | The Profile-v0 gate report of the verified two-case fixture: the
+-- document verifies, and the Wasp commands refuse it before any
+-- destination access.
+selfUpdateWaspReport :: String
+selfUpdateWaspReport =
+  "test/fixtures/acme-nspe-self-update.mir.json: UNSUPPORTED by the implemented Wasp support rule\n\
+  \  /guarantees/0: Wasp Profile v0 lowers exactly one Rule-1 case; this guarantee selects 2 cases\n"
 
 acmePath :: FilePath
 acmePath = "examples/acme/acme.mir.json"
@@ -732,6 +779,23 @@ waspExpectations =
       , cliStderr = ""
       }
   , CliExpectation
+      { -- The verified two-case fixture is outside the Wasp Profile v0
+        -- (exactly one rule-1 case): refused at the capability gate
+        -- with exit 3, with nothing written.
+        cliName = "wasp generate refuses the verified two-case fixture at the Profile-v0 gate with exit 3 and writes nothing"
+      , cliArgs = ["wasp", "generate", selfUpdatePath, "test/fixtures/never-created"]
+      , cliExit = ExitFailure 3
+      , cliStdout = selfUpdateWaspReport
+      , cliStderr = ""
+      }
+  , CliExpectation
+      { cliName = "wasp check refuses the verified two-case fixture at the Profile-v0 gate with exit 3"
+      , cliArgs = ["wasp", "check", selfUpdatePath, waspFixtureRoot]
+      , cliExit = ExitFailure 3
+      , cliStdout = selfUpdateWaspReport
+      , cliStderr = ""
+      }
+  , CliExpectation
       { cliName = "wasp check rejects malformed JSON with the validate bytes"
       , cliArgs = ["wasp", "check", "test/fixtures/malformed.mir.json", waspFixtureRoot]
       , cliExit = ExitFailure 1
@@ -887,6 +951,20 @@ waspProcessChecks = do
   trailingCheck <- invokeMithril ["wasp", "check", nspePath, waspFixtureRoot ++ "/"]
   relativeTrailing <- invokeMithril ["wasp", "generate", nspePath, "test/fixtures/never-created/"]
   relativeTrailingExists <- doesPathExist "test/fixtures/never-created"
+  let selfUpdateParent = scratch </> "self-update-parent"
+      selfUpdateChild = selfUpdateParent </> "child"
+      sentinel = scratch </> "sentinel"
+  createDirectory selfUpdateParent
+  selfUpdateFresh <- invokeMithril ["wasp", "generate", selfUpdatePath, selfUpdateChild]
+  selfUpdateChildExists <- doesPathExist selfUpdateChild
+  selfUpdateParentEntries <- listDirectory selfUpdateParent
+  createDirectory sentinel
+  writeFile (sentinel </> "keep.txt") "keep\n"
+  selfUpdateSentinel <- invokeMithril ["wasp", "generate", selfUpdatePath, sentinel]
+  sentinelEntries <- listDirectory sentinel
+  sentinelContent <- readFile (sentinel </> "keep.txt")
+  selfUpdateExisting <- invokeMithril ["wasp", "generate", selfUpdatePath, root]
+  afterSelfUpdateExisting <- mapM (\path -> ByteString.readFile (root </> path)) waspInventory
   let backupSibling = root ++ ".mithril-wasp-backup"
   createDirectory backupSibling
   occupiedBackup <- invokeMithril ["wasp", "generate", nspePath, root]
@@ -980,6 +1058,23 @@ waspProcessChecks = do
             && not relativeTrailingExists
         )
     , check
+        "the verified two-case fixture is refused at the Profile-v0 gate with exit 3 before its child destination is created"
+        ( selfUpdateFresh == (ExitFailure 3, selfUpdateWaspReport, "")
+            && not selfUpdateChildExists
+            && null selfUpdateParentEntries
+        )
+    , check
+        "the Profile-v0 refusal leaves an unrelated existing destination byte-identical"
+        ( selfUpdateSentinel == (ExitFailure 3, selfUpdateWaspReport, "")
+            && sentinelEntries == ["keep.txt"]
+            && sentinelContent == "keep\n"
+        )
+    , check
+        "the Profile-v0 refusal replaces nothing in an existing owned root"
+        ( selfUpdateExisting == (ExitFailure 3, selfUpdateWaspReport, "")
+            && afterSelfUpdateExisting == fixtureBytes
+        )
+    , check
         "an occupied backup sibling path refuses generation with exit 1 and touches neither the root nor the entry"
         ( occupiedBackup
             == ( ExitFailure 1
@@ -1025,7 +1120,7 @@ waspProcessChecks = do
                  \ exactly Agda 2.8.0\n  reported: Agda version 2.7.0\n"
                )
             && afterVerifierFailure == fixtureBytes
-            && sort scratchEntries == ["app", "fake-agda", "occupied", "umask-app"]
+            && sort scratchEntries == ["app", "fake-agda", "occupied", "self-update-parent", "sentinel", "umask-app"]
         )
     ]
   where

@@ -12,7 +12,11 @@
 -- Outcome contract at the tool boundary:
 --
 -- * a supported, checked document exits 0 with the deterministic
---   verification report on stdout and nothing on stderr;
+--   verification report on stdout and nothing on stderr — the
+--   original singleton rule-1 report, byte-for-byte, when the one
+--   selected obligation has exactly one change-other case, and
+--   otherwise the per-case report naming every case's zero-based
+--   authored position, rule, action, and checked theorems;
 -- * an unsupported document exits 3 with the deterministic
 --   unsupported report — sorted, deduplicated reasons — on stdout
 --   and nothing on stderr;
@@ -40,7 +44,7 @@ module Mithril.Command.Verify
   , verifyFailureExitCode
   ) where
 
-import Data.List.NonEmpty (NonEmpty)
+import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -56,11 +60,14 @@ import Mithril.Command.Validate
   )
 import Mithril.Core.Validation (renderJsonPointer)
 import Mithril.Core.Verification
-  ( UnsupportedReason (..)
+  ( NspeRule (..)
+  , UnsupportedReason (..)
   , VerificationFailure (..)
   , VerificationResult (..)
+  , VerifiedCase (..)
   , VerifiedObligation (..)
   , VerifierInvariantViolation (..)
+  , nspeRuleLabel
   , verifyCoreDocument
   )
 
@@ -79,7 +86,8 @@ data VerifyFileError
 
 -- | The two semantic outcomes of a successfully mechanized decision.
 data VerifyFileSuccess
-  = -- | Exit 0: the one selected obligation was checked.
+  = -- | Exit 0: every selected case of the one selected obligation
+    -- was checked.
     VerifyVerified VerifiedObligation
   | -- | Exit 3: the document lies outside the implemented support
     -- rule; the reasons are non-empty, sorted, and deduplicated.
@@ -108,22 +116,52 @@ verifyCoreFile file = do
 -- newline; print it with a newline-appending writer.  Deterministic:
 -- no timestamps, no temporary paths, no internal numeric identifiers,
 -- and no checker output.
+--
+-- A verified obligation with exactly one change-other case renders
+-- the original singleton report unchanged.  Every other verified
+-- obligation renders the per-case report: the case count, then for
+-- every case in authored order its zero-based position, its rule, its
+-- action, and its checked theorem names, then the checker line and a
+-- scope line stating that exactly the selected cases of the one
+-- selected NoSelfPrivilegeEscalation obligation are verified and
+-- nothing else — no other guarantee, action, or authority writer.
 renderVerifySuccess :: FilePath -> VerifyFileSuccess -> Text
 renderVerifySuccess file success =
   case success of
     VerifyVerified obligation ->
-      Text.intercalate
-        "\n"
-        [ displayPath file <> ": VERIFIED"
-        , "  guarantee: " <> escapeControlChars (verifiedGuarantee obligation)
-        , "  case action: "
-            <> escapeControlChars (Text.pack (show (verifiedCaseAction obligation)))
-        , "  checker: Agda 2.8.0 with --safe --no-libraries --ignore-interfaces"
-        , "  theorems: "
-            <> Text.intercalate ", " (map escapeControlChars (verifiedTheorems obligation))
-        , "  scope: exactly the one selected obligation of this document is"
-            <> " verified; nothing else is"
-        ]
+      case verifiedCases obligation of
+        onlyCase :| []
+          | verifiedCaseRule onlyCase == ChangeOtherRule ->
+              Text.intercalate
+                "\n"
+                [ displayPath file <> ": VERIFIED"
+                , "  guarantee: " <> escapeControlChars (verifiedGuarantee obligation)
+                , "  case action: "
+                    <> escapeControlChars (Text.pack (show (verifiedCaseAction onlyCase)))
+                , "  checker: Agda 2.8.0 with --safe --no-libraries --ignore-interfaces"
+                , "  theorems: "
+                    <> Text.intercalate ", " (map escapeControlChars (verifiedCaseTheorems onlyCase))
+                , "  scope: exactly the one selected obligation of this document is"
+                    <> " verified; nothing else is"
+                ]
+        cases ->
+          Text.intercalate
+            "\n"
+            ( [ displayPath file <> ": VERIFIED"
+              , "  guarantee: " <> escapeControlChars (verifiedGuarantee obligation)
+              , "  cases: " <> countText (NonEmpty.length cases)
+              ]
+                <> concatMap caseLines (NonEmpty.toList cases)
+                <> [ "  checker: Agda 2.8.0 with --safe --no-libraries --ignore-interfaces"
+                   , "  scope: "
+                       <> casesPhrase (NonEmpty.length cases)
+                       <> " of the one selected "
+                       <> escapeControlChars (verifiedGuarantee obligation)
+                       <> " obligation of this document "
+                       <> (if NonEmpty.length cases == 1 then "is" else "are")
+                       <> " verified; no other guarantee, action, or authority writer is"
+                   ]
+            )
     VerifyUnsupported reasons ->
       Text.intercalate
         "\n"
@@ -135,6 +173,25 @@ renderVerifySuccess file success =
               | reason <- NonEmpty.toList reasons
               ]
         )
+
+  where
+    countText :: Int -> Text
+    countText = Text.pack . show
+    casesPhrase :: Int -> Text
+    casesPhrase count =
+      if count == 1
+        then "the one selected case"
+        else "all " <> countText count <> " selected cases"
+    caseLines verifiedCase =
+      [ "  case "
+          <> countText (verifiedCasePosition verifiedCase)
+          <> ": "
+          <> nspeRuleLabel (verifiedCaseRule verifiedCase)
+          <> ", action "
+          <> escapeControlChars (Text.pack (show (verifiedCaseAction verifiedCase)))
+      , "    theorems: "
+          <> Text.intercalate ", " (map escapeControlChars (verifiedCaseTheorems verifiedCase))
+      ]
 
 -- | Render an expected failure for stderr.  Input failures render
 -- byte-for-byte as @mithril validate FILE@ renders them; internal

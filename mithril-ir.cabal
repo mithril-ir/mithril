@@ -46,30 +46,37 @@ description:
   @mithril verify FILE@ runs the same complete pipeline and then the
   first connected verifier slice: a pure deterministic support gate
   over the normalized document and, for exactly one supported
-  obligation shape — a document selecting exactly one Acme-derived
-  NoSelfPrivilegeEscalation obligation whose normalized structure
-  corresponds to the mechanized safe changeRole proof rule of the
-  Agda spike — a deterministically generated Agda obligation module,
-  materialized together with trusted kernel modules embedded at
-  compile time into a fresh isolated workspace and checked by
-  exactly Agda 2.8.0 with --safe --no-libraries --ignore-interfaces.
-  A supported document reports VERIFIED (exit 0); everything else is
-  UNSUPPORTED (exit 3) with deterministic reasons — including the
-  canonical Acme example, whose TenantIsolation and
-  AuthenticatedMutation obligations remain unverified, documents
-  selecting no or several guarantees, and semantically equivalent
-  but differently authored shapes — and every checker problem is a
-  tool failure (exit 2), never a semantic verdict: no violation
-  outcome exists in this milestone.  The Haskell generator, the
-  embedded Agda kernel, the external Agda toolchain, and the support
-  rule itself remain trusted components.
+  obligation family — a document selecting exactly one
+  NoSelfPrivilegeEscalation obligation whose non-empty case
+  collection consists of cases each matching exactly one of two exact
+  structural proof rules, the mechanized safe changeRole change-other
+  rule of the Agda spike (rule 1) or the bounded self-update rule
+  (rule 2), classified independently in authored order — a
+  deterministically generated Agda obligation module with one proof
+  group and checked manifest per case, materialized together with
+  trusted kernel modules embedded at compile time into a fresh
+  isolated workspace and checked by exactly Agda 2.8.0 with --safe
+  --no-libraries --ignore-interfaces.  A supported document reports
+  VERIFIED (exit 0) for exactly the selected cases of its one
+  selected obligation; everything else is UNSUPPORTED (exit 3) with
+  deterministic reasons — including the canonical Acme example,
+  whose TenantIsolation and AuthenticatedMutation obligations remain
+  unverified, documents selecting no or several guarantees, cases
+  matching neither rule, and semantically equivalent but differently
+  authored shapes — and every checker problem is a tool failure
+  (exit 2), never a semantic verdict: no violation outcome exists in
+  this milestone.  The Haskell generator, the embedded Agda kernel,
+  the external Agda toolchain, and the support rules themselves
+  remain trusted components.
   @mithril wasp generate CORE_FILE WASP_ROOT@ and @mithril wasp check
   CORE_FILE WASP_ROOT@ implement the first confined target slice, the
   Wasp Confinement Profile v0: after the same complete pipeline and
   the verify gate (VERIFIED required), the one shared
-  NoSelfPrivilegeEscalation support plan the verifier consumed is
-  lowered deterministically into a closed Wasp 0.25.0 application on
-  PostgreSQL — main.wasp.ts, schema.prisma, the one authenticated
+  NoSelfPrivilegeEscalation support plan the verifier consumed —
+  when it is exactly one rule-1 case; a rule-2 case or several cases
+  are refused by the profile's capability gate (exit 3) before any
+  destination access — is lowered deterministically into a closed
+  Wasp 0.25.0 application on PostgreSQL — main.wasp.ts, schema.prisma, the one authenticated
   Action declaration and its generated TypeScript implementation
   (Wasp authentication, context.user.id as the only identity,
   argument validation, authorization reads and the SetRelation write
@@ -124,7 +131,11 @@ extra-doc-files:    README.md
 -- never installed as package data and never looked up at run time, so
 -- it belongs in the source distribution but not in data-files.  The
 -- handwritten Acme example, the invalid test fixtures, the frozen
--- golden security contracts, and the API-boundary probe material
+-- golden security contracts, the two frozen golden generated Agda
+-- obligation modules (nspe.generated.agda for the singleton rule-1
+-- fixture, nspe-self-update.generated.agda for the two-case
+-- rule-1/rule-2 fixture; produced only by the generator, never
+-- hand-edited), and the API-boundary probe material
 -- (the probe package, the driver, and the driver's own isolation
 -- self-test) are consumed by the test suite and the documented probe
 -- commands, so source distributions must carry them too.
@@ -160,12 +171,15 @@ extra-source-files:
     test/api-probes/probe/probe.cabal
     test/api-probes/run-api-probes.sh
     test/api-probes/test-run-api-probes.sh
+    test/fixtures/acme-nspe-dangerous.mir.json
+    test/fixtures/acme-nspe-self-update.mir.json
     test/fixtures/acme-nspe-unsafe.mir.json
     test/fixtures/acme-nspe.mir.json
     test/fixtures/acme.contract.txt
     test/fixtures/coverage.mir.json
     test/fixtures/malformed.mir.json
     test/fixtures/near-core.mir.json
+    test/fixtures/nspe-self-update.generated.agda
     test/fixtures/nspe.generated.agda
     test/fixtures/unknown-name.mir.json
     test/fixtures/wasp-acme/.gitignore
@@ -401,6 +415,7 @@ test-suite mithril-ir-test
     Mithril.CoreValidationTests
     Mithril.CoreVerificationTests
     Mithril.CoreWaspTests
+    Mithril.DistinguishedUserTests
     Mithril.NormalizedModelTests
     Mithril.Test
     Mithril.TestEnv

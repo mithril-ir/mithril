@@ -113,6 +113,45 @@ tests = do
           False
       ]
 
+-- | Every stored @Actor@ entity of an action's allow policies and
+-- effect terms, in authored order.
+actionActors :: Action -> [EntityId]
+actionActors action =
+  case actionBody action of
+    AuthenticatedOnlyBody allow shape -> policyActors allow <> shapeActors shape
+    AnyPrincipalBody _ shape -> shapeActors shape
+  where
+    shapeActors :: ActionShape availability -> [EntityId]
+    shapeActors shape =
+      case shape of
+        MutationShape (SetRelationEffect _ _ bindings payload) _ ->
+          concatMap (valueActors . endpointBindingTerm) (endpointList bindings) <> valueActors payload
+        MutationShape (RemoveRelationEffect _ _ bindings) _ ->
+          concatMap (valueActors . endpointBindingTerm) (endpointList bindings)
+        _ -> []
+    endpointList :: OneOrTwo a -> [a]
+    endpointList (One a) = [a]
+    endpointList (Two a b) = [a, b]
+    valueActors :: ValueTerm availability -> [EntityId]
+    valueActors term =
+      case valueTermNode term of
+        ActorNode e -> [e]
+        AttributeNode source _ -> valueActors source
+        _ -> []
+    policyActors :: PolicyTerm availability -> [EntityId]
+    policyActors term =
+      case policyTermNode term of
+        ValuePolicyNode v -> valueActors v
+        LookupNode _ bindings -> concatMap (valueActors . endpointBindingTerm) (endpointList bindings)
+        NoneNode _ -> []
+        SomeNode v -> valueActors v
+        IsSomeNode p -> policyActors p
+        EqualNode l r -> policyActors l <> policyActors r
+        LessOrEqualNode _ l r -> policyActors l <> policyActors r
+        AndNode l r -> policyActors l <> policyActors r
+        OrNode l r -> policyActors l <> policyActors r
+        NotNode p -> policyActors p
+
 -- | One complete production run: a fresh file read pushed through
 -- the public parse, structural validation, resolution, typechecking,
 -- and normalization functions.  Each call performs its own read and
@@ -578,6 +617,20 @@ modelChecks model =
     [ [ check
           "the document name keeps its text and its source path"
           (matchesSourced ["name"] "Welltyped" (modelName model))
+      , check
+          "the distinguished-User anchor is the canonical identity of the one entity declared as User (entity 0), independently of any term"
+          ( modelUserEntity model == EntityId 0
+              && [name | (identity, name, _, _) <- entityTable, identity == modelUserEntity model] == ["User"]
+              && and
+                [ (sourcedValue (entityName entity) == "User") == (entityId entity == modelUserEntity model)
+                | entity <- modelEntities model
+                ]
+          )
+      , check
+          "every Actor term of the model denotes exactly the carried distinguished-User anchor"
+          ( let actors = concatMap actionActors (modelActions model)
+             in not (null actors) && all (== modelUserEntity model) actors
+          )
       ]
     , declarationChecks
         "entity"

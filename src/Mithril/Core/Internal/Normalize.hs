@@ -37,7 +37,13 @@
 -- guarantee's resolved access relation and endpoint identities are
 -- carried over unchanged (never re-resolved or re-judged), and an
 -- escalation case's scope term is bound to the authority's scope
--- endpoint.
+-- endpoint.  The distinguished @User@ entity's canonical identity —
+-- selected once by the resolver ('Resolved.modelUserEntity', the
+-- entity every @Actor@ term denotes), validated by the typechecker's
+-- checking pass and carried by its signature — is carried into the
+-- model as an independent anchor ('Normalized.modelUserEntity'); it
+-- is propagated, never re-derived here from a name, a position, or a
+-- term.
 --
 -- Nothing is simplified, folded, sorted, evaluated, or optimized:
 -- normalization is deterministic structural canonicalization of one
@@ -52,7 +58,8 @@
 -- typing judgment, a reference outside the model, an initializer set
 -- that is not one-to-one with the target's attributes, an endpoint
 -- arity the relation does not declare, an order that is not a
--- complete permutation, a scope term without a scope endpoint — is
+-- complete permutation, a scope term without a scope endpoint, a
+-- stored distinguished-@User@ anchor whose declaration drifted — is
 -- impossible, and is therefore classified as a
 -- 'NormalizerInvariantViolation' (frontend drift or a
 -- typechecker\/normalizer bug; exit status 2 at the tool boundary),
@@ -109,6 +116,7 @@ import Mithril.Core.Internal.Typecheck
   , orderedVerdict
   , policyTermPath
   , relationSig
+  , signatureUser
   , valueTermPath
   )
 
@@ -184,7 +192,7 @@ normalizeModel
   :: Resolved.Model -> Collect NormalizerInvariantViolation Normalized.Model
 normalizeModel model =
   trusted (checkModel model)
-    *> ( Normalized.Model (Resolved.modelName model)
+    *> ( Normalized.Model (Resolved.modelName model) (signatureUser sig)
            <$> pure (map normalizeEntity (Resolved.modelEntities model))
            <*> traverse normalizeEnum (Resolved.modelEnums model)
            <*> pure (map normalizeRelation (Resolved.modelRelations model))
@@ -192,6 +200,12 @@ normalizeModel model =
            <*> traverse (normalizeGuarantee sig) (Resolved.modelGuarantees model)
        )
   where
+    -- The distinguished-User anchor is the resolver's stored
+    -- designation as the signature carries it ('signatureUser'):
+    -- validated against the declaration it names by the checking
+    -- pass gating this construction ('checkModel', whose problems
+    -- withhold the model), and propagated as is — never re-derived
+    -- here from a name, a position, or a term.
     sig = buildSignature model
 
 --------------------------------------------------------------------

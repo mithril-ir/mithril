@@ -36,6 +36,15 @@
 --    @NoSelfPrivilegeEscalation@ authority relation, endpoints, and
 --    payload-order enum).
 --
+-- On success the resolved model additionally records the resolver's
+-- own designation of the distinguished @User@ entity
+-- ('Resolved.modelUserEntity'): the unique entity declaration
+-- carrying the schema-designated name, taken from the same
+-- entity-namespace lookup that resolves every @Actor@ term.  This is
+-- the one place in the pipeline that selects that identity by name;
+-- the typechecker validates and the normalizer propagates the stored
+-- identity, and neither searches names again.
+--
 -- Internally the stage is one frontend interpretation in two passes:
 -- "Mithril.Core.Internal.Decode" decodes the structurally valid JSON
 -- into the explicit surface syntax (source paths and symbolic
@@ -367,12 +376,18 @@ data ActionEntry = ActionEntry
   , actionEntryParameters :: Namespace ParameterEntry
   }
 
--- | The four global namespaces of a Core v0 document.
+-- | The four global namespaces of a Core v0 document, plus the
+-- resolver's one designation of the distinguished @User@ entity: the
+-- entity namespace's lookup of the schema-designated name, made once
+-- here and consumed both by every @Actor@ term ('resolveActorTerm')
+-- and by the resolved model's own record of the identity
+-- ('resolveDistinguishedUser').
 data Indexes = Indexes
   { entityIndex :: Namespace EntityEntry
   , enumIndex :: Namespace EnumEntry
   , relationIndex :: Namespace RelationEntry
   , actionIndex :: Namespace ActionEntry
+  , userDesignation :: NameLookup EntityEntry
   }
 
 -- | Build every namespace, reporting all duplicate declarations, and
@@ -396,6 +411,7 @@ buildIndexes document =
       , enumIndex = enumNamespace
       , relationIndex = relationNamespace
       , actionIndex = actionNamespace
+      , userDesignation = lookupName entityNamespace distinguishedUserEntity
       }
   , map snd enumPreparations
   , map preparedActionEntry actionPreparations
@@ -734,7 +750,9 @@ resolveArgumentTerm scope path (Sourced namePath parameterName) =
           , parameterTypeDenotation (scopeIndexes scope) parameterType
           )
 
--- | The @Actor@ term denotes the distinguished @User@ entity.  A
+-- | The @Actor@ term denotes the distinguished @User@ entity — the
+-- resolver's one designation ('userDesignation'), the very identity
+-- the resolved model records ('resolveDistinguishedUser').  A
 -- duplicated @User@ suppresses dependent uses (the duplicate is
 -- reported at its declaration); a missing @User@ is impossible after
 -- the decoder's check, and suppression keeps the resolver total —
@@ -743,11 +761,25 @@ resolveArgumentTerm scope path (Sourced namePath parameterName) =
 resolveActorTerm
   :: Indexes -> SourcePath -> (Resolve (Resolved.ValueTerm 'Syntax.ActorAvailable), Denotation)
 resolveActorTerm indexes path =
-  case lookupName (entityIndex indexes) distinguishedUserEntity of
+  case userDesignation indexes of
     NameFound entry ->
       (pure (Resolved.ActorTerm path (entityEntryId entry)), DenotesEntity entry)
     NameAmbiguous -> (suppressed, DenotesUnknown)
     NameMissing -> (suppressed, DenotesUnknown)
+
+-- | The resolved model's record of the resolver's designation of the
+-- distinguished @User@ entity ('Resolved.modelUserEntity'): the
+-- identity every @Actor@ term denotes, read from the same
+-- 'userDesignation' as 'resolveActorTerm'.  A duplicated @User@ is
+-- reported at its declaration sites and suppressed here; a missing
+-- one is impossible after the decoder's check, and suppression keeps
+-- the resolver total.
+resolveDistinguishedUser :: Indexes -> Resolve Resolved.EntityId
+resolveDistinguishedUser indexes =
+  case userDesignation indexes of
+    NameFound entry -> pure (entityEntryId entry)
+    NameAmbiguous -> suppressed
+    NameMissing -> suppressed
 
 -- | Resolve an @Attribute@ projection: its source, then its member
 -- against the namespace selected by the source's denotation.
@@ -1204,14 +1236,16 @@ resolveAuthority indexes authority =
 --------------------------------------------------------------------
 
 -- | Resolve a decoded document: build every namespace (reporting all
--- duplicates), then resolve every declaration, action, and guarantee
--- into the identifier-based model.  Violations aggregate across the
--- whole document; the model exists only when every part resolved.
+-- duplicates), record the distinguished @User@ designation, then
+-- resolve every declaration, action, and guarantee into the
+-- identifier-based model.  Violations aggregate across the whole
+-- document; the model exists only when every part resolved.
 resolveDocument :: Syntax.Document -> Resolve Resolved.Model
 resolveDocument document =
   reporting duplicateReports
     *> ( Resolved.Model (Syntax.documentName document)
-           <$> traverse
+           <$> resolveDistinguishedUser indexes
+           <*> traverse
              (uncurry (resolveEntity indexes))
              (withPositions (Syntax.documentEntities document))
            <*> traverse

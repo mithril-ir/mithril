@@ -1196,6 +1196,7 @@ resolvedDocumentWith allow = CoreDocument model
     model =
       Internal.Model
         { Internal.modelName = Sourced (synthetic "name") "Tiny"
+        , Internal.modelUserEntity = Internal.EntityId 0
         , Internal.modelEntities =
             [ Internal.Entity
                 { Internal.entityId = Internal.EntityId 0
@@ -1258,6 +1259,7 @@ tenantAccessDocumentWith relationRef subjectRef tenantRef =
     model =
       Internal.Model
         { Internal.modelName = Sourced (synthetic "name") "Tiny"
+        , Internal.modelUserEntity = Internal.EntityId 0
         , Internal.modelEntities =
             [entityOf 0 "User" "userEntity", entityOf 1 "Org" "orgEntity"]
         , Internal.modelEnums = []

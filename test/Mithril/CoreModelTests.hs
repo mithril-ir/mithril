@@ -496,6 +496,15 @@ modelChecks model =
     [ [ check
           "the document name keeps its text and its source path"
           (matchesSourced ["name"] "Coverage" (modelName model))
+      , check
+          "the resolver stores its distinguished-User designation: the identity of exactly the oracle's one entity declared as User, and of no other entity"
+          ( [identity | (identity, name, _, _) <- entityTable, name == "User"] == [modelUserEntity model]
+              && [ entityId entity
+                 | entity <- modelEntities model
+                 , sourcedValue (entityName entity) == "User"
+                 ]
+                == [modelUserEntity model]
+          )
       ]
     , declarationChecks
         "entity"

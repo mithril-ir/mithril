@@ -551,6 +551,7 @@ baseModel :: Internal.Model
 baseModel =
   Internal.Model
     { Internal.modelName = Sourced (synthetic "name") "Tiny"
+    , Internal.modelUserEntity = Internal.EntityId 0
     , Internal.modelEntities = [userEntity]
     , Internal.modelEnums = [shadeEnum completeOrder]
     , Internal.modelRelations = [markedRelation]
@@ -1050,6 +1051,7 @@ tenantModelWith
 tenantModelWith memberEntity access tenantTerm protectedTerm =
   Internal.Model
     { Internal.modelName = Sourced (synthetic "name") "Tiny"
+    , Internal.modelUserEntity = Internal.EntityId 0
     , Internal.modelEntities =
         [ Internal.Entity
             { Internal.entityId = Internal.EntityId 0

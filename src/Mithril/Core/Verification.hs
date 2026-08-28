@@ -12,35 +12,49 @@
 -- indexes make a merely typed (or earlier) document unacceptable —
 -- and decides, first and purely, whether the document lies inside the
 -- one implemented support rule: a document selecting exactly one
--- guarantee, a @NoSelfPrivilegeEscalation@ guarantee with exactly one
--- case, whose authority, payload ordering, case action, parameters,
--- @SetRelation@ effect bindings and payload, case scope, and allow
--- policy correspond structurally to the already-mechanized sound
--- proof rule of the Agda spike's safe @Membership.changeRole@ slice
--- (the internal support gate states the exact rule).  The gate
--- inspects stored identities and evidence structurally: it never
--- compares raw JSON bytes, recognizes file names, hashes the model,
--- repeats parsing, resolution, or type inference, or evaluates
--- policy, and it deliberately rejects semantically equivalent but
--- differently authored shapes as unsupported.
+-- guarantee, a @NoSelfPrivilegeEscalation@ guarantee whose non-empty
+-- case collection consists entirely of cases each matching exactly
+-- one of the two supported proof rules — rule 1, /change-other/ (the
+-- already-mechanized sound proof rule of the Agda spike's safe
+-- @Membership.changeRole@ slice: three parameters subject, scope,
+-- payload; the write at the subject parameter; the exact
+-- floor\/guard\/membership conjunction), or rule 2, /bounded
+-- self-update/ (two parameters scope, payload; the write at the
+-- actor's own tuple; the exact single comparison bounding the
+-- requested payload by the actor's authority) — with a shared
+-- authority, payload ordering, and case scope shape (the internal
+-- support gate states the exact rules).  Every authored case is
+-- classified independently in authored order and tagged with its
+-- rule; one case outside both rules makes the whole obligation
+-- unsupported.  The gate inspects stored identities and evidence
+-- structurally: it never compares raw JSON bytes, recognizes file
+-- names, hashes the model, repeats parsing, resolution, or type
+-- inference, or evaluates policy, and it deliberately rejects
+-- semantically equivalent but differently authored shapes as
+-- unsupported.
 --
 -- For a supported document the boundary deterministically generates
--- one Agda obligation module from the normalized evidence, checks
--- that the generator's structured artifact inventory carries every
--- required theorem, materializes the module together with the
--- compile-time-embedded trusted kernel modules into a fresh isolated
--- workspace, and has exactly Agda 2.8.0 check it with @--safe
--- --no-libraries --ignore-interfaces@ — the generated module ends in
--- a checked theorem manifest, so the checker's acceptance itself
--- proves that every required theorem exists at exactly its required
--- type (no source text is ever searched for theorem names).
+-- one Agda obligation module from the normalized evidence — one
+-- complete proof group per case, qualified by the case's zero-based
+-- authored position — checks that the generator's structured
+-- artifact inventory carries every required theorem of every case,
+-- materializes the module together with the compile-time-embedded
+-- trusted kernel modules into a fresh isolated workspace, and has
+-- exactly Agda 2.8.0 check it with @--safe --no-libraries
+-- --ignore-interfaces@ — the generated module carries a checked
+-- theorem manifest per case, so the checker's acceptance itself
+-- proves that every required theorem of every case exists at exactly
+-- its required type (no source text is ever searched for theorem
+-- names).
 --
 -- == Result semantics
 --
--- * 'VerificationVerified': every selected obligation of the
---   document — there is exactly one in a supported document — is
---   supported, the deterministic artifact was generated, and every
---   required named theorem was accepted by the configured checker.
+-- * 'VerificationVerified': every selected case of the document's
+--   one selected obligation is supported, the deterministic artifact
+--   was generated, and every required named theorem of every case
+--   was accepted by the configured checker; the result records every
+--   case with its position, rule, action, and checked theorem
+--   inventory ('VerifiedCase').
 -- * 'VerificationUnsupported': the normalized document lies outside
 --   the implemented support rule.  Decided by the pure gate before
 --   any checker runs, with non-empty, deterministic, sorted,
@@ -60,13 +74,14 @@
 --   These exit with status 2 at the tool boundary.
 --
 -- What a successful verification does and does not establish: it
--- checks exactly the one selected obligation of the checked document
--- against the trusted Agda kernel semantics.  The Haskell frontend
--- and generator, the embedded kernel modules, the Agda toolchain,
--- and the support rule itself remain trusted components; no other
--- action, guarantee family, document, or semantic-preservation
--- property is verified, and the canonical Acme example — which
--- selects three guarantees — remains unsupported and unverified.
+-- checks exactly the selected cases of the one selected obligation of
+-- the checked document against the trusted Agda kernel semantics.
+-- The Haskell frontend and generator, the embedded kernel modules,
+-- the Agda toolchain, and the support rules themselves remain trusted
+-- components; no other action, unselected authority writer, guarantee
+-- family, document, or semantic-preservation property is verified,
+-- and the canonical Acme example — which selects three guarantees —
+-- remains unsupported and unverified.
 module Mithril.Core.Verification
   ( -- * Pipeline stage
     Normalized
@@ -74,6 +89,9 @@ module Mithril.Core.Verification
     -- * Results
   , VerificationResult (..)
   , VerifiedObligation (..)
+  , VerifiedCase (..)
+  , NspeRule (..)
+  , nspeRuleLabel
   , UnsupportedReason (..)
 
     -- * Failures
@@ -94,13 +112,16 @@ import Mithril.Core.Internal.Document
   , Normalized
   )
 import Mithril.Core.Internal.Verify
-  ( UnsupportedReason (..)
+  ( NspeRule (..)
+  , UnsupportedReason (..)
   , VerificationFailure (..)
   , VerificationResult (..)
+  , VerifiedCase (..)
   , VerifiedObligation (..)
   , VerifierInvariantViolation (..)
   , normalizeUnsupportedReasons
   , normalizeVerifierInvariantViolations
+  , nspeRuleLabel
   , verifyModelWith
   )
 
