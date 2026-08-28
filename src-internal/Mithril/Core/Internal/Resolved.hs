@@ -48,6 +48,17 @@
 -- resolved reference field holds a name for later stages to look up
 -- again.
 --
+-- The distinguished @User@ entity is designated once, by the
+-- resolver: the unique entity declaration carrying the
+-- schema-designated name, found through the same entity-namespace
+-- lookup that resolves every @Actor@ term.  The model records that
+-- designation's canonical identity in 'modelUserEntity'.  It is
+-- resolver-owned evidence, not a name to look up again: the
+-- typechecker validates the declaration it names and carries the
+-- identity in its signature, the normalizer propagates it into the
+-- normalized model, and no later stage selects a @User@ by
+-- descriptive name, list position, endpoint, or term.
+--
 -- Every node and reference retains the 'SourcePath' it was decoded
 -- from, so the typechecker (and every later stage) can report a
 -- problem at the originating JSON location without rereading the raw
@@ -185,6 +196,12 @@ data Ref target = Ref
 -- likewise for enums, relations, actions, and each owner-local list.
 data Model = Model
   { modelName :: Sourced Text
+  , modelUserEntity :: EntityId
+    -- ^ The resolver's designation of the distinguished @User@
+    -- entity (module header): the canonical identity of the unique
+    -- entity declaration carrying the schema-designated name, stored
+    -- once from the same lookup every @Actor@ term resolves through.
+    -- Later stages validate and propagate it; none re-derives it.
   , modelEntities :: [Entity]
   , modelEnums :: [EnumDefinition]
   , modelRelations :: [Relation]

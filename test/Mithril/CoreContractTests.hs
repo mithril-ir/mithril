@@ -715,6 +715,7 @@ syntheticTinyModel :: Internal.Model
 syntheticTinyModel =
   Internal.Model
     { Internal.modelName = Sourced (synthetic "name") "Tiny"
+    , Internal.modelUserEntity = EntityId 0
     , Internal.modelEntities = [tinyUserEntity]
     , Internal.modelEnums = []
     , Internal.modelRelations = []

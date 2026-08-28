@@ -10,8 +10,9 @@ name: Haskell
 # the human-readable security contract, and 'mithril verify FILE':
 # the same pipeline followed by the first connected verifier slice —
 # a deterministic support gate and, for exactly one supported
-# Acme-derived NoSelfPrivilegeEscalation obligation shape, generated
-# Agda checked by exactly Agda 2.8.0 in safe mode), its unit and
+# NoSelfPrivilegeEscalation obligation family (non-empty case
+# collections of the change-other and bounded self-update rules),
+# generated Agda checked by exactly Agda 2.8.0 in safe mode), its unit and
 # process-level tests, and the downstream API-boundary compile-fail
 # probes. The validate command establishes JSON shape conformance,
 # name resolution, static well-typedness, and deterministic
@@ -22,10 +23,13 @@ name: Haskell
 # its rendered guarantees remain unverified proof obligations; and
 # the verify command implements exactly the one obligation slice: the
 # canonical Acme document stays unsupported (its TenantIsolation and
-# AuthenticatedMutation obligations remain unverified), and a checker
-# problem is a tool failure, never a semantic verdict; and 'mithril wasp
-# check CORE_FILE WASP_ROOT' regenerates the closed Wasp Confinement
-# Profile v0 of that same slice (VERIFIED required) and pins the committed fixture
+# AuthenticatedMutation obligations remain unverified), the dangerous
+# self-promotion mutation stays unsupported rather than a violation
+# verdict, and a checker problem is a tool failure, never a semantic
+# verdict; and 'mithril wasp check CORE_FILE WASP_ROOT' regenerates the
+# closed Wasp Confinement Profile v0 of the singleton rule-1 slice
+# (VERIFIED required; every other verified plan is refused at its gate)
+# and pins the committed fixture
 # test/fixtures/wasp-acme byte-for-byte without touching Wasp, Node, or
 # PostgreSQL (the real Wasp 0.25.0 / PostgreSQL vertical test runs in
 # its own workflow, wasp.yml). Agda 2.8.0 is
@@ -106,13 +110,30 @@ jobs:
         run: cabal run mithril -- contract examples/acme/acme.mir.json
 
       # The end-to-end generated-verifier checks: the supported
-      # Acme-derived single-obligation fixture must verify under the
-      # real Agda 2.8.0 safe check (exit 0), and the canonical Acme
-      # document must remain unsupported with exactly exit 3 — its
+      # singleton rule-1 fixture and the supported two-case rule-1/rule-2
+      # fixture must verify under the real Agda 2.8.0 safe check
+      # (exit 0); the dangerous self-promotion mutation and the
+      # canonical Acme document must remain unsupported with exactly
+      # exit 3 — the former is a genuine counterexample the verifier
+      # deliberately does not turn into a verdict, and the latter's
       # TenantIsolation and AuthenticatedMutation obligations are not
-      # implemented, and unsupported is never a verdict.
+      # implemented; unsupported is never a verdict.
       - name: Verify the supported NoSelfPrivilegeEscalation fixture
         run: cabal run mithril -- verify test/fixtures/acme-nspe.mir.json
+
+      - name: Verify the supported two-case self-update fixture
+        run: cabal run mithril -- verify test/fixtures/acme-nspe-self-update.mir.json
+
+      - name: Dangerous self-promotion mutation is unsupported (exit 3)
+        run: |
+          set +e
+          cabal run mithril -- verify test/fixtures/acme-nspe-dangerous.mir.json
+          status=$?
+          set -e
+          if [ "$status" -ne 3 ]; then
+            echo "expected exit 3, got $status" >&2
+            exit 1
+          fi
 
       - name: Canonical Acme document is unsupported (exit 3)
         run: |

@@ -180,6 +180,11 @@ checks =
           && ("--safe --no-libraries --ignore-interfaces" `isInfixOf` renderHelp)
       )
   , check
+      "help states that verify classifies every case against exactly two structural rules with one proof group per case"
+      ( ("every case of\nwhich matches exactly one of two exact structural rules" `isInfixOf` renderHelp)
+          && ("one proof group per case" `isInfixOf` renderHelp)
+      )
+  , check
       "help states that canonical Acme and the other families remain unverified"
       ( ("including the canonical" `isInfixOf` renderHelp)
           && ("TenantIsolation and AuthenticatedMutation" `isInfixOf` renderHelp)
@@ -205,7 +210,8 @@ checks =
       "help scopes the wasp commands to the one confined slice on Wasp 0.25.0 and PostgreSQL"
       ( ("Wasp Confinement Profile v0" `isInfixOf` renderHelp)
           && ("Wasp 0.25.0 application on\nPostgreSQL" `isInfixOf` renderHelp)
-          && ("exactly the one supported NoSelfPrivilegeEscalation slice, which both\nrequire to be VERIFIED first" `isInfixOf` renderHelp)
+          && ("exactly the singleton change-other (rule-1) NoSelfPrivilegeEscalation\nslice, which both require to be VERIFIED first" `isInfixOf` renderHelp)
+          && ("bounded self-update case or with several cases is refused by the\nprofile's capability gate (exit 3) before any destination access" `isInfixOf` renderHelp)
       )
   , check
       "help states the confinement boundary and the wasp exit classifications"

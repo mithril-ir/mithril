@@ -1,0 +1,430 @@
+{
+  "format": "mithril-core",
+  "formatVersion": "0",
+  "name": "Acme",
+  "schema": {
+    "entities": [
+      {
+        "name": "User",
+        "attributes": []
+      },
+      {
+        "name": "Organization",
+        "attributes": []
+      },
+      {
+        "name": "Project",
+        "attributes": [
+          {
+            "name": "organization",
+            "type": {
+              "kind": "EntityRef",
+              "entity": "Organization"
+            }
+          }
+        ]
+      }
+    ],
+    "enums": [
+      {
+        "name": "MembershipRole",
+        "values": [
+          "Member",
+          "Admin"
+        ],
+        "order": [
+          "Member",
+          "Admin"
+        ]
+      }
+    ],
+    "relations": [
+      {
+        "name": "Membership",
+        "endpoints": [
+          {
+            "name": "user",
+            "entity": "User"
+          },
+          {
+            "name": "organization",
+            "entity": "Organization"
+          }
+        ],
+        "payload": {
+          "kind": "Enum",
+          "enum": "MembershipRole"
+        }
+      }
+    ]
+  },
+  "actions": [
+    {
+      "name": "Project.read",
+      "parameters": [
+        {
+          "name": "project",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Project"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Read",
+      "allow": {
+        "kind": "LessOrEqual",
+        "left": {
+          "kind": "Some",
+          "value": {
+            "kind": "Enum",
+            "enum": "MembershipRole",
+            "value": "Member"
+          }
+        },
+        "right": {
+          "kind": "Lookup",
+          "relation": "Membership",
+          "endpoints": [
+            {
+              "kind": "Actor"
+            },
+            {
+              "kind": "Attribute",
+              "source": {
+                "kind": "Argument",
+                "name": "project"
+              },
+              "attribute": "organization"
+            }
+          ]
+        }
+      },
+      "effect": {
+        "kind": "NoChange"
+      },
+      "result": {
+        "kind": "Observe",
+        "entity": {
+          "kind": "Argument",
+          "name": "project"
+        }
+      }
+    },
+    {
+      "name": "Project.create",
+      "parameters": [
+        {
+          "name": "organization",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Organization"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "LessOrEqual",
+        "left": {
+          "kind": "Some",
+          "value": {
+            "kind": "Enum",
+            "enum": "MembershipRole",
+            "value": "Member"
+          }
+        },
+        "right": {
+          "kind": "Lookup",
+          "relation": "Membership",
+          "endpoints": [
+            {
+              "kind": "Actor"
+            },
+            {
+              "kind": "Argument",
+              "name": "organization"
+            }
+          ]
+        }
+      },
+      "effect": {
+        "kind": "CreateEntity",
+        "entity": "Project",
+        "attributes": {
+          "organization": {
+            "kind": "Argument",
+            "name": "organization"
+          }
+        }
+      },
+      "result": {
+        "kind": "Created"
+      }
+    },
+    {
+      "name": "Project.delete",
+      "parameters": [
+        {
+          "name": "project",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Project"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "LessOrEqual",
+        "left": {
+          "kind": "Some",
+          "value": {
+            "kind": "Enum",
+            "enum": "MembershipRole",
+            "value": "Admin"
+          }
+        },
+        "right": {
+          "kind": "Lookup",
+          "relation": "Membership",
+          "endpoints": [
+            {
+              "kind": "Actor"
+            },
+            {
+              "kind": "Attribute",
+              "source": {
+                "kind": "Argument",
+                "name": "project"
+              },
+              "attribute": "organization"
+            }
+          ]
+        }
+      },
+      "effect": {
+        "kind": "DeleteEntity",
+        "target": {
+          "kind": "Argument",
+          "name": "project"
+        }
+      },
+      "result": {
+        "kind": "Done"
+      }
+    },
+    {
+      "name": "Membership.addMember",
+      "parameters": [
+        {
+          "name": "target",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        },
+        {
+          "name": "organization",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Organization"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "And",
+        "left": {
+          "kind": "LessOrEqual",
+          "left": {
+            "kind": "Some",
+            "value": {
+              "kind": "Enum",
+              "enum": "MembershipRole",
+              "value": "Admin"
+            }
+          },
+          "right": {
+            "kind": "Lookup",
+            "relation": "Membership",
+            "endpoints": [
+              {
+                "kind": "Actor"
+              },
+              {
+                "kind": "Argument",
+                "name": "organization"
+              }
+            ]
+          }
+        },
+        "right": {
+          "kind": "Equal",
+          "left": {
+            "kind": "Lookup",
+            "relation": "Membership",
+            "endpoints": [
+              {
+                "kind": "Argument",
+                "name": "target"
+              },
+              {
+                "kind": "Argument",
+                "name": "organization"
+              }
+            ]
+          },
+          "right": {
+            "kind": "None",
+            "payloadType": {
+              "kind": "Enum",
+              "enum": "MembershipRole"
+            }
+          }
+        }
+      },
+      "effect": {
+        "kind": "SetRelation",
+        "relation": "Membership",
+        "endpoints": [
+          {
+            "kind": "Argument",
+            "name": "target"
+          },
+          {
+            "kind": "Argument",
+            "name": "organization"
+          }
+        ],
+        "payload": {
+          "kind": "Enum",
+          "enum": "MembershipRole",
+          "value": "Member"
+        }
+      },
+      "result": {
+        "kind": "Done"
+      }
+    },
+    {
+      "name": "Membership.changeRole",
+      "parameters": [
+        {
+          "name": "target",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "User"
+          }
+        },
+        {
+          "name": "organization",
+          "type": {
+            "kind": "EntityRef",
+            "entity": "Organization"
+          }
+        },
+        {
+          "name": "newRole",
+          "type": {
+            "kind": "Enum",
+            "enum": "MembershipRole"
+          }
+        }
+      ],
+      "principalMode": "AuthenticatedOnly",
+      "classification": "Mutation",
+      "allow": {
+        "kind": "And",
+        "left": {
+          "kind": "LessOrEqual",
+          "left": {
+            "kind": "Some",
+            "value": {
+              "kind": "Enum",
+              "enum": "MembershipRole",
+              "value": "Member"
+            }
+          },
+          "right": {
+            "kind": "Lookup",
+            "relation": "Membership",
+            "endpoints": [
+              {
+                "kind": "Actor"
+              },
+              {
+                "kind": "Argument",
+                "name": "organization"
+              }
+            ]
+          }
+        },
+        "right": {
+          "kind": "IsSome",
+          "value": {
+            "kind": "Lookup",
+            "relation": "Membership",
+            "endpoints": [
+              {
+                "kind": "Argument",
+                "name": "target"
+              },
+              {
+                "kind": "Argument",
+                "name": "organization"
+              }
+            ]
+          }
+        }
+      },
+      "effect": {
+        "kind": "SetRelation",
+        "relation": "Membership",
+        "endpoints": [
+          {
+            "kind": "Argument",
+            "name": "target"
+          },
+          {
+            "kind": "Argument",
+            "name": "organization"
+          }
+        ],
+        "payload": {
+          "kind": "Argument",
+          "name": "newRole"
+        }
+      },
+      "result": {
+        "kind": "Done"
+      }
+    }
+  ],
+  "guarantees": [
+    {
+      "kind": "NoSelfPrivilegeEscalation",
+      "authority": {
+        "relation": "Membership",
+        "subjectEndpoint": "user",
+        "scopeEndpoints": [
+          "organization"
+        ],
+        "absenceLevel": "Bottom",
+        "payloadOrder": "MembershipRole"
+      },
+      "cases": [
+        {
+          "action": "Membership.changeRole",
+          "scope": [
+            {
+              "kind": "Argument",
+              "name": "organization"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

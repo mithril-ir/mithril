@@ -63,6 +63,18 @@
 -- JSON\/JavaScript string literals (through 'jsStringLiteral').  The
 -- manifest states the complete authored-to-target mapping explicitly.
 --
+-- == The Profile-v0 capability gate
+--
+-- The profile lowers exactly one case shape: a shared plan whose case
+-- collection is exactly one rule-1 (change-other) case.  The gate
+-- ('profileV0Plan') inspects the tagged case collection of the shared
+-- plan — it never re-derives a rule — and refuses, before anything is
+-- lowered and therefore before the CLI touches any destination, a
+-- singleton rule-2 (bounded self-update) plan (anchored at the case)
+-- and every multi-case plan (anchored at the guarantee) as
+-- unsupported to this profile with deterministic reasons.  Only a
+-- 'WaspProfileV0Plan' can be rendered.
+--
 -- == Determinism
 --
 -- The bundle depends only on the plan — never on file paths, time,
@@ -98,6 +110,8 @@ module Mithril.Core.Internal.Wasp
 
     -- * Rendering
   , WaspRenderingRefusal (..)
+  , WaspProfileV0Plan (..)
+  , profileV0Plan
   , renderBundleFromModel
   , renderBundleFromPlan
 
@@ -127,7 +141,8 @@ module Mithril.Core.Internal.Wasp
 import Data.ByteString (ByteString)
 import Data.Char (isUpper, ord, toLower)
 import Data.List (sort, sortOn)
-import Data.List.NonEmpty (NonEmpty)
+import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Encoding
@@ -135,13 +150,18 @@ import Numeric (showHex)
 
 import qualified Mithril.Core.Internal.Normalized as Normalized
 import Mithril.Core.Internal.NspeSupportPlan
-  ( NspeSupportPlan (..)
+  ( ChangeOtherFacts (..)
+  , NspeCaseMatch (..)
+  , NspeCasePlan (..)
+  , NspeSupportPlan (..)
   , PlanBinding (..)
   , PlanEnumMember (..)
   , PlanRankedMember (..)
   , PlanRefusal (..)
-  , UnsupportedReason
+  , UnsupportedReason (..)
   , VerifierInvariantViolation
+  , caseRule
+  , nspeRuleLabel
   , quotedName
   , supportPlan
   )
@@ -154,7 +174,7 @@ import Mithril.Core.Internal.Resolved
   , ParameterId (..)
   , RelationId (..)
   )
-import Mithril.Core.Internal.SourcePath (Sourced (..))
+import Mithril.Core.Internal.SourcePath (Sourced (..), sourcePathSegments)
 import Mithril.Core.Internal.Syntax (AbsenceLevel (..))
 
 --------------------------------------------------------------------
@@ -195,35 +215,94 @@ data WaspBundleSummary = WaspBundleSummary
   deriving (Eq, Show)
 
 -- | Why no bundle was rendered: the document is outside the shared
--- support rule (authored shapes, sorted and deduplicated), or the
--- normalized model is internally inconsistent (forged or drifted — a
--- tool error, decided by the shared gate before anything is lowered).
--- The lowering itself refuses nothing: every supported plan renders.
+-- support rule or outside this profile's capability (authored shapes,
+-- sorted and deduplicated reasons), or the normalized model is
+-- internally inconsistent (forged or drifted — a tool error, decided
+-- by the shared gate before anything is lowered).  The lowering
+-- itself refuses nothing: every Profile-v0 plan renders.
 data WaspRenderingRefusal
   = RenderUnsupported (NonEmpty UnsupportedReason)
   | RenderInvariant (NonEmpty VerifierInvariantViolation)
   deriving (Eq, Show)
 
+-- | The one plan shape the Wasp Confinement Profile v0 lowers: the
+-- shared plan (whose case collection the gate proved to be exactly
+-- one change-other case), that case, and its rule-1 facts.  Only the
+-- gate constructs it; the renderer is total over it.
+data WaspProfileV0Plan = WaspProfileV0Plan
+  { profileShared :: NspeSupportPlan
+  , profileCase :: NspeCasePlan
+  , profileFacts :: ChangeOtherFacts
+  }
+  deriving (Eq)
+
+-- | The Profile-v0 capability gate over the shared tagged plan
+-- (module header): exactly one case, and that case a rule-1 case;
+-- everything else is refused with a deterministic source-anchored
+-- reason before any lowering.  The rule tag is read from the plan,
+-- never re-derived.
+profileV0Plan
+  :: NspeSupportPlan -> Either (NonEmpty UnsupportedReason) WaspProfileV0Plan
+profileV0Plan plan =
+  case planCases plan of
+    onlyCase :| [] ->
+      case caseMatch onlyCase of
+        ChangeOtherMatch facts ->
+          Right
+            WaspProfileV0Plan
+              { profileShared = plan
+              , profileCase = onlyCase
+              , profileFacts = facts
+              }
+        BoundedSelfUpdateMatch _ ->
+          Left
+            ( UnsupportedReason
+                (sourcePathSegments (casePath onlyCase))
+                ( profileCapability
+                    <> "; this case matches "
+                    <> nspeRuleLabel (caseRule onlyCase)
+                    <> ", which the profile does not lower"
+                )
+                :| []
+            )
+    cases ->
+      Left
+        ( UnsupportedReason
+            (sourcePathSegments (planGuaranteePath plan))
+            ( profileCapability
+                <> "; this guarantee selects "
+                <> countText (NonEmpty.length cases)
+                <> " cases"
+            )
+            :| []
+        )
+  where
+    profileCapability = "Wasp Profile v0 lowers exactly one Rule-1 case"
+
 -- | Render the bundle of a normalized model: the shared support gate,
--- then the files.
+-- then the Profile-v0 capability gate, then the files.
 renderBundleFromModel
   :: Normalized.Model -> Either WaspRenderingRefusal WaspBundle
 renderBundleFromModel model =
   case supportPlan model of
     Left (PlanInvariant violations) -> Left (RenderInvariant violations)
     Left (PlanUnsupported reasons) -> Left (RenderUnsupported reasons)
-    Right plan -> Right (renderBundleFromPlan plan)
+    Right plan ->
+      case profileV0Plan plan of
+        Left reasons -> Left (RenderUnsupported reasons)
+        Right profile -> Right (renderBundleFromPlan profile)
 
--- | Render the bundle of a plan: total, because every target name is
--- fixed and every authored name is rendered as escaped metadata only.
-renderBundleFromPlan :: NspeSupportPlan -> WaspBundle
+-- | Render the bundle of a Profile-v0 plan: total, because every
+-- target name is fixed and every authored name is rendered as escaped
+-- metadata only.
+renderBundleFromPlan :: WaspProfileV0Plan -> WaspBundle
 renderBundleFromPlan plan =
   WaspBundle
     { bundleSummary =
         WaspBundleSummary
-          { summaryModelName = sourcedValue (planModelName plan)
+          { summaryModelName = sourcedValue (planModelName (profileShared plan))
           , summaryGuarantee = "NoSelfPrivilegeEscalation"
-          , summaryCaseAction = sourcedValue (planActionName plan)
+          , summaryCaseAction = sourcedValue (caseActionName (profileCase plan))
           , summaryOperation = targetOperation targetNames
           , summaryRoute = targetRoute targetNames
           , summaryManagedPaths = managedPaths
@@ -457,107 +536,107 @@ named = quotedName . sourcedValue
 -- generator's evidence block renders it (names through 'quotedName',
 -- identities as declaration positions), so a reviewer can read the
 -- same facts off both derived artifacts.
-evidenceLines :: NspeSupportPlan -> [Text]
+evidenceLines :: WaspProfileV0Plan -> [Text]
 evidenceLines plan =
-  [ "model: " <> named (planModelName plan)
+  [ "model: " <> named (planModelName (profileShared plan))
   , "guarantee: NoSelfPrivilegeEscalation"
   , "authority relation: "
-      <> named (planRelationName plan)
+      <> named (planRelationName (profileShared plan))
       <> " (relation "
-      <> countText (relationIndex (planRelationId plan))
+      <> countText (relationIndex (planRelationId (profileShared plan)))
       <> ")"
   , "authority subject endpoint: "
       <> endpointEvidence
-        (planSubjectEndpointName plan)
-        (planSubjectEndpointId plan)
-        (planSubjectEntityName plan)
-        (planSubjectEntityId plan)
+        (planSubjectEndpointName (profileShared plan))
+        (planSubjectEndpointId (profileShared plan))
+        (planSubjectEntityName (profileShared plan))
+        (planSubjectEntityId (profileShared plan))
   , "authority scope endpoint: "
       <> endpointEvidence
-        (planScopeEndpointName plan)
-        (planScopeEndpointId plan)
-        (planScopeEntityName plan)
-        (planScopeEntityId plan)
-  , "authority absence level: " <> absenceText (planAbsenceLevel plan)
+        (planScopeEndpointName (profileShared plan))
+        (planScopeEndpointId (profileShared plan))
+        (planScopeEntityName (profileShared plan))
+        (planScopeEntityId (profileShared plan))
+  , "authority absence level: " <> absenceText (planAbsenceLevel (profileShared plan))
   , "authority payload order: enum "
-      <> named (planEnumName plan)
+      <> named (planEnumName (profileShared plan))
       <> " (enum "
-      <> countText (enumIndex (planEnumId plan))
+      <> countText (enumIndex (planEnumId (profileShared plan)))
       <> ")"
   , "declared enum members: "
       <> Text.intercalate
         ", "
         [ valueEvidence (sourcedValue (planMemberName member)) (planMemberId member)
-        | member <- planEnumMembers plan
+        | member <- planEnumMembers (profileShared plan)
         ]
   , "materialized authority ranking: "
       <> Text.intercalate
         ", "
         [ "rank " <> countText (planRankedRank ranked) <> " = "
             <> valueEvidence (planRankedName ranked) (planRankedId ranked)
-        | ranked <- planRanking plan
+        | ranked <- planRanking (profileShared plan)
         ]
-  , "materialized bottom: " <> rankedEvidence (planRankBottom plan)
-  , "privilege floor: " <> rankedEvidence (planRankTop plan)
-  , "absent rank: " <> countText (planAbsentRank plan)
+  , "materialized bottom: " <> rankedEvidence (planRankBottom (profileShared plan))
+  , "privilege floor: " <> rankedEvidence (planRankTop (profileShared plan))
+  , "absent rank: " <> countText (planAbsentRank (profileShared plan))
   , "case action: "
-      <> named (planActionName plan)
+      <> named (caseActionName (profileCase plan))
       <> " (action "
-      <> countText (actionIndex (planActionId plan))
+      <> countText (actionIndex (caseActionId (profileCase plan)))
       <> ")"
-  , "case scope binding: " <> bindingEvidence (planCaseScopeBinding plan)
+  , "case scope binding: " <> bindingEvidence (caseScopeBinding (profileCase plan))
   , "principal mode: AuthenticatedOnly"
   , "parameter "
-      <> countText (parameterIndex (planSubjectParameterId plan))
+      <> countText (parameterIndex (changeOtherSubjectParameterId (profileFacts plan)))
       <> ": "
-      <> named (planSubjectParameterName plan)
+      <> named (changeOtherSubjectParameterName (profileFacts plan))
       <> " : EntityRef "
-      <> named (planSubjectEntityName plan)
+      <> named (planSubjectEntityName (profileShared plan))
   , "parameter "
-      <> countText (parameterIndex (planScopeParameterId plan))
+      <> countText (parameterIndex (caseScopeParameterId (profileCase plan)))
       <> ": "
-      <> named (planScopeParameterName plan)
+      <> named (caseScopeParameterName (profileCase plan))
       <> " : EntityRef "
-      <> named (planScopeEntityName plan)
+      <> named (planScopeEntityName (profileShared plan))
   , "parameter "
-      <> countText (parameterIndex (planPayloadParameterId plan))
+      <> countText (parameterIndex (casePayloadParameterId (profileCase plan)))
       <> ": "
-      <> named (planPayloadParameterName plan)
+      <> named (casePayloadParameterName (profileCase plan))
       <> " : Enum "
-      <> named (planEnumName plan)
+      <> named (planEnumName (profileShared plan))
   , "allow policy: And(LessOrEqual[order optional "
-      <> named (planEnumName plan)
+      <> named (planEnumName (profileShared plan))
       <> ", absence as bottom](Some(Enum["
-      <> named (planEnumName plan)
+      <> named (planEnumName (profileShared plan))
       <> "."
-      <> quotedName (planRankedName (planRankTop plan))
+      <> quotedName (planRankedName (planRankTop (profileShared plan)))
       <> "]), Lookup["
-      <> named (planRelationName plan)
+      <> named (planRelationName (profileShared plan))
       <> "]("
-      <> named (planSubjectEndpointName plan)
+      <> named (planSubjectEndpointName (profileShared plan))
       <> " = Actor, "
-      <> named (planScopeEndpointName plan)
+      <> named (planScopeEndpointName (profileShared plan))
       <> " = Argument["
-      <> named (planScopeParameterName plan)
+      <> named (caseScopeParameterName (profileCase plan))
       <> "])), And(Not(Equal(Actor, Argument["
-      <> named (planSubjectParameterName plan)
+      <> named (changeOtherSubjectParameterName (profileFacts plan))
       <> "])), IsSome(Lookup["
-      <> named (planRelationName plan)
+      <> named (planRelationName (profileShared plan))
       <> "]("
-      <> named (planSubjectEndpointName plan)
+      <> named (planSubjectEndpointName (profileShared plan))
       <> " = Argument["
-      <> named (planSubjectParameterName plan)
+      <> named (changeOtherSubjectParameterName (profileFacts plan))
       <> "], "
-      <> named (planScopeEndpointName plan)
+      <> named (planScopeEndpointName (profileShared plan))
       <> " = Argument["
-      <> named (planScopeParameterName plan)
+      <> named (caseScopeParameterName (profileCase plan))
       <> "]))))"
   , "effect: SetRelation["
-      <> named (planRelationName plan)
+      <> named (planRelationName (profileShared plan))
       <> "]("
-      <> Text.intercalate ", " (map bindingEvidence (planEffectBindings plan))
+      <> Text.intercalate ", " (map bindingEvidence (changeOtherEffectBindings (profileFacts plan)))
       <> ") payload Argument["
-      <> named (planPayloadParameterName plan)
+      <> named (casePayloadParameterName (profileCase plan))
       <> "]"
   , "result: Done"
   ]
@@ -567,7 +646,7 @@ evidenceLines plan =
         <> " (endpoint "
         <> countText (endpointIndex endpointId)
         <> " of relation "
-        <> countText (relationIndex (planRelationId plan))
+        <> countText (relationIndex (planRelationId (profileShared plan)))
         <> "), entity "
         <> named entityName
         <> " (entity "
@@ -578,7 +657,7 @@ evidenceLines plan =
         <> " (value "
         <> countText (valueIndex valueId)
         <> " of enum "
-        <> countText (enumIndex (planEnumId plan))
+        <> countText (enumIndex (planEnumId (profileShared plan)))
         <> ")"
     rankedEvidence ranked =
       "rank " <> countText (planRankedRank ranked) <> " = "
@@ -599,7 +678,7 @@ evidenceLines plan =
 --------------------------------------------------------------------
 
 -- | Every managed file of the profile, rendered from the plan.
-renderFiles :: NspeSupportPlan -> [WaspManagedFile]
+renderFiles :: WaspProfileV0Plan -> [WaspManagedFile]
 renderFiles plan =
   [ textFile ".gitignore" gitignoreLines
   , textFile ".npmrc" npmrcLines
@@ -624,11 +703,11 @@ textFile path fileLines =
     , managedBytes = Encoding.encodeUtf8 (Text.unlines fileLines)
     }
 
-generatedHeader :: Text -> NspeSupportPlan -> Text
+generatedHeader :: Text -> WaspProfileV0Plan -> Text
 generatedHeader commentLead plan =
   commentLead
     <> " Generated by mithril wasp generate from Mithril Core v0 model "
-    <> named (planModelName plan)
+    <> named (planModelName (profileShared plan))
     <> ".  DO NOT EDIT."
 
 -- | The provenance sentence every commented managed file carries: the
@@ -658,7 +737,7 @@ npmrcLines =
   , "min-release-age=7"
   ]
 
-specLines :: NspeSupportPlan -> [Text]
+specLines :: WaspProfileV0Plan -> [Text]
 specLines plan =
   [ generatedHeader "//" plan
   , "//"
@@ -667,7 +746,7 @@ specLines plan =
   , "// from the regenerated bundle.  It declares exactly one route and page (the"
   , "// minimal client shell) and exactly one authenticated Action, " <> operation <> ","
   , "// lowered from the supported NoSelfPrivilegeEscalation case action shape of the"
-  , "// authored action " <> named (planActionName plan) <> "."
+  , "// authored action " <> named (caseActionName (profileCase plan)) <> "."
   ]
     <> provenanceLines "//"
     <> [ "// No query, API, CRUD, job, seed, server setup, or middleware path exists."
@@ -678,7 +757,7 @@ specLines plan =
        , "export default app({"
        , "  name: " <> jsStringLiteral (targetAppName targetNames) <> ","
        , "  wasp: { version: " <> jsStringLiteral waspVersion <> " },"
-       , "  title: " <> jsStringLiteral (sourcedValue (planModelName plan)) <> ","
+       , "  title: " <> jsStringLiteral (sourcedValue (planModelName (profileShared plan))) <> ","
        , "  auth: {"
        , "    userEntity: " <> jsStringLiteral (targetSubjectModel targetNames) <> ","
        , "    methods: { usernameAndPassword: {} },"
@@ -697,7 +776,7 @@ specLines plan =
   where
     operation = targetOperation targetNames
 
-schemaLines :: NspeSupportPlan -> [Text]
+schemaLines :: WaspProfileV0Plan -> [Text]
 schemaLines plan =
   [ generatedHeader "//" plan
   , "//"
@@ -715,37 +794,37 @@ schemaLines plan =
   , "  provider = \"prisma-client-js\""
   , "}"
   , ""
-  , "// " <> subjectModel <> ": the subject entity " <> named (planSubjectEntityName plan)
-      <> " (entity " <> countText (entityIndex (planSubjectEntityId plan)) <> ") — the"
+  , "// " <> subjectModel <> ": the subject entity " <> named (planSubjectEntityName (profileShared plan))
+      <> " (entity " <> countText (entityIndex (planSubjectEntityId (profileShared plan))) <> ") — the"
   , "// authenticated principal and Wasp's auth user entity."
   , "model " <> subjectModel <> " {"
   , "  id          Int @id @default(autoincrement())"
   , "  authorities " <> authorityModel <> "[]"
   , "}"
   , ""
-  , "// " <> scopeModel <> ": the scope entity " <> named (planScopeEntityName plan)
-      <> " (entity " <> countText (entityIndex (planScopeEntityId plan)) <> ")."
+  , "// " <> scopeModel <> ": the scope entity " <> named (planScopeEntityName (profileShared plan))
+      <> " (entity " <> countText (entityIndex (planScopeEntityId (profileShared plan))) <> ")."
   , "model " <> scopeModel <> " {"
   , "  id          Int @id @default(autoincrement())"
   , "  authorities " <> authorityModel <> "[]"
   , "}"
   , ""
-  , "// " <> payloadEnum <> ": the authority payload enum " <> named (planEnumName plan)
-      <> " (enum " <> countText (enumIndex (planEnumId plan)) <> "); value i"
+  , "// " <> payloadEnum <> ": the authority payload enum " <> named (planEnumName (profileShared plan))
+      <> " (enum " <> countText (enumIndex (planEnumId (profileShared plan))) <> "); value i"
   , "// of the enum is the value Value<i>, in declaration order:"
   , "//   " <> memberMapping <> "."
   , "// (The ranking is materialized in the generated Action, not here.)"
   , "enum " <> payloadEnum <> " {"
   ]
-    <> ["  " <> memberTargetName (planMemberId member) | member <- planEnumMembers plan]
+    <> ["  " <> memberTargetName (planMemberId member) | member <- planEnumMembers (profileShared plan)]
     <> [ "}"
        , ""
-       , "// " <> authorityModel <> ": the authority relation " <> named (planRelationName plan)
-           <> " (relation " <> countText (relationIndex (planRelationId plan)) <> "), identified"
-       , "// by its endpoints — subjectId for the subject endpoint " <> named (planSubjectEndpointName plan)
-           <> " (endpoint " <> countText (endpointIndex (planSubjectEndpointId plan)) <> ")"
-       , "// and scopeId for the scope endpoint " <> named (planScopeEndpointName plan)
-           <> " (endpoint " <> countText (endpointIndex (planScopeEndpointId plan)) <> ") — with"
+       , "// " <> authorityModel <> ": the authority relation " <> named (planRelationName (profileShared plan))
+           <> " (relation " <> countText (relationIndex (planRelationId (profileShared plan))) <> "), identified"
+       , "// by its endpoints — subjectId for the subject endpoint " <> named (planSubjectEndpointName (profileShared plan))
+           <> " (endpoint " <> countText (endpointIndex (planSubjectEndpointId (profileShared plan))) <> ")"
+       , "// and scopeId for the scope endpoint " <> named (planScopeEndpointName (profileShared plan))
+           <> " (endpoint " <> countText (endpointIndex (planScopeEndpointId (profileShared plan))) <> ") — with"
        , "// the payload enum as its payload column."
        , "model " <> authorityModel <> " {"
        , "  subjectId Int"
@@ -766,7 +845,7 @@ schemaLines plan =
       Text.intercalate
         ", "
         [ memberTargetName (planMemberId member) <> " = " <> named (planMemberName member)
-        | member <- planEnumMembers plan
+        | member <- planEnumMembers (profileShared plan)
         ]
 
 packageLines :: [Text]
@@ -852,7 +931,7 @@ tsconfigWaspLines =
   , "}"
   ]
 
-viteConfigLines :: NspeSupportPlan -> [Text]
+viteConfigLines :: WaspProfileV0Plan -> [Text]
 viteConfigLines plan =
   [ generatedHeader "//" plan
   , "import { defineConfig } from \"vite\";"
@@ -863,7 +942,7 @@ viteConfigLines plan =
   , "});"
   ]
 
-clientPageLines :: NspeSupportPlan -> [Text]
+clientPageLines :: WaspProfileV0Plan -> [Text]
 clientPageLines plan =
   [ generatedHeader "//" plan
   , "// The minimal static client shell Wasp requires; the generated Action is"
@@ -871,7 +950,7 @@ clientPageLines plan =
   , "export function MainPage() {"
   , "  return ("
   , "    <main>"
-  , "      <h1>{" <> jsStringLiteral ("Mithril Core v0 model " <> named (planModelName plan)) <> "}</h1>"
+  , "      <h1>{" <> jsStringLiteral ("Mithril Core v0 model " <> named (planModelName (profileShared plan))) <> "}</h1>"
   , "      <p>{"
       <> jsStringLiteral
         ( "Wasp Confinement Profile v0 demonstrator: one authenticated Wasp Action, "
@@ -879,7 +958,7 @@ clientPageLines plan =
             <> " (POST "
             <> targetRoute targetNames
             <> "), lowered from the supported NoSelfPrivilegeEscalation case action shape of "
-            <> named (planActionName plan)
+            <> named (caseActionName (profileCase plan))
             <> "."
         )
       <> "}</p>"
@@ -888,13 +967,13 @@ clientPageLines plan =
   , "}"
   ]
 
-operationLines :: NspeSupportPlan -> [Text]
+operationLines :: WaspProfileV0Plan -> [Text]
 operationLines plan =
   [ generatedHeader "//" plan
   , "//"
   , "// Wasp Confinement Profile v0: the one generated security-sensitive operation of"
   , "// this application — the NoSelfPrivilegeEscalation case action"
-  , "// " <> named (planActionName plan) <> " (action " <> countText (actionIndex (planActionId plan))
+  , "// " <> named (caseActionName (profileCase plan)) <> " (action " <> countText (actionIndex (caseActionId (profileCase plan)))
       <> "), lowered as the Wasp Action " <> operation
   , "// (POST " <> targetRoute targetNames <> ").  This is the only file of the profile"
   , "// permitted to import prisma from \"wasp/server\"; mithril wasp check rejects any"
@@ -909,22 +988,22 @@ operationLines plan =
     <> ["//   " <> line | line <- evidenceLines plan]
     <> [ "//"
        , "// Target-name mapping: entity references are the Int identities of the Prisma"
-       , "// models " <> subjectModel <> " (" <> named (planSubjectEntityName plan) <> ") and "
-           <> scopeModel <> " (" <> named (planScopeEntityName plan) <> "); the"
-       , "// authority relation " <> named (planRelationName plan) <> " is the Prisma model " <> authorityModel
+       , "// models " <> subjectModel <> " (" <> named (planSubjectEntityName (profileShared plan)) <> ") and "
+           <> scopeModel <> " (" <> named (planScopeEntityName (profileShared plan)) <> "); the"
+       , "// authority relation " <> named (planRelationName (profileShared plan)) <> " is the Prisma model " <> authorityModel
        , "// identified by (" <> subjectIdField <> ", " <> scopeIdField <> "):"
-       , "//   " <> subjectIdField <> " for the endpoint " <> named (planSubjectEndpointName plan) <> ","
-       , "//   " <> scopeIdField <> " for the endpoint " <> named (planScopeEndpointName plan) <> ","
+       , "//   " <> subjectIdField <> " for the endpoint " <> named (planSubjectEndpointName (profileShared plan)) <> ","
+       , "//   " <> scopeIdField <> " for the endpoint " <> named (planScopeEndpointName (profileShared plan)) <> ","
        , "// with the payload column " <> payloadField <> " of the enum " <> payloadEnum <> " ("
-           <> named (planEnumName plan) <> ").  The arguments"
-       , "//   " <> subjectArgument <> " carries the parameter " <> named (planSubjectParameterName plan) <> ","
-       , "//   " <> scopeArgument <> " carries the parameter " <> named (planScopeParameterName plan) <> ","
-       , "//   " <> payloadArgument <> " carries the parameter " <> named (planPayloadParameterName plan) <> ";"
+           <> named (planEnumName (profileShared plan)) <> ").  The arguments"
+       , "//   " <> subjectArgument <> " carries the parameter " <> named (changeOtherSubjectParameterName (profileFacts plan)) <> ","
+       , "//   " <> scopeArgument <> " carries the parameter " <> named (caseScopeParameterName (profileCase plan)) <> ","
+       , "//   " <> payloadArgument <> " carries the parameter " <> named (casePayloadParameterName (profileCase plan)) <> ";"
        , "// absence of a tuple takes the absent rank below every member."
        , "import { HttpError, prisma } from \"wasp/server\";"
        , "import type { " <> operationType <> " } from \"wasp/server/operations\";"
        , ""
-       , "// The authority payload enum " <> payloadEnum <> " (" <> named (planEnumName plan) <> "): the values in"
+       , "// The authority payload enum " <> payloadEnum <> " (" <> named (planEnumName (profileShared plan)) <> "): the values in"
        , "// declaration order,"
        , "//   " <> memberMapping <> "."
        , "type Payload = " <> Text.intercalate " | " (map jsStringLiteral memberValues) <> ";"
@@ -932,28 +1011,28 @@ operationLines plan =
        , ""
        , "// The materialized ranking (rank 0 is the bottom ranked value):"
        , "//   " <> rankingMapping <> ";"
-       , "// the privilege floor is the rank of " <> rankedTarget (planRankTop plan) <> " ("
-           <> quotedName (planRankedName (planRankTop plan)) <> "), and an absent authority"
+       , "// the privilege floor is the rank of " <> rankedTarget (planRankTop (profileShared plan)) <> " ("
+           <> quotedName (planRankedName (planRankTop (profileShared plan))) <> "), and an absent authority"
        , "// tuple takes the absent rank below every member (absence level "
-           <> absenceText (planAbsenceLevel plan) <> ")."
+           <> absenceText (planAbsenceLevel (profileShared plan)) <> ")."
        , "const payloadRank: Readonly<Record<Payload, number>> = { "
            <> Text.intercalate
              ", "
              [ jsStringLiteral (rankedTarget ranked) <> ": " <> countText (planRankedRank ranked)
-             | ranked <- planRanking plan
+             | ranked <- planRanking (profileShared plan)
              ]
            <> " };"
-       , "const floorRank = " <> countText (planRankedRank (planRankTop plan)) <> ";"
-       , "const absentRank = " <> countText (planAbsentRank plan) <> ";"
+       , "const floorRank = " <> countText (planRankedRank (planRankTop (profileShared plan))) <> ";"
+       , "const absentRank = " <> countText (planAbsentRank (profileShared plan)) <> ";"
        , ""
        , "// Bounded deterministic retry of Serializable write conflicts (Prisma P2034)."
        , "const serializationAttempts = 3;"
        , ""
-       , "// The action's arguments: " <> subjectArgument <> " carries " <> named (planSubjectParameterName plan)
-           <> " : EntityRef " <> named (planSubjectEntityName plan) <> ","
-       , "// " <> scopeArgument <> " carries " <> named (planScopeParameterName plan) <> " : EntityRef "
-           <> named (planScopeEntityName plan) <> ", and " <> payloadArgument <> " carries"
-       , "// " <> named (planPayloadParameterName plan) <> " : Enum " <> named (planEnumName plan) <> "."
+       , "// The action's arguments: " <> subjectArgument <> " carries " <> named (changeOtherSubjectParameterName (profileFacts plan))
+           <> " : EntityRef " <> named (planSubjectEntityName (profileShared plan)) <> ","
+       , "// " <> scopeArgument <> " carries " <> named (caseScopeParameterName (profileCase plan)) <> " : EntityRef "
+           <> named (planScopeEntityName (profileShared plan)) <> ", and " <> payloadArgument <> " carries"
+       , "// " <> named (casePayloadParameterName (profileCase plan)) <> " : Enum " <> named (planEnumName (profileShared plan)) <> "."
        , "type Args = { " <> subjectArgument <> ": number; " <> scopeArgument <> ": number; " <> payloadArgument <> ": Payload };"
        , ""
        , "function isEntityReference(value: unknown): value is number {"
@@ -986,7 +1065,7 @@ operationLines plan =
        , "export const " <> operation <> ": " <> operationType <> "<Args, void> = async (input, context) => {"
        , "  // Principal: Wasp authentication is required, and context.user.id is the only"
        , "  // identity the Action uses (the subject entity " <> subjectModel <> ", authored "
-           <> named (planSubjectEntityName plan) <> ")."
+           <> named (planSubjectEntityName (profileShared plan)) <> ")."
        , "  if (!context.user) {"
        , "    throw new HttpError(401, \"authentication required\");"
        , "  }"
@@ -999,29 +1078,29 @@ operationLines plan =
        , "    try {"
        , "      await prisma.$transaction("
        , "        async (tx) => {"
-       , "          // Lookup[" <> named (planRelationName plan) <> "](" <> named (planSubjectEndpointName plan)
-           <> " = Actor, " <> named (planScopeEndpointName plan) <> " = Argument[" <> named (planScopeParameterName plan) <> "]):"
+       , "          // Lookup[" <> named (planRelationName (profileShared plan)) <> "](" <> named (planSubjectEndpointName (profileShared plan))
+           <> " = Actor, " <> named (planScopeEndpointName (profileShared plan)) <> " = Argument[" <> named (caseScopeParameterName (profileCase plan)) <> "]):"
        , "          // all mutable authorization state is read inside this Serializable transaction."
        , "          const actorTuple = await tx." <> accessor <> ".findUnique({"
        , "            where: { " <> compoundKey <> ": { " <> subjectIdField <> ": actor, " <> scopeIdField <> ": args." <> scopeArgument <> " } },"
        , "          });"
-       , "          // Lookup[" <> named (planRelationName plan) <> "](" <> named (planSubjectEndpointName plan)
-           <> " = Argument[" <> named (planSubjectParameterName plan) <> "], " <> named (planScopeEndpointName plan)
-           <> " = Argument[" <> named (planScopeParameterName plan) <> "])."
+       , "          // Lookup[" <> named (planRelationName (profileShared plan)) <> "](" <> named (planSubjectEndpointName (profileShared plan))
+           <> " = Argument[" <> named (changeOtherSubjectParameterName (profileFacts plan)) <> "], " <> named (planScopeEndpointName (profileShared plan))
+           <> " = Argument[" <> named (caseScopeParameterName (profileCase plan)) <> "])."
        , "          const targetTuple = await tx." <> accessor <> ".findUnique({"
        , "            where: { " <> compoundKey <> ": { " <> subjectIdField <> ": args." <> subjectArgument <> ", " <> scopeIdField <> ": args." <> scopeArgument <> " } },"
        , "          });"
        , "          const actorRank = actorTuple === null ? absentRank : payloadRank[actorTuple." <> payloadField <> "];"
-       , "          // And(LessOrEqual(Some(" <> quotedName (planRankedName (planRankTop plan)) <> "), actor authority), And(Not(Equal(Actor, "
-           <> named (planSubjectParameterName plan) <> ")), IsSome(target authority)))."
+       , "          // And(LessOrEqual(Some(" <> quotedName (planRankedName (planRankTop (profileShared plan))) <> "), actor authority), And(Not(Equal(Actor, "
+           <> named (changeOtherSubjectParameterName (profileFacts plan)) <> ")), IsSome(target authority)))."
        , "          const allowed = floorRank <= actorRank && (!(actor === args." <> subjectArgument <> ") && targetTuple !== null);"
        , "          if (!allowed) {"
        , "            throw new HttpError(403, \"forbidden\");"
        , "          }"
-       , "          // SetRelation[" <> named (planRelationName plan) <> "](" <> named (planSubjectEndpointName plan)
-           <> " = Argument[" <> named (planSubjectParameterName plan) <> "], " <> named (planScopeEndpointName plan)
-           <> " = Argument[" <> named (planScopeParameterName plan) <> "]) payload Argument["
-           <> named (planPayloadParameterName plan) <> "]."
+       , "          // SetRelation[" <> named (planRelationName (profileShared plan)) <> "](" <> named (planSubjectEndpointName (profileShared plan))
+           <> " = Argument[" <> named (changeOtherSubjectParameterName (profileFacts plan)) <> "], " <> named (planScopeEndpointName (profileShared plan))
+           <> " = Argument[" <> named (caseScopeParameterName (profileCase plan)) <> "]) payload Argument["
+           <> named (casePayloadParameterName (profileCase plan)) <> "]."
        , "          await tx." <> accessor <> ".update({"
        , "            where: { " <> compoundKey <> ": { " <> subjectIdField <> ": args." <> subjectArgument <> ", " <> scopeIdField <> ": args." <> scopeArgument <> " } },"
        , "            data: { " <> payloadField <> ": args." <> payloadArgument <> " },"
@@ -1060,12 +1139,12 @@ operationLines plan =
     subjectArgument = targetSubjectArgument targetNames
     scopeArgument = targetScopeArgument targetNames
     payloadArgument = targetPayloadArgument targetNames
-    memberValues = [memberTargetName (planMemberId member) | member <- planEnumMembers plan]
+    memberValues = [memberTargetName (planMemberId member) | member <- planEnumMembers (profileShared plan)]
     memberMapping =
       Text.intercalate
         ", "
         [ memberTargetName (planMemberId member) <> " = " <> named (planMemberName member)
-        | member <- planEnumMembers plan
+        | member <- planEnumMembers (profileShared plan)
         ]
     rankedTarget ranked = memberTargetName (planRankedId ranked)
     rankingMapping =
@@ -1073,14 +1152,14 @@ operationLines plan =
         ", "
         [ "rank " <> countText (planRankedRank ranked) <> " = " <> rankedTarget ranked
             <> " (" <> quotedName (planRankedName ranked) <> ")"
-        | ranked <- planRanking plan
+        | ranked <- planRanking (profileShared plan)
         ]
 
 --------------------------------------------------------------------
 -- The manifest: the explicit authored-to-target mapping
 --------------------------------------------------------------------
 
-manifestLines :: NspeSupportPlan -> [Text]
+manifestLines :: WaspProfileV0Plan -> [Text]
 manifestLines plan =
   [ "{"
   , field "format" (jsStringLiteral "mithril-wasp-bundle")
@@ -1095,14 +1174,14 @@ manifestLines plan =
   , field "wasp" (jsStringLiteral waspVersion)
   , field "database" (jsStringLiteral databaseProvider)
   , field "prisma" (jsStringLiteral prismaVersion)
-  , field "model" (jsStringLiteral (sourcedValue (planModelName plan)))
+  , field "model" (jsStringLiteral (sourcedValue (planModelName (profileShared plan))))
   , field "guarantee" (jsStringLiteral "NoSelfPrivilegeEscalation")
   , field "ownershipMarker" (jsStringLiteral (Text.pack ownershipMarkerPath))
   , field
       "caseAction"
       ( object
-          [ ("authored", jsStringLiteral (sourcedValue (planActionName plan)))
-          , ("position", countText (actionIndex (planActionId plan)))
+          [ ("authored", jsStringLiteral (sourcedValue (caseActionName (profileCase plan))))
+          , ("position", countText (actionIndex (caseActionId (profileCase plan))))
           , ("operation", jsStringLiteral (targetOperation targetNames))
           , ("operationType", jsStringLiteral (targetOperationType targetNames))
           , ("route", jsStringLiteral (targetRoute targetNames))
@@ -1112,24 +1191,24 @@ manifestLines plan =
   , field
       "subjectEntity"
       ( object
-          [ ("authored", jsStringLiteral (sourcedValue (planSubjectEntityName plan)))
-          , ("position", countText (entityIndex (planSubjectEntityId plan)))
+          [ ("authored", jsStringLiteral (sourcedValue (planSubjectEntityName (profileShared plan))))
+          , ("position", countText (entityIndex (planSubjectEntityId (profileShared plan))))
           , ("model", jsStringLiteral (targetSubjectModel targetNames))
           ]
       )
   , field
       "scopeEntity"
       ( object
-          [ ("authored", jsStringLiteral (sourcedValue (planScopeEntityName plan)))
-          , ("position", countText (entityIndex (planScopeEntityId plan)))
+          [ ("authored", jsStringLiteral (sourcedValue (planScopeEntityName (profileShared plan))))
+          , ("position", countText (entityIndex (planScopeEntityId (profileShared plan))))
           , ("model", jsStringLiteral (targetScopeModel targetNames))
           ]
       )
   , field
       "authorityRelation"
       ( object
-          [ ("authored", jsStringLiteral (sourcedValue (planRelationName plan)))
-          , ("position", countText (relationIndex (planRelationId plan)))
+          [ ("authored", jsStringLiteral (sourcedValue (planRelationName (profileShared plan))))
+          , ("position", countText (relationIndex (planRelationId (profileShared plan))))
           , ("model", jsStringLiteral (targetAuthorityModel targetNames))
           , ("accessor", jsStringLiteral (targetAuthorityAccessor targetNames))
           , ( "identity"
@@ -1142,8 +1221,8 @@ manifestLines plan =
   , field
       "subjectEndpoint"
       ( object
-          [ ("authored", jsStringLiteral (sourcedValue (planSubjectEndpointName plan)))
-          , ("position", countText (endpointIndex (planSubjectEndpointId plan)))
+          [ ("authored", jsStringLiteral (sourcedValue (planSubjectEndpointName (profileShared plan))))
+          , ("position", countText (endpointIndex (planSubjectEndpointId (profileShared plan))))
           , ("field", jsStringLiteral (targetSubjectField targetNames))
           , ("idField", jsStringLiteral (targetSubjectIdField targetNames))
           ]
@@ -1151,8 +1230,8 @@ manifestLines plan =
   , field
       "scopeEndpoint"
       ( object
-          [ ("authored", jsStringLiteral (sourcedValue (planScopeEndpointName plan)))
-          , ("position", countText (endpointIndex (planScopeEndpointId plan)))
+          [ ("authored", jsStringLiteral (sourcedValue (planScopeEndpointName (profileShared plan))))
+          , ("position", countText (endpointIndex (planScopeEndpointId (profileShared plan))))
           , ("field", jsStringLiteral (targetScopeField targetNames))
           , ("idField", jsStringLiteral (targetScopeIdField targetNames))
           ]
@@ -1160,8 +1239,8 @@ manifestLines plan =
   , field
       "payloadEnum"
       ( object
-          [ ("authored", jsStringLiteral (sourcedValue (planEnumName plan)))
-          , ("position", countText (enumIndex (planEnumId plan)))
+          [ ("authored", jsStringLiteral (sourcedValue (planEnumName (profileShared plan))))
+          , ("position", countText (enumIndex (planEnumId (profileShared plan))))
           , ("enum", jsStringLiteral (targetPayloadEnum targetNames))
           ]
       )
@@ -1173,29 +1252,29 @@ manifestLines plan =
               , ("position", countText (valueIndex (planMemberId member)))
               , ("value", jsStringLiteral (memberTargetName (planMemberId member)))
               ]
-          | member <- planEnumMembers plan
+          | member <- planEnumMembers (profileShared plan)
           ]
       )
-  , field "ranking" (array (map rankedObject (planRanking plan)))
-  , field "bottom" (rankedObject (planRankBottom plan))
-  , field "floor" (rankedObject (planRankTop plan))
+  , field "ranking" (array (map rankedObject (planRanking (profileShared plan))))
+  , field "bottom" (rankedObject (planRankBottom (profileShared plan)))
+  , field "floor" (rankedObject (planRankTop (profileShared plan)))
   , field
       "absence"
       ( object
-          [ ("level", jsStringLiteral (absenceText (planAbsenceLevel plan)))
-          , ("rank", countText (planAbsentRank plan))
+          [ ("level", jsStringLiteral (absenceText (planAbsenceLevel (profileShared plan))))
+          , ("rank", countText (planAbsentRank (profileShared plan)))
           ]
       )
   , field
       "parameters"
       ( array
-          [ parameterObject "subject" (planSubjectParameterName plan) (planSubjectParameterId plan) (targetSubjectArgument targetNames)
-          , parameterObject "scope" (planScopeParameterName plan) (planScopeParameterId plan) (targetScopeArgument targetNames)
-          , parameterObject "payload" (planPayloadParameterName plan) (planPayloadParameterId plan) (targetPayloadArgument targetNames)
+          [ parameterObject "subject" (changeOtherSubjectParameterName (profileFacts plan)) (changeOtherSubjectParameterId (profileFacts plan)) (targetSubjectArgument targetNames)
+          , parameterObject "scope" (caseScopeParameterName (profileCase plan)) (caseScopeParameterId (profileCase plan)) (targetScopeArgument targetNames)
+          , parameterObject "payload" (casePayloadParameterName (profileCase plan)) (casePayloadParameterId (profileCase plan)) (targetPayloadArgument targetNames)
           ]
       )
-  , field "effectBindings" (array (map bindingObject (planEffectBindings plan)))
-  , field "caseScopeBinding" (bindingObject (planCaseScopeBinding plan))
+  , field "effectBindings" (array (map bindingObject (changeOtherEffectBindings (profileFacts plan))))
+  , field "caseScopeBinding" (bindingObject (caseScopeBinding (profileCase plan)))
   , "  \"managedFiles\": ["
   ]
     <> [ "    " <> jsStringLiteral (Text.pack path) <> separator

@@ -1,12 +1,28 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | The first target adapter consuming normalized Core: pure,
--- deterministic rendering of the one supported
--- NoSelfPrivilegeEscalation shape as a closed Wasp 0.25.0 application
--- bundle (the /Wasp Confinement Profile v0/), and the pure confinement
--- check of a source-root snapshot against a regenerated bundle.  The
--- profile's filenames, manifest, and this public boundary are frozen
--- for this slice; general or additional adapter formats remain open.
+-- deterministic rendering of exactly the singleton rule-1
+-- (change-other) NoSelfPrivilegeEscalation plan — the one shape the
+-- /Wasp Confinement Profile v0/ covers — as a closed Wasp 0.25.0
+-- application bundle, and the pure confinement check of a source-root
+-- snapshot against a regenerated bundle.  The profile's filenames,
+-- manifest, and this public boundary are frozen for this slice;
+-- general or additional adapter formats remain open.
+--
+-- Three scope statements, kept separate:
+--
+-- * The shared verifier ("Mithril.Core.Verification") supports one
+--   selected NoSelfPrivilegeEscalation guarantee whose non-empty
+--   case collection is independently classified, case by case, as
+--   exact rule-1 (change-other) and\/or exact rule-2 (bounded
+--   self-update) cases.
+-- * Wasp Profile v0 lowers only exactly one rule-1 case: no rule-2
+--   lowering, no multi-operation lowering, and no second route or
+--   runtime scenario exist.
+-- * Therefore a document the shared verifier reports VERIFIED may
+--   still be 'WaspRenderingUnsupported' here, because it lies outside
+--   Profile v0 (a rule-2 case, or several cases) — refused by the
+--   profile's capability gate before any lowering.
 --
 -- > normalized opaque document
 -- >   -> shared NoSelfPrivilegeEscalation support gate
@@ -19,7 +35,9 @@
 -- pinned by downstream compile-fail probes — and consumes the same
 -- shared support plan the verifier consumes: a document the verifier
 -- reports unsupported is unsupported here for exactly the same
--- deterministic reasons, and the emitter restates no part of the
+-- deterministic reasons, a verified plan outside Profile v0 is
+-- refused by the capability gate over the plan's rule tags (never by
+-- re-deriving a rule), and the emitter restates no part of the
 -- supported-shape classification and no ranking logic of its own.
 -- The bundle depends only on the document's content, never on its
 -- filesystem path, time, or environment; the same normalized
@@ -94,7 +112,10 @@
 -- == Failure classification
 --
 -- 'WaspRenderingUnsupported': the document lies outside the shared
--- support rule (authored shapes, sorted and deduplicated reasons).
+-- support rule (authored shapes, sorted and deduplicated reasons), or
+-- inside it — possibly VERIFIED by the shared verifier — but outside
+-- the Profile-v0 capability: a singleton rule-2 case (one reason at
+-- the case path) or several cases (one reason at the guarantee path).
 -- 'WaspRenderingInvariants': the normalized model is inconsistent —
 -- forged or drifted evidence no pipeline-produced document can
 -- exhibit, decided by the shared gate before anything is lowered; an
@@ -162,8 +183,15 @@ import Mithril.Core.Internal.WaspConfinement
 
 -- | Why 'renderWaspBundle' refused (module header).
 data WaspRenderingFailure
-  = WaspRenderingUnsupported (NonEmpty UnsupportedReason)
-  | WaspRenderingInvariants (NonEmpty VerifierInvariantViolation)
+  = -- | Outside the shared support rule, or outside Wasp Profile v0
+    -- although the shared gate accepted the document (a verified
+    -- rule-2 case or several verified cases): deterministic,
+    -- sorted, deduplicated, source-anchored reasons.
+    WaspRenderingUnsupported (NonEmpty UnsupportedReason)
+  | -- | Forged or drifted normalized evidence, decided by the shared
+    -- gate before any lowering: a tool error, never a document
+    -- problem and never a verdict.
+    WaspRenderingInvariants (NonEmpty VerifierInvariantViolation)
   deriving (Eq, Show)
 
 -- | The managed files of a bundle, sorted by root-relative path and

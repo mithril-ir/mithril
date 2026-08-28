@@ -4,7 +4,8 @@
 
 -- | Checks over the Core v0 verifier boundary.
 --
--- Five cooperating groups:
+-- Five cooperating groups over the singleton rule-1 fixture, then the
+-- multi-case groups (6) over the two-case self-update fixture:
 --
 -- 1. /Supported pipeline./  The Acme-derived single-obligation
 --    fixture flows through the complete public pipeline into
@@ -68,8 +69,21 @@
 --    parameter owner and position drift coordinated with every
 --    referencing binding and argument — halt on their exact canonical
 --    identity-preflight invariants with zero runner invocations and
---    no checker discovery; and no failure or report rendering ever
---    contains a violation verdict.
+--    no checker discovery; the review's verification-boundary
+--    forgery — the authority subject endpoint redirected to another
+--    declared entity under intact canonical identities, with the
+--    subject parameter type, every stored Actor entity, and every
+--    subject-typed stored type of the case action redirected
+--    coherently with it (so every self-consistency check agrees),
+--    for the rule-1, the singleton rule-2, and the two-case model,
+--    plus a drifted anchor under untouched evidence — halts on
+--    exactly the distinguished-User anchor invariant at the
+--    authority's subject endpoint reference through the pure gate,
+--    the production boundary, an injected runner recording zero
+--    invocations, and the Wasp emitter, while the unmodified
+--    documents keep verifying under real Agda and the Profile-v0
+--    gate keeps its verdicts; and no failure or report rendering
+--    ever contains a violation verdict.
 --
 -- 5. /Materiality and forged models./  A pinned-size mutation table
 --    walks every proof-relevant stored normalized evidence family of
@@ -92,6 +106,28 @@
 --    shared support plan: a metadata mutation must change the Wasp
 --    bundle bytes as well, and a fail-closed mutation must refuse
 --    the emitter with exactly the same reasons or violations.
+--
+-- 6. /Multi-case obligations./  The two-case self-update fixture (a
+--    rule-1 change-other case plus a rule-2 bounded-self-update case)
+--    verifies through the public pipeline under real Agda 2.8.0 with
+--    both cases tagged in authored order; its production-generated
+--    bytes are pinned against the reviewed golden
+--    @test\/fixtures\/nspe-self-update.generated.agda@ (the general
+--    position-qualified layout: one inner module per case, one
+--    manifest module per case); the plan-derived required-theorem
+--    inventory refuses doctored per-case inventories; real Agda
+--    rejects a removed, renamed, duplicated, wrongly typed,
+--    hole-carrying, or coincidentally shadowed per-case theorem; a
+--    singleton rule-2 document and a reordered two-case document
+--    verify (authored order and positions kept, never reordered or
+--    deduplicated); every rule-2 near-miss — parameter count, order,
+--    and types, a foreign relation, an added @IsSome@ conjunct, a
+--    literal or swapped comparison, a non-@SetRelation@ effect — and
+--    every mixed document with one unsupported case land on reasons
+--    anchored at the offending case or action, with no head-only
+--    selection; the dangerous self-promotion mutation stays
+--    unsupported, never a verdict; and a pinned rule-2 materiality
+--    table replays forged evidence of the second case.
 module Mithril.CoreVerificationTests
   ( tests
   ) where
@@ -154,30 +190,46 @@ import Mithril.Core.Internal.StaticType
   , ValueType (..)
   )
 import Mithril.Core.Internal.Syntax (ActorAvailability (..), OneOrTwo (..))
+import Mithril.Core.Internal.NspeSupportPlan
+  ( BoundedSelfUpdateFacts (..)
+  , NspeCaseMatch (..)
+  , NspeCasePlan (..)
+  , NspeRule (..)
+  , NspeSupportPlan (..)
+  , PlanBinding (..)
+  , caseRule
+  )
 import Mithril.Core.Internal.Wasp
-  ( WaspRenderingRefusal (..)
+  ( WaspProfileV0Plan (..)
+  , WaspRenderingRefusal (..)
   , bundleFiles
   , managedBytes
   , managedPath
+  , profileV0Plan
   , renderBundleFromModel
   , renderBundleFromPlan
   )
 import Mithril.Core.Internal.Verify
   ( GeneratedArtifact (..)
+  , GeneratedCase (..)
   , PlanRefusal (..)
   , TheoremSpec (..)
   , UnsupportedReason (..)
   , VerificationFailure (..)
   , VerificationResult (..)
+  , VerifiedCase (..)
   , VerifiedObligation (..)
   , VerifierInvariantViolation (..)
+  , generatedCaseModuleName
+  , generatedManifestModuleName
   , generatedObligationArtifact
+  , indentLines
   , missingRequiredTheorems
   , renderObligationModule
   , renderedManifestBlock
   , renderedTheoremBlock
-  , requiredTheoremNames
-  , requiredTheoremSpecs
+  , ruleTheoremNames
+  , ruleTheoremSpecs
   , supportPlan
   , verifyModelWith
   )
@@ -205,16 +257,29 @@ acmePath = "examples/acme/acme.mir.json"
 goldenPath :: FilePath
 goldenPath = "test/fixtures/nspe.generated.agda"
 
+selfUpdatePath :: FilePath
+selfUpdatePath = "test/fixtures/acme-nspe-self-update.mir.json"
+
+dangerousPath :: FilePath
+dangerousPath = "test/fixtures/acme-nspe-dangerous.mir.json"
+
+selfUpdateGoldenPath :: FilePath
+selfUpdateGoldenPath = "test/fixtures/nspe-self-update.generated.agda"
+
 -- | All verifier checks.
 tests :: IO [Check]
 tests = do
   nspeBytes <- ByteString.readFile nspePath
   unsafeBytes <- ByteString.readFile unsafePath
+  dangerousBytes <- ByteString.readFile dangerousPath
+  selfUpdateBytes <- ByteString.readFile selfUpdatePath
   acmeBytes <- ByteString.readFile acmePath
   goldenBytes <- ByteString.readFile goldenPath
+  selfUpdateGoldenBytes <- ByteString.readFile selfUpdateGoldenPath
   let goldenText = Encoding.decodeUtf8 goldenBytes
-  case (pipelineModel nspeBytes, pipelineModel acmeBytes) of
-    (Just baseModel, Just acmeModel) -> do
+      selfUpdateGoldenText = Encoding.decodeUtf8 selfUpdateGoldenBytes
+  case (pipelineModel nspeBytes, pipelineModel acmeBytes, pipelineModel selfUpdateBytes) of
+    (Just baseModel, Just acmeModel, Just selfUpdateModel) -> do
       pipelineChecks <- supportedPipelineChecks baseModel
       manifestChecks <- manifestAgdaChecks baseModel
       workspaceChecks <- recordedWorkspaceChecks baseModel goldenText
@@ -223,6 +288,9 @@ tests = do
       leakChecks <- workspaceLeakChecks baseModel
       forgedChecks <- forgedEvidenceChecks baseModel
       coordinatedChecks <- coordinatedDriftChecks baseModel
+      anchoredChecks <- anchoredSubjectChecks nspeBytes selfUpdateBytes baseModel selfUpdateModel
+      selfUpdatePipeline <- selfUpdatePipelineChecks selfUpdateBytes selfUpdateModel
+      selfUpdateManifest <- selfUpdateManifestAgdaChecks selfUpdateModel
       pure $
         pipelineChecks
           <> generatedArtifactChecks baseModel goldenText
@@ -234,8 +302,14 @@ tests = do
           <> leakChecks
           <> forgedChecks
           <> coordinatedChecks
+          <> anchoredChecks
           <> materialityChecks baseModel goldenText
           <> renderingChecks
+          <> selfUpdatePipeline
+          <> selfUpdateArtifactChecks selfUpdateModel selfUpdateGoldenText goldenText
+          <> selfUpdateManifest
+          <> multiCaseGateChecks nspeBytes selfUpdateBytes dangerousBytes selfUpdateGoldenText
+          <> selfUpdateMaterialityChecks selfUpdateModel selfUpdateGoldenText
     _ ->
       pure
         [ check
@@ -273,14 +347,33 @@ pipelineDocument bytes = do
   typed <- rightMaybe (typecheckCoreDocument resolved)
   rightMaybe (normalizeCoreDocument typed)
 
--- | The expected obligation of the supported fixture.
+-- | The expected obligation of the supported singleton fixture: one
+-- rule-1 case at position 0.
 expectedObligation :: VerifiedObligation
 expectedObligation =
   VerifiedObligation
     { verifiedGuarantee = "NoSelfPrivilegeEscalation"
-    , verifiedCaseAction = "Membership.changeRole"
-    , verifiedTheorems = requiredTheoremNames
+    , verifiedCases = changeOtherCase 0 "Membership.changeRole" :| []
     }
+
+-- | The expected obligation of the two-case self-update fixture: the
+-- rule-1 case at position 0, the rule-2 case at position 1.
+expectedSelfUpdateObligation :: VerifiedObligation
+expectedSelfUpdateObligation =
+  VerifiedObligation
+    { verifiedGuarantee = "NoSelfPrivilegeEscalation"
+    , verifiedCases =
+        changeOtherCase 0 "Membership.changeRole"
+          :| [boundedSelfUpdateCase 1 "Membership.changeOwnRole"]
+    }
+
+changeOtherCase :: Int -> Text -> VerifiedCase
+changeOtherCase position action =
+  VerifiedCase position ChangeOtherRule action (ruleTheoremNames ChangeOtherRule)
+
+boundedSelfUpdateCase :: Int -> Text -> VerifiedCase
+boundedSelfUpdateCase position action =
+  VerifiedCase position BoundedSelfUpdateRule action (ruleTheoremNames BoundedSelfUpdateRule)
 
 --------------------------------------------------------------------
 -- Group 1: the supported pipeline under the real checker
@@ -367,40 +460,72 @@ generatedArtifactChecks baseModel goldenText =
                      ]
               )
           , check
-              "the required theorem inventory is pinned"
-              ( requiredTheoremNames
+              "the required theorem inventories of both rules are pinned"
+              ( ruleTheoremNames ChangeOtherRule
                   == [ "case-scope-is-scope-argument"
                      , "policy-actor-distinct"
                      , "actor-authority-unchanged"
                      , "no-self-escalation"
                      ]
+                  && ruleTheoremNames BoundedSelfUpdateRule
+                    == [ "case-scope-is-scope-argument"
+                       , "policy-bounds-payload"
+                       , "actor-authority-written"
+                       , "no-self-escalation"
+                       ]
               )
           , check
               "the reported theorem names come from the structured spec authority"
-              ( requiredTheoremNames == map theoremSpecName requiredTheoremSpecs
-                  && verifiedTheorems expectedObligation == requiredTheoremNames
+              ( ruleTheoremNames ChangeOtherRule == map theoremSpecName (ruleTheoremSpecs ChangeOtherRule)
+                  && ruleTheoremNames BoundedSelfUpdateRule
+                    == map theoremSpecName (ruleTheoremSpecs BoundedSelfUpdateRule)
+                  && verifiedCaseTheorems (NonEmpty.head (verifiedCases expectedObligation))
+                    == ruleTheoremNames ChangeOtherRule
               )
           , check
-              "the structured artifact inventory carries every required theorem block"
-              ( missingRequiredTheorems artifact == []
-                  && map fst (artifactTheoremBlocks artifact) == requiredTheoremNames
+              "the structured artifact inventory carries every required theorem block of the one rule-1 case"
+              ( missingRequiredTheorems plan artifact == []
+                  && map generatedCasePosition (artifactCases artifact) == [0]
+                  && map generatedCaseRule (artifactCases artifact) == [ChangeOtherRule]
+                  && map (map fst . generatedCaseTheoremBlocks) (artifactCases artifact)
+                    == [ruleTheoremNames ChangeOtherRule]
                   && artifactModuleText artifact == generated
               )
           , check
-              "a doctored artifact missing theorem blocks reports exactly the missing theorems"
-              ( missingRequiredTheorems
-                  ( artifact
-                      { artifactTheoremBlocks =
-                          [ block
-                          | block <- artifactTheoremBlocks artifact
-                          , fst block /= "no-self-escalation"
-                          ]
-                      }
-                  )
-                  == ["no-self-escalation"]
-                  && missingRequiredTheorems
-                    (artifact {artifactTheoremBlocks = []})
-                    == requiredTheoremNames
+              "the singleton rule-1 artifact uses the compatibility layout (no position-qualified modules)"
+              ( not ("module Case0 where" `Text.isInfixOf` generated)
+                  && not ("module ManifestCase0 where" `Text.isInfixOf` generated)
+              )
+          , check
+              "a doctored artifact missing theorem blocks reports exactly the missing case-qualified theorems"
+              ( case artifactCases artifact of
+                  [generatedCase] ->
+                    missingRequiredTheorems
+                      plan
+                      ( artifact
+                          { artifactCases =
+                              [ generatedCase
+                                  { generatedCaseTheoremBlocks =
+                                      [ block
+                                      | block <- generatedCaseTheoremBlocks generatedCase
+                                      , fst block /= "no-self-escalation"
+                                      ]
+                                  }
+                              ]
+                          }
+                      )
+                      == ["case 0: no-self-escalation"]
+                      && missingRequiredTheorems plan (artifact {artifactCases = []})
+                        == map ("case 0: " <>) (ruleTheoremNames ChangeOtherRule)
+                      && missingRequiredTheorems
+                        plan
+                        (artifact {artifactCases = [generatedCase {generatedCaseRule = BoundedSelfUpdateRule}]})
+                        == map ("case 0: " <>) (ruleTheoremNames ChangeOtherRule)
+                      && missingRequiredTheorems
+                        plan
+                        (artifact {artifactCases = [generatedCase {generatedCasePosition = 1}]})
+                        == map ("case 0: " <>) (ruleTheoremNames ChangeOtherRule)
+                  _ -> False
               )
           , check
               "every rendered theorem block appears verbatim inside the generated theorem module"
@@ -409,7 +534,7 @@ generatedArtifactChecks baseModel goldenText =
                       Text.unlines (renderedTheoremBlock spec)
                         `Text.isInfixOf` generated
                   )
-                  requiredTheoremSpecs
+                  (ruleTheoremSpecs ChangeOtherRule)
               )
           , check
               "every required theorem has its exact checked manifest entry in the generated module"
@@ -418,7 +543,7 @@ generatedArtifactChecks baseModel goldenText =
                       Text.unlines (renderedManifestBlock spec)
                         `Text.isInfixOf` generated
                   )
-                  requiredTheoremSpecs
+                  (ruleTheoremSpecs ChangeOtherRule)
               )
           , check
               "the manifest entries reference the theorems only through the inner module qualification"
@@ -432,7 +557,7 @@ generatedArtifactChecks baseModel goldenText =
                         )
                           `elem` generatedLines
                     )
-                    requiredTheoremNames
+                    (ruleTheoremNames ChangeOtherRule)
               )
           , check
               "the generated module contains no proof escape hatch"
@@ -533,7 +658,7 @@ manifestAgdaChecks baseModel =
             Text.unlines
               ( concat
                   [ renderedTheoremBlock spec
-                  | spec <- requiredTheoremSpecs
+                  | spec <- ruleTheoremSpecs ChangeOtherRule
                   , theoremSpecName spec == name
                   ]
               )
@@ -567,7 +692,7 @@ manifestAgdaChecks baseModel =
                                 else line
                             | line <- renderedTheoremBlock spec
                             ]
-                          | spec <- requiredTheoremSpecs
+                          | spec <- ruleTheoremSpecs ChangeOtherRule
                           , theoremSpecName spec == "no-self-escalation"
                           ]
                       )
@@ -833,18 +958,30 @@ unsupportedMatrixChecks nspeBytes unsafeBytes acmeBytes acmeModel baseModel =
               ["guarantees", "0"]
               "the TenantIsolation guarantee family is not supported by the verifier"
           ]
-      , matrixCheck
-          "two escalation cases are unsupported"
-          ( overGuarantee0
-              (overMember "cases" (\cs -> toJSON (asList cs <> asList cs)))
-              baseValue
+      , check
+          "a duplicated rule-1 case yields two tagged rule-1 case plans in authored order (never deduplicated)"
+          ( case
+              pipelineModel
+                ( encodeValue
+                    ( overGuarantee0
+                        (overMember "cases" (\cs -> toJSON (asList cs <> asList cs)))
+                        baseValue
+                    )
+                )
+            of
+              Just model ->
+                case supportPlan model of
+                  Right plan ->
+                    map caseRule (NonEmpty.toList (planCases plan))
+                      == [ChangeOtherRule, ChangeOtherRule]
+                      && map casePosition (NonEmpty.toList (planCases plan)) == [0, 1]
+                      && map (sourcedValue . caseActionName) (NonEmpty.toList (planCases plan))
+                        == ["Membership.changeRole", "Membership.changeRole"]
+                  Left _ -> False
+              Nothing -> False
           )
-          [ UnsupportedReason
-              ["guarantees", "0"]
-              "the guarantee selects 2 escalation cases, but only exactly one case is supported"
-          ]
       , matrixCheck
-          "a case naming a two-parameter action is unsupported"
+          "a case naming a two-parameter action is a rule-2 candidate and unsupported with its parameter mismatches"
           ( overGuarantee0
               ( overMember "cases"
                   ( overIndex 0
@@ -858,8 +995,11 @@ unsupportedMatrixChecks nspeBytes unsafeBytes acmeBytes acmeModel baseModel =
               baseValue
           )
           [ UnsupportedReason
-              ["actions", "3"]
-              "the case action declares 2 parameters, but the supported proof rule requires exactly three: subject, scope, and payload, in that order"
+              ["actions", "3", "parameters", "0"]
+              "the first parameter of a bounded self-update case action must have the entity-reference type of the authority's scope endpoint"
+          , UnsupportedReason
+              ["actions", "3", "parameters", "1"]
+              "the second parameter of a bounded self-update case action must have the authority enum's type"
           ]
       , matrixCheck
           "a RemoveRelation effect is unsupported"
@@ -1934,6 +2074,336 @@ coordinatedParameterPositionDrift =
         other -> other
 
 --------------------------------------------------------------------
+-- Group 4f: the distinguished-User anchor (coherently redirected subject)
+--------------------------------------------------------------------
+
+-- | The review's verification-boundary forgery.  Canonical positional
+-- identities are left intact; the authority relation's subject
+-- endpoint is redirected to another declared entity, and every piece
+-- of evidence the old self-consistency-only checks compared against
+-- the subject — the subject parameter's declared entity, every stored
+-- @Actor@ entity, and every stored subject-typed value and policy
+-- type of the case action — is redirected coherently with it, so
+-- subject endpoint, parameter types, @Actor@ terms, and bindings all
+-- agree on the wrong entity and no self-consistency check can object
+-- (the driver of this forgery on the sources before the anchor
+-- existed produced a plan naming that entity as the subject, a
+-- rendered Wasp bundle, and VERIFIED under real Agda, the generated
+-- module transcribing the redirected subject as the kernel's fixed
+-- @UserK@).  The normalized model's independently carried
+-- distinguished-User identity is the one piece of evidence the
+-- redirection cannot make consistent, and each forgery must halt on
+-- exactly that anchor invariant at the authority's subject endpoint
+-- reference — the one finding, so it dominates by being alone: no
+-- unsupported-shape reason and no other invariant fires — through
+-- the pure gate, through the complete production boundary with no
+-- checker on the search path (the invariant class, never
+-- 'CheckerUnavailable'), through an injected runner that records
+-- zero invocations, and through the Wasp emitter as the same
+-- invariant before any lowering.  The unmodified documents keep
+-- verifying under real Agda 2.8.0 with their subject anchored to the
+-- carried identity, and the Wasp Profile-v0 gate keeps accepting the
+-- singleton rule-1 document and refusing the two-case document for
+-- exactly its capability boundary.
+anchoredSubjectChecks :: ByteString -> ByteString -> N.Model -> N.Model -> IO [Check]
+anchoredSubjectChecks nspeBytes selfUpdateBytes baseModel selfUpdateModel =
+  case pipelineModel (encodeValue singletonRule2Value) of
+    Nothing ->
+      pure
+        [ check
+            "the singleton rule-2 document normalizes through the public pipeline (prerequisite)"
+            False
+        ]
+    Just singletonRule2Model ->
+      withScratchDirectory $ \scratch -> do
+        let emptyDirectory = scratch </> "empty"
+        createDirectory emptyDirectory
+        calls <- newIORef (0 :: Int)
+        let runner _ = modifyIORef' calls (+ 1) >> pure (Right ())
+            forgeries =
+              [ ( "the coherently redirected rule-1 subject"
+                , redirectSubjectEntity [4] foreignSubject baseModel
+                , [4]
+                )
+              , ( "the coherently redirected singleton rule-2 subject"
+                , redirectSubjectEntity [5] foreignSubject singletonRule2Model
+                , [5]
+                )
+              , ( "the coherently redirected two-case subject"
+                , redirectSubjectEntity [4, 5] foreignSubject selfUpdateModel
+                , [4, 5]
+                )
+              , ( "a drifted distinguished-User anchor under untouched evidence"
+                , baseModel {N.modelUserEntity = EntityId 1}
+                , []
+                )
+              ]
+        forgeryChecks <-
+          mapM
+            ( \(name, mutated, redirectedActions) -> do
+                production <-
+                  withEnvVarSet "PATH" emptyDirectory (verifyModelDirect mutated)
+                injected <- verifyModelWith runner mutated
+                pure
+                  [ check
+                      (name <> " halts the pure gate on exactly the anchor invariant at the authority's subject endpoint reference")
+                      (supportPlan mutated == Left (PlanInvariant (anchorViolation :| [])))
+                  , check
+                      (name <> " classifies through the production boundary as the invariant class with no checker on the search path")
+                      (production == Just (Left (VerifierInvariantViolations (anchorViolation :| []))))
+                  , check
+                      (name <> " never verifies through an injected runner")
+                      (injected == Left (VerifierInvariantViolations (anchorViolation :| [])))
+                  , check
+                      (name <> " refuses the Wasp emitter with the same invariant before any lowering")
+                      (renderBundleFromModel mutated == Left (RenderInvariant (anchorViolation :| [])))
+                  , check
+                      (name <> " is coherent: the subject endpoint, the subject-typed parameters, and every stored Actor entity of the redirected case actions agree on the forged subject")
+                      (null redirectedActions || subjectEvidenceAgreesOn foreignSubject redirectedActions mutated)
+                  ]
+            )
+            forgeries
+        runnerCalls <- readIORef calls
+        baseRun <- runPublicVerification nspeBytes
+        singletonRule2Run <- runPublicVerification (encodeValue singletonRule2Value)
+        selfUpdateRun <- runPublicVerification selfUpdateBytes
+        pure
+          ( concat forgeryChecks
+              <> [ check
+                     "no redirected-subject forgery ever reaches an injected checker runner (zero invocations)"
+                     (runnerCalls == 0)
+                 , check
+                     "the unmodified documents carry the entity declared at position 0 as their distinguished-User anchor, and their plans anchor the subject entity to it"
+                     ( all
+                         ( \model ->
+                             N.modelUserEntity model == EntityId 0
+                               && case supportPlan model of
+                                 Right plan -> planSubjectEntityId plan == N.modelUserEntity model
+                                 Left _ -> False
+                         )
+                         [baseModel, singletonRule2Model, selfUpdateModel]
+                     )
+                 , check
+                     "ordinary S0 remains supported and VERIFIED under real Agda 2.8.0"
+                     (baseRun == Just (Right (VerificationVerified expectedObligation)))
+                 , check
+                     "the exact singleton rule-2 document remains supported and VERIFIED under real Agda 2.8.0"
+                     ( singletonRule2Run
+                         == Just
+                           ( Right
+                               ( VerificationVerified
+                                   ( VerifiedObligation
+                                       "NoSelfPrivilegeEscalation"
+                                       (boundedSelfUpdateCase 0 "Membership.changeOwnRole" :| [])
+                                   )
+                               )
+                           )
+                     )
+                 , check
+                     "the rule-1 + rule-2 fixture remains VERIFIED under real Agda 2.8.0"
+                     (selfUpdateRun == Just (Right (VerificationVerified expectedSelfUpdateObligation)))
+                 , check
+                     "Wasp Profile v0 still accepts S0 as its one change-other case"
+                     ( case supportPlan baseModel of
+                         Right plan ->
+                           either (const False) ((== ChangeOtherRule) . caseRule . profileCase) (profileV0Plan plan)
+                             && either (const False) (const True) (renderBundleFromModel baseModel)
+                         Left _ -> False
+                     )
+                 , check
+                     "Wasp still refuses R1 only for its Profile-v0 capability boundary (the multi-case reason at the guarantee, never an invariant)"
+                     ( renderBundleFromModel selfUpdateModel
+                         == Left
+                           ( RenderUnsupported
+                               ( UnsupportedReason
+                                   ["guarantees", "0"]
+                                   "Wasp Profile v0 lowers exactly one Rule-1 case; this guarantee selects 2 cases"
+                                   :| []
+                               )
+                           )
+                     )
+                 ]
+          )
+  where
+    foreignSubject = EntityId 2
+    anchorViolation = anchorDriftViolation
+
+    singletonRule2Value =
+      overCases (\cs -> toJSON (drop 1 (asList cs))) (decodeValue selfUpdateBytes)
+
+-- | The anchor invariant every forgery of 'anchoredSubjectChecks' and
+-- the materiality tables must report: anchored where the typechecker
+-- states the same judgment, the authority's subject endpoint
+-- reference.
+anchorDriftViolation :: VerifierInvariantViolation
+anchorDriftViolation =
+  VerifierInvariantViolation
+    ["guarantees", "0", "authority", "subjectEndpoint"]
+    "the authority's subject entity is not the distinguished User entity the normalized model carries"
+
+-- | Redirect the subject evidence of a model coherently: the authority
+-- relation's subject endpoint entity reference (relation 0, endpoint
+-- 0) and, in every action at the given positions, every parameter
+-- declared at the model's distinguished-User entity, every stored
+-- @Actor@ entity, and every stored value and policy type at that
+-- entity's reference type — all to the given entity.  Canonical
+-- identities, positions, and every other reference are untouched, so
+-- the canonical preflight passes and every self-consistency
+-- comparison between subject, parameters, bindings, and @Actor@
+-- terms agrees.
+redirectSubjectEntity :: [Int] -> EntityId -> N.Model -> N.Model
+redirectSubjectEntity actionIndices to model =
+  model
+    { N.modelRelations = onListIndex 0 redirectRelation (N.modelRelations model)
+    , N.modelActions =
+        [ if index `elem` actionIndices then redirectAction action else action
+        | (index, action) <- zip [0 ..] (N.modelActions model)
+        ]
+    }
+  where
+    from = N.modelUserEntity model
+
+    redirectRelation relation =
+      relation
+        { N.relationEndpoints =
+            case N.relationEndpoints relation of
+              Two subject scope -> Two (redirectEndpoint subject) scope
+              One subject -> One (redirectEndpoint subject)
+        }
+    redirectEndpoint endpoint =
+      endpoint {N.endpointEntity = retargetIf (N.endpointEntity endpoint)}
+    retargetIf ref = if refTarget ref == from then retarget ref to else ref
+
+    redirectAction action =
+      action
+        { N.actionParameters = map redirectParameter (N.actionParameters action)
+        , N.actionBody =
+            case N.actionBody action of
+              N.AuthenticatedOnlyBody allow shape ->
+                N.AuthenticatedOnlyBody (policy allow) (redirectShape shape)
+              other -> other
+        }
+    redirectParameter parameter =
+      parameter
+        { N.parameterType =
+            case N.parameterType parameter of
+              N.EntityRefParameterType path ref ->
+                N.EntityRefParameterType path (retargetIf ref)
+              other -> other
+        }
+    redirectShape shape =
+      case shape of
+        N.MutationShape (N.SetRelationEffect path relationRef bindings payload) resultPath ->
+          N.MutationShape
+            (N.SetRelationEffect path relationRef (fmap binding bindings) (value payload))
+            resultPath
+        other -> other
+    binding b = b {N.endpointBindingTerm = value (N.endpointBindingTerm b)}
+
+    valueType t =
+      case t of
+        EntityRefType e | e == from -> EntityRefType to
+        other -> other
+    policyType t =
+      case t of
+        ValuePolicyType v -> ValuePolicyType (valueType v)
+        other -> other
+
+    value term =
+      term
+        { N.valueTermType = valueType (N.valueTermType term)
+        , N.valueTermNode =
+            case N.valueTermNode term of
+              N.ActorNode e | e == from -> N.ActorNode to
+              N.AttributeNode source attribute -> N.AttributeNode (value source) attribute
+              other -> other
+        }
+    policy term =
+      term
+        { N.policyTermType = policyType (N.policyTermType term)
+        , N.policyTermNode =
+            case N.policyTermNode term of
+              N.ValuePolicyNode v -> N.ValuePolicyNode (value v)
+              N.LookupNode r bindings -> N.LookupNode r (fmap binding bindings)
+              N.SomeNode v -> N.SomeNode (value v)
+              N.IsSomeNode p -> N.IsSomeNode (policy p)
+              N.EqualNode l r -> N.EqualNode (policy l) (policy r)
+              N.LessOrEqualNode o l r -> N.LessOrEqualNode o (policy l) (policy r)
+              N.AndNode l r -> N.AndNode (policy l) (policy r)
+              N.OrNode l r -> N.OrNode (policy l) (policy r)
+              N.NotNode p -> N.NotNode (policy p)
+              other -> other
+        }
+
+-- | Whether a redirected model's subject evidence is coherent: the
+-- authority relation's subject endpoint references the given entity,
+-- no parameter of the given actions is declared at the model's
+-- distinguished-User entity any more, and every stored @Actor@ entity
+-- of those actions' allow policies and effects is exactly the given
+-- entity (and at least one such @Actor@ term exists).
+subjectEvidenceAgreesOn :: EntityId -> [Int] -> N.Model -> Bool
+subjectEvidenceAgreesOn subject actionIndices model =
+  endpointAgrees
+    && not (null actors)
+    && all (== subject) actors
+    && null userTypedParameters
+  where
+    actions =
+      [ action
+      | (index, action) <- zip [0 :: Int ..] (N.modelActions model)
+      , index `elem` actionIndices
+      ]
+    endpointAgrees =
+      case N.modelRelations model of
+        relation : _ ->
+          case N.relationEndpoints relation of
+            Two subjectEndpoint _ -> refTarget (N.endpointEntity subjectEndpoint) == subject
+            One subjectEndpoint -> refTarget (N.endpointEntity subjectEndpoint) == subject
+        [] -> False
+    userTypedParameters =
+      [ ()
+      | action <- actions
+      , parameter <- N.actionParameters action
+      , N.EntityRefParameterType _ ref <- [N.parameterType parameter]
+      , refTarget ref == N.modelUserEntity model
+      ]
+    actors =
+      concat
+        [ case N.actionBody action of
+            N.AuthenticatedOnlyBody allow shape -> policyActors allow <> shapeActors shape
+            N.AnyPrincipalBody _ _ -> []
+        | action <- actions
+        ]
+    shapeActors :: N.ActionShape availability -> [EntityId]
+    shapeActors shape =
+      case shape of
+        N.MutationShape (N.SetRelationEffect _ _ bindings payload) _ ->
+          concatMap (valueActors . N.endpointBindingTerm) (endpointList bindings) <> valueActors payload
+        _ -> []
+    endpointList :: OneOrTwo a -> [a]
+    endpointList (One a) = [a]
+    endpointList (Two a b) = [a, b]
+    valueActors :: N.ValueTerm availability -> [EntityId]
+    valueActors term =
+      case N.valueTermNode term of
+        N.ActorNode e -> [e]
+        N.AttributeNode source _ -> valueActors source
+        _ -> []
+    policyActors :: N.PolicyTerm availability -> [EntityId]
+    policyActors term =
+      case N.policyTermNode term of
+        N.ValuePolicyNode v -> valueActors v
+        N.LookupNode _ bindings -> concatMap (valueActors . N.endpointBindingTerm) (endpointList bindings)
+        N.NoneNode _ -> []
+        N.SomeNode v -> valueActors v
+        N.IsSomeNode p -> policyActors p
+        N.EqualNode l r -> policyActors l <> policyActors r
+        N.LessOrEqualNode _ l r -> policyActors l <> policyActors r
+        N.AndNode l r -> policyActors l <> policyActors r
+        N.OrNode l r -> policyActors l <> policyActors r
+        N.NotNode p -> policyActors p
+
+--------------------------------------------------------------------
 -- Group 5: materiality and forged models
 --------------------------------------------------------------------
 
@@ -1950,7 +2420,7 @@ materialityChecks baseModel goldenText =
     (length materialityTable == expectedTableSize)
     : map runEntry materialityTable
   where
-    expectedTableSize = 62
+    expectedTableSize = 64
 
     runEntry (name, mutate, expected) =
       check ("materiality: " <> name) $
@@ -1960,9 +2430,13 @@ materialityChecks baseModel goldenText =
                 case supportPlan mutated of
                   Right plan ->
                     renderObligationModule plan /= goldenText
-                      -- The Wasp emitter consumes the same plan: the
-                      -- mutated metadata must change its bundle too.
-                      && Just (waspBytes (renderBundleFromPlan plan)) /= baseWaspBytes
+                      -- The Wasp emitter consumes the same plan (through
+                      -- its Profile-v0 gate, which the singleton rule-1
+                      -- plan passes): the mutated metadata must change
+                      -- its bundle too.
+                      && case profileV0Plan plan of
+                        Right profile -> Just (waspBytes (renderBundleFromPlan profile)) /= baseWaspBytes
+                        Left _ -> False
                   Left _ -> False
               FailsUnsupported reasons ->
                 supportPlan mutated
@@ -1977,13 +2451,24 @@ materialityChecks baseModel goldenText =
 
     -- The base bundle's bytes, for the materiality comparison.
     baseWaspBytes =
-      either (const Nothing) (Just . waspBytes . renderBundleFromPlan) (supportPlan baseModel)
+      case supportPlan baseModel of
+        Right plan ->
+          either (const Nothing) (Just . waspBytes . renderBundleFromPlan) (profileV0Plan plan)
+        Left _ -> Nothing
 
     waspBytes bundle = [(managedPath file, managedBytes file) | file <- bundleFiles bundle]
 
     materialityTable :: [(String, N.Model -> N.Model, Materiality)]
     materialityTable =
       [ ("model name metadata", renameModel "Mutated", GeneratedChanges)
+      , ( "forged distinguished-User anchor drift under untouched evidence"
+        , \m -> m {N.modelUserEntity = EntityId 1}
+        , FailsInvariant [anchorDriftViolation]
+        )
+      , ( "forged coherent redirection of the subject endpoint, subject parameter, and every Actor entity"
+        , redirectSubjectEntity [4] (EntityId 2)
+        , FailsInvariant [anchorDriftViolation]
+        )
       , ( "relation name metadata"
         , onRelation0 (\r -> r {N.relationName = rename (N.relationName r)})
         , GeneratedChanges
@@ -2548,6 +3033,936 @@ materialityChecks baseModel goldenText =
         other -> other
 
 --------------------------------------------------------------------
+-- Group 6a: the two-case self-update fixture under the real checker
+--------------------------------------------------------------------
+
+-- | The two-case fixture — a rule-1 change-other case followed by a
+-- rule-2 bounded-self-update case — verifies through the public
+-- pipeline under real Agda 2.8.0 with both cases tagged in authored
+-- order, twice identically; so do its singleton rule-2 variant (the
+-- rule-1 case removed) and its reordered variant (the rule-2 case
+-- first), whose positions follow the authored order and whose bytes
+-- differ from the golden — cases are never reordered.
+selfUpdatePipelineChecks :: ByteString -> N.Model -> IO [Check]
+selfUpdatePipelineChecks selfUpdateBytes selfUpdateModel = do
+  firstRun <- runPublicVerification selfUpdateBytes
+  secondRun <- runPublicVerification selfUpdateBytes
+  singletonRule2 <- runPublicVerification (encodeValue singletonRule2Value)
+  reordered <- runPublicVerification (encodeValue reorderedValue)
+  pure
+    [ check
+        "the two-case self-update fixture verifies through the public pipeline under real Agda 2.8.0"
+        (firstRun == Just (Right (VerificationVerified expectedSelfUpdateObligation)))
+    , check
+        "a second complete public verification run of the two-case fixture is identical"
+        (firstRun == secondRun)
+    , check
+        "the singleton rule-2 document verifies under real Agda 2.8.0 with its one case tagged rule 2"
+        ( singletonRule2
+            == Just
+              ( Right
+                  ( VerificationVerified
+                      ( VerifiedObligation
+                          "NoSelfPrivilegeEscalation"
+                          (boundedSelfUpdateCase 0 "Membership.changeOwnRole" :| [])
+                      )
+                  )
+              )
+        )
+    , check
+        "the reordered two-case document verifies under real Agda 2.8.0 with positions following the authored order"
+        ( reordered
+            == Just
+              ( Right
+                  ( VerificationVerified
+                      ( VerifiedObligation
+                          "NoSelfPrivilegeEscalation"
+                          ( boundedSelfUpdateCase 0 "Membership.changeOwnRole"
+                              :| [changeOtherCase 1 "Membership.changeRole"]
+                          )
+                      )
+                  )
+              )
+        )
+    , check
+        "the reordered document generates different bytes from the authored order (cases are never reordered)"
+        ( case (pipelineModel (encodeValue reorderedValue), supportPlan selfUpdateModel) of
+            (Just reorderedModel, Right basePlan) ->
+              case supportPlan reorderedModel of
+                Right reorderedPlan ->
+                  renderObligationModule reorderedPlan /= renderObligationModule basePlan
+                    && map caseRule (NonEmpty.toList (planCases reorderedPlan))
+                      == [BoundedSelfUpdateRule, ChangeOtherRule]
+                    && map casePosition (NonEmpty.toList (planCases reorderedPlan)) == [0, 1]
+                Left _ -> False
+            _ -> False
+        )
+    ]
+  where
+    selfUpdateValue = decodeValue selfUpdateBytes
+    singletonRule2Value = overCases (\cs -> toJSON (drop 1 (asList cs))) selfUpdateValue
+    reorderedValue = overCases (\cs -> toJSON (reverse (asList cs))) selfUpdateValue
+
+--------------------------------------------------------------------
+-- Group 6b: the multi-case generated artifact
+--------------------------------------------------------------------
+
+-- | The production-generated bytes of the two-case fixture are
+-- pinned against the reviewed golden, and the general layout is
+-- checked structurally: one position-qualified inner module per case
+-- holding exactly that case's rule group, one manifest module per
+-- case opening it, the plan-derived inventory complete and refusing
+-- every doctored per-case inventory, and dropping the rule-2 case
+-- from the model falls back to exactly the singleton golden bytes.
+selfUpdateArtifactChecks :: N.Model -> Text -> Text -> [Check]
+selfUpdateArtifactChecks selfUpdateModel goldenText singletonGoldenText =
+  case supportPlan selfUpdateModel of
+    Left _ ->
+      [check "the two-case fixture passes the support gate (prerequisite)" False]
+    Right plan ->
+      let artifact = generatedObligationArtifact plan
+          generated = renderObligationModule plan
+          generatedLines = Text.lines generated
+          sections = topLevelSections generatedLines
+          sectionOf header = maybe [] id (lookup header sections)
+          caseSection position = sectionOf ("module " <> generatedCaseModuleName position <> " where")
+          manifestSection position = sectionOf ("module " <> generatedManifestModuleName position <> " where")
+          containsBlock sectionLines block = Text.unlines block `Text.isInfixOf` Text.unlines sectionLines
+          caseBlocks rule = [indentLines 2 (renderedTheoremBlock spec) | spec <- ruleTheoremSpecs rule]
+          manifestBlocks rule = [indentLines 2 (renderedManifestBlock spec) | spec <- ruleTheoremSpecs rule]
+          hostileName = "evil\n-} postulate broken : Set {-"
+          hostileGenerated =
+            fmap renderObligationModule (rightMaybe (supportPlan (renameModel hostileName selfUpdateModel)))
+          withoutRule2 = onGuarantee0 dropSecondCase selfUpdateModel
+          dropSecondCase guarantee =
+            case guarantee of
+              N.NoSelfPrivilegeEscalationGuarantee path authority (firstCase :| _) ->
+                N.NoSelfPrivilegeEscalationGuarantee path authority (firstCase :| [])
+              other -> other
+       in [ check
+              "the two-case generated module is byte-identical to the reviewed golden"
+              (generated == goldenText)
+          , check
+              "the two-case module carries the safe pragma once, the fixed module name, and the five kernel imports"
+              ( take 1 generatedLines == ["{-# OPTIONS --safe #-}"]
+                  && Text.count "{-#" generated == 1
+                  && "module Mithril.Generated where" `elem` generatedLines
+                  && [line | line <- generatedLines, "open import" `Text.isPrefixOf` line]
+                    == [ "open import Mithril.Base"
+                       , "open import Mithril.Core"
+                       , "open import Mithril.Policy"
+                       , "open import Mithril.Effect"
+                       , "open import Mithril.Guarantee"
+                       ]
+              )
+          , check
+              "the top-level modules are the position-qualified case and manifest modules in authored order"
+              ( map fst sections
+                  == [ "module Mithril.Generated where"
+                     , "module Case0 where"
+                     , "module Case1 where"
+                     , "module ManifestCase0 where"
+                     , "module ManifestCase1 where"
+                     ]
+                  && generatedCaseModuleName 0 == "Case0"
+                  && generatedManifestModuleName 1 == "ManifestCase1"
+              )
+          , check
+              "the structured artifact inventory carries every case's complete rule group and nothing else"
+              ( missingRequiredTheorems plan artifact == []
+                  && map generatedCasePosition (artifactCases artifact) == [0, 1]
+                  && map generatedCaseRule (artifactCases artifact) == [ChangeOtherRule, BoundedSelfUpdateRule]
+                  && map (map fst . generatedCaseTheoremBlocks) (artifactCases artifact)
+                    == [ruleTheoremNames ChangeOtherRule, ruleTheoremNames BoundedSelfUpdateRule]
+                  && artifactModuleText artifact == generated
+              )
+          , check
+              "every inventoried block is emitted verbatim, each inside its own case module"
+              ( all (containsBlock (caseSection 0)) (caseBlocks ChangeOtherRule)
+                  && all (containsBlock (caseSection 1)) (caseBlocks BoundedSelfUpdateRule)
+                  && all (\block -> Text.unlines block `Text.isInfixOf` generated)
+                    (concatMap (map snd . generatedCaseTheoremBlocks) (artifactCases artifact))
+                  && Text.count "  module GeneratedTheorems where" generated == 2
+              )
+          , check
+              "each case module transcribes exactly its own rule"
+              ( any ("(setRelE (arg subjectParam) (arg scopeParam) (arg payloadParam))" `Text.isInfixOf`) (caseSection 0)
+                  && any ("(setRelE actorT (arg scopeParam) (arg payloadParam))" `Text.isInfixOf`) (caseSection 1)
+                  && any ("allowGuard = notT (eqT actorT (arg subjectParam))" `Text.isInfixOf`) (caseSection 0)
+                  && not (any ("allowGuard" `Text.isInfixOf`) (caseSection 1))
+                  && any ("obligationCtx = ∅ ▸ entity UserK ▸ entity OrgK ▸ role" `Text.isInfixOf`) (caseSection 0)
+                  && any ("obligationCtx = ∅ ▸ entity OrgK ▸ role" `Text.isInfixOf`) (caseSection 1)
+                  && any ("scopeParam = there here" `Text.isInfixOf`) (caseSection 1)
+                  && any ("payloadParam = here" `Text.isInfixOf`) (caseSection 1)
+                  && any ("policy-bounds-payload s a γ pol = pol" `Text.isInfixOf`) (caseSection 1)
+                  && any ("actor-authority-written cap al = execute-setRel-point cap al" `Text.isInfixOf`) (caseSection 1)
+                  && not (any ("execute-setRel-point" `Text.isInfixOf`) (caseSection 0))
+              )
+          , check
+              "each manifest module opens exactly its own case and restates every theorem of that case's rule"
+              ( any (== "  open Case0") (manifestSection 0)
+                  && any (== "  open Case1") (manifestSection 1)
+                  && not (any ("open Case1" `Text.isInfixOf`) (manifestSection 0))
+                  && not (any ("open Case0" `Text.isInfixOf`) (manifestSection 1))
+                  && all (containsBlock (manifestSection 0)) (manifestBlocks ChangeOtherRule)
+                  && all (containsBlock (manifestSection 1)) (manifestBlocks BoundedSelfUpdateRule)
+                  && not (any ("policy-bounds-payload" `Text.isInfixOf`) (manifestSection 0))
+                  && not (any ("policy-actor-distinct" `Text.isInfixOf`) (manifestSection 1))
+              )
+          , check
+              "a doctored per-case inventory reports exactly the missing case-qualified theorems"
+              ( case artifactCases artifact of
+                  [case0, case1] ->
+                    missingRequiredTheorems
+                      plan
+                      ( artifact
+                          { artifactCases =
+                              [ case0
+                              , case1
+                                  { generatedCaseTheoremBlocks =
+                                      filter ((/= "no-self-escalation") . fst) (generatedCaseTheoremBlocks case1)
+                                  }
+                              ]
+                          }
+                      )
+                      == ["case 1: no-self-escalation"]
+                      && missingRequiredTheorems plan (artifact {artifactCases = [case0]})
+                        == map ("case 1: " <>) (ruleTheoremNames BoundedSelfUpdateRule)
+                      && missingRequiredTheorems plan (artifact {artifactCases = [case1]})
+                        == map ("case 0: " <>) (ruleTheoremNames ChangeOtherRule)
+                      && missingRequiredTheorems
+                        plan
+                        (artifact {artifactCases = [case0, case1 {generatedCaseRule = ChangeOtherRule}]})
+                        == map ("case 1: " <>) (ruleTheoremNames BoundedSelfUpdateRule)
+                      && missingRequiredTheorems
+                        plan
+                        (artifact {artifactCases = [case1 {generatedCasePosition = 0}, case0 {generatedCasePosition = 1}]})
+                        == map ("case 0: " <>) (ruleTheoremNames ChangeOtherRule)
+                          <> map ("case 1: " <>) (ruleTheoremNames BoundedSelfUpdateRule)
+                      && missingRequiredTheorems plan (artifact {artifactCases = []})
+                        == map ("case 0: " <>) (ruleTheoremNames ChangeOtherRule)
+                          <> map ("case 1: " <>) (ruleTheoremNames BoundedSelfUpdateRule)
+                  _ -> False
+              )
+          , check
+              "the two-case module contains no proof escape hatch, tab, carriage return, or temporary path, and ends with one newline"
+              ( all
+                  (\banned -> not (banned `Text.isInfixOf` generated))
+                  [ "postulate", "primTrustMe", "TERMINATING", "NON_TERMINATING", "REWRITE"
+                  , "COMPILE", "FOREIGN", "unquote", "{!", "\t", "\r", "/tmp", "dist-newstyle"
+                  ]
+                  && "\n" `Text.isSuffixOf` generated
+                  && not ("\n\n" `Text.isSuffixOf` generated)
+                  && not (any ((" " `Text.isSuffixOf`) . id) generatedLines)
+              )
+          , check
+              "the consumed evidence of both cases appears in the generated bytes"
+              ( all
+                  (`Text.isInfixOf` generated)
+                  [ "-- selected cases: 2"
+                  , "-- case 0: rule 1 (change-other)"
+                  , "-- case 1: rule 2 (bounded-self-update)"
+                  , "-- case action: \"Membership.changeRole\" (action 4)"
+                  , "-- case action: \"Membership.changeOwnRole\" (action 5)"
+                  , "-- case scope binding: endpoint \"organization\" = Argument \"organization\" (parameter 0)"
+                  , "-- parameter 0: \"organization\" : EntityRef \"Organization\""
+                  , "-- parameter 1: \"newRole\" : Enum \"MembershipRole\""
+                  , "-- allow policy: LessOrEqual[order optional \"MembershipRole\", absence as bottom](Some(Argument[\"newRole\"]), Lookup[\"Membership\"](\"user\" = Actor, \"organization\" = Argument[\"organization\"]))"
+                  , "-- effect: SetRelation[\"Membership\"](\"user\" = Actor, \"organization\" = Argument[\"organization\"]) payload Argument[\"newRole\"]"
+                  , "-- Case 1: rule 2 (bounded-self-update), case action \"Membership.changeOwnRole\" (action 5)."
+                  ]
+              )
+          , check
+              "a hostile forged name is escaped in the two-case module, never a physical Agda line"
+              ( case hostileGenerated of
+                  Nothing -> False
+                  Just hostileText ->
+                    Text.pack (show hostileName) `Text.isInfixOf` hostileText
+                      && all
+                        (\line ->
+                           not ("postulate" `Text.isInfixOf` line)
+                             || "--" `Text.isPrefixOf` line)
+                        (Text.lines hostileText)
+              )
+          , check
+              "dropping the rule-2 case from the model falls back to exactly the singleton golden bytes (the compatibility layout)"
+              ( fmap renderObligationModule (rightMaybe (supportPlan withoutRule2))
+                  == Just singletonGoldenText
+              )
+          ]
+
+-- | Split a module's lines into top-level sections: the preamble
+-- (before any column-0 @module@ line) is dropped, and every
+-- column-0 @module … where@ line starts a section holding the lines
+-- up to the next one.
+topLevelSections :: [Text] -> [(Text, [Text])]
+topLevelSections = go Nothing []
+  where
+    go current acc remaining =
+      case remaining of
+        [] -> flush current acc []
+        line : more
+          | "module " `Text.isPrefixOf` line ->
+              flush current acc (go (Just line) [] more)
+          | otherwise -> go current (acc <> [line]) more
+    flush current acc rest =
+      case current of
+        Nothing -> rest
+        Just header -> (header, acc) : rest
+
+--------------------------------------------------------------------
+-- Group 6c: the per-case checked manifests under the real checker
+--------------------------------------------------------------------
+
+-- | The per-case manifests bind every theorem of every case: real
+-- Agda 2.8.0 accepts the two-case artifact and rejects a rule-2
+-- theorem that is removed (its name surviving only in comments and a
+-- longer identifier), renamed, wrongly typed, duplicated, replaced by
+-- a hole, or moved outside the case's inner theorem module, and a
+-- wrongly typed rule-1 theorem of the first case.  Removing a case's
+-- manifest module is deliberately shown to be invisible to Agda: that
+-- gap is closed by the generator, whose plan-derived inventory and
+-- rendering are pinned above, never by the checker.
+selfUpdateManifestAgdaChecks :: N.Model -> IO [Check]
+selfUpdateManifestAgdaChecks selfUpdateModel =
+  case supportPlan selfUpdateModel of
+    Left _ ->
+      pure [check "the two-case fixture passes the support gate (prerequisite)" False]
+    Right plan -> do
+      let generated = renderObligationModule plan
+          blockTextOf rule name =
+            Text.unlines
+              ( concat
+                  [ indentLines 2 (renderedTheoremBlock spec)
+                  | spec <- ruleTheoremSpecs rule
+                  , theoremSpecName spec == name
+                  ]
+              )
+          rule2Escalation = blockTextOf BoundedSelfUpdateRule "no-self-escalation"
+          rule1Escalation = blockTextOf ChangeOtherRule "no-self-escalation"
+          replaceRule2 replacementLines =
+            Text.replace rule2Escalation (Text.unlines replacementLines) generated
+          commentedMutant =
+            replaceRule2
+              [ ""
+              , "    -- no-self-escalation :"
+              , "    {- no-self-escalation {- no-self-escalation : -} -}"
+              , "    no-self-escalation-extended : Set₁"
+              , "    no-self-escalation-extended = Set"
+              ]
+          renamedMutant =
+            Text.replace
+              rule2Escalation
+              ( Text.unlines
+                  [ if "    no-self-escalation" `Text.isPrefixOf` line
+                      then "    renamed-" <> Text.drop 4 line
+                      else line
+                  | line <- Text.lines rule2Escalation
+                  ]
+              )
+              generated
+          wrongTypeMutant =
+            replaceRule2
+              [ ""
+              , "    no-self-escalation : Set₁"
+              , "    no-self-escalation = Set"
+              ]
+          duplicatedMutant =
+            Text.replace rule2Escalation (rule2Escalation <> rule2Escalation) generated
+          holeMutant =
+            Text.replace
+              "policy-bounds-payload s a γ pol = pol"
+              "policy-bounds-payload s a γ pol = ?"
+              generated
+          outerNameMutant =
+            replaceRule2
+              [ ""
+              , "  no-self-escalation : Set₁"
+              , "  no-self-escalation = Set"
+              ]
+          rule1WrongTypeMutant =
+            Text.replace
+              rule1Escalation
+              (Text.unlines ["", "    no-self-escalation : Set₁", "    no-self-escalation = Set"])
+              generated
+          manifestModuleStart = "\nmodule ManifestCase1 where\n"
+          unmanifestedMutant =
+            case Text.breakOn manifestModuleStart generated of
+              (before, rest) | not (Text.null rest) -> before <> "\n"
+              _ -> generated
+      controlAccepted <- realAgdaAccepts generated
+      commentedAccepted <- realAgdaAccepts commentedMutant
+      renamedAccepted <- realAgdaAccepts renamedMutant
+      wrongTypeAccepted <- realAgdaAccepts wrongTypeMutant
+      duplicatedAccepted <- realAgdaAccepts duplicatedMutant
+      holeAccepted <- realAgdaAccepts holeMutant
+      outerNameAccepted <- realAgdaAccepts outerNameMutant
+      rule1WrongTypeAccepted <- realAgdaAccepts rule1WrongTypeMutant
+      unmanifestedAccepted <- realAgdaAccepts unmanifestedMutant
+      pure
+        [ check
+            "the rule-2 and rule-1 no-self-escalation blocks are each rendered exactly once (prerequisite)"
+            ( Text.count rule2Escalation generated == 1
+                && Text.count rule1Escalation generated == 1
+                && rule1Escalation /= rule2Escalation
+                && Text.count "policy-bounds-payload s a γ pol = pol" generated == 1
+            )
+        , check "real Agda accepts the valid two-case manifest-bearing artifact" controlAccepted
+        , check
+            "real Agda rejects a removed rule-2 theorem whose name survives only in comments and a longer identifier"
+            (commentedMutant /= generated && not commentedAccepted)
+        , check
+            "real Agda rejects a renamed rule-2 theorem"
+            (renamedMutant /= generated && not renamedAccepted)
+        , check
+            "real Agda rejects a rule-2 theorem at the wrong type"
+            (wrongTypeMutant /= generated && not wrongTypeAccepted)
+        , check
+            "real Agda rejects a duplicated rule-2 theorem"
+            (duplicatedMutant /= generated && not duplicatedAccepted)
+        , check
+            "real Agda rejects a rule-2 proof replaced by a hole"
+            (holeMutant /= generated && not holeAccepted)
+        , check
+            "real Agda rejects a coincidental same-named declaration outside the case's theorem module"
+            (outerNameMutant /= generated && not outerNameAccepted)
+        , check
+            "real Agda rejects a wrongly typed rule-1 theorem of the first case in the two-case artifact"
+            (rule1WrongTypeMutant /= generated && not rule1WrongTypeAccepted)
+        , check
+            "removing a case's manifest module is invisible to Agda, so the generator's pinned inventory and rendering close that gap"
+            (unmanifestedMutant /= generated && unmanifestedAccepted)
+        ]
+
+--------------------------------------------------------------------
+-- Group 6d: the multi-case gate over authored variants
+--------------------------------------------------------------------
+
+-- | The pure gate over authored JSON variants of the two-case
+-- fixture: both cases tagged in authored order; every rule-2
+-- near-miss and every mixed document with one unsupported case
+-- refused with reasons anchored at the offending case or action —
+-- with no head-only selection, no dropping, no reordering, and no
+-- deduplication — and the dangerous self-promotion mutation refused
+-- with the rule-1 guard reason, never a verdict.
+multiCaseGateChecks :: ByteString -> ByteString -> ByteString -> Text -> [Check]
+multiCaseGateChecks nspeBytes selfUpdateBytes dangerousBytes goldenText =
+  [ check
+      "the two-case fixture is supported with both cases tagged in authored order and every case present"
+      ( planSummary selfUpdateValue
+          == Just
+            [ (0, ChangeOtherRule, "Membership.changeRole")
+            , (1, BoundedSelfUpdateRule, "Membership.changeOwnRole")
+            ]
+      )
+  , check
+      "the rule-2 case plan records its scope and payload parameters, its case scope binding, and its effect scope binding"
+      ( case pipelineModel selfUpdateBytes >>= rightMaybe . supportPlan of
+          Just plan ->
+            case NonEmpty.toList (planCases plan) of
+              [_, rule2] ->
+                sourcedValue (caseScopeParameterName rule2) == "organization"
+                  && sourcedValue (casePayloadParameterName rule2) == "newRole"
+                  && caseScopeParameterId rule2 == ParameterId (ActionId 5) 0
+                  && casePayloadParameterId rule2 == ParameterId (ActionId 5) 1
+                  && planBindingEndpointName (caseScopeBinding rule2) == "organization"
+                  && planBindingParameterId (caseScopeBinding rule2) == ParameterId (ActionId 5) 0
+                  && case caseMatch rule2 of
+                    BoundedSelfUpdateMatch facts ->
+                      selfUpdateEffectScopeBinding facts == caseScopeBinding rule2
+                    ChangeOtherMatch _ -> False
+              _ -> False
+          Nothing -> False
+      )
+  , check
+      "the singleton rule-2 document is supported with its one case tagged rule 2 at position 0"
+      ( planSummary (overCases (\cs -> toJSON (drop 1 (asList cs))) selfUpdateValue)
+          == Just [(0, BoundedSelfUpdateRule, "Membership.changeOwnRole")]
+      )
+  , check
+      "three cases (a duplicated rule-2 case) yield three tagged plans in authored order (never deduplicated)"
+      ( planSummary (overCases (\cs -> toJSON (asList cs <> drop 1 (asList cs))) selfUpdateValue)
+          == Just
+            [ (0, ChangeOtherRule, "Membership.changeRole")
+            , (1, BoundedSelfUpdateRule, "Membership.changeOwnRole")
+            , (2, BoundedSelfUpdateRule, "Membership.changeOwnRole")
+            ]
+      )
+  , check
+      "the dangerous self-promotion mutation is unsupported with the rule-1 guard reason, never a verdict"
+      ( gateReasonsOf dangerousBytes
+          == Just
+            [ UnsupportedReason
+                ["actions", "4", "allow", "right"]
+                "the second operand of the allow policy must itself be the conjunction And(actor/subject guard, subject membership)"
+            ]
+          && gateReasonsOf dangerousBytes == gateReasonsOf (encodeValue (unsafeGuardRemoved (decodeValue nspeBytes)))
+      )
+  , unsupportedCheck
+      "a supported first case never carries an unsupported second case (no head-only selection)"
+      (overAllow5 addIsSomeConjunct selfUpdateValue)
+      [UnsupportedReason ["actions", "5", "allow"] boundMessage]
+  , unsupportedCheck
+      "a supported second case never rescues an unsupported first case"
+      (unsafeGuardRemoved selfUpdateValue)
+      [ UnsupportedReason
+          ["actions", "4", "allow", "right"]
+          "the second operand of the allow policy must itself be the conjunction And(actor/subject guard, subject membership)"
+      ]
+  , unsupportedCheck
+      "both cases' mismatches are reported together, each anchored at its own action"
+      (overAllow5 addIsSomeConjunct (unsafeGuardRemoved selfUpdateValue))
+      [ UnsupportedReason
+          ["actions", "4", "allow", "right"]
+          "the second operand of the allow policy must itself be the conjunction And(actor/subject guard, subject membership)"
+      , UnsupportedReason ["actions", "5", "allow"] boundMessage
+      ]
+  , unsupportedCheck
+      "a rule-2 case with swapped parameter order is unsupported at both parameters"
+      ( overAction5
+          ( overMember "parameters" $ \params ->
+              case asList params of
+                [p0, p1] -> toJSON [p1, p0]
+                other -> toJSON other
+          )
+          selfUpdateValue
+      )
+      [ UnsupportedReason
+          ["actions", "5", "parameters", "0"]
+          "the first parameter of a bounded self-update case action must have the entity-reference type of the authority's scope endpoint"
+      , UnsupportedReason
+          ["actions", "5", "parameters", "1"]
+          "the second parameter of a bounded self-update case action must have the authority enum's type"
+      ]
+  , unsupportedCheck
+      "an extra third parameter makes the case a rule-1 candidate that fails every rule-1 parameter type"
+      (overAction5 (overMember "parameters" (appendParameter "extra" projectType)) selfUpdateValue)
+      [ UnsupportedReason
+          ["actions", "5", "parameters", "0"]
+          "the first parameter must have the entity-reference type of the authority's subject endpoint"
+      , UnsupportedReason
+          ["actions", "5", "parameters", "1"]
+          "the second parameter must have the entity-reference type of the authority's scope endpoint"
+      , UnsupportedReason
+          ["actions", "5", "parameters", "2"]
+          "the third parameter must have the authority enum's type"
+      ]
+  , unsupportedCheck
+      "a four-parameter case action matches neither rule and is unsupported at the action"
+      ( overAction5
+          (overMember "parameters" (appendParameter "extra2" boolType . appendParameter "extra" projectType))
+          selfUpdateValue
+      )
+      [UnsupportedReason ["actions", "5"] (arityMessage 4)]
+  , unsupportedCheck
+      "a one-parameter case action matches neither rule and is unsupported at the action"
+      ( overAction5
+          ( overMember "parameters" (\params -> toJSON (take 1 (asList params)))
+              . overMember "allow" (overMember "left" (setMember "value" (enumLiteral "Admin")))
+              . overMember "effect" (setMember "payload" (enumLiteral "Member"))
+          )
+          selfUpdateValue
+      )
+      [UnsupportedReason ["actions", "5"] (arityMessage 1)]
+  , unsupportedCheck
+      "a rule-2 effect writing another relation is unsupported at the effect relation"
+      ( overSchemaMember
+          "relations"
+          (\rs -> toJSON (asList rs <> [setMember "name" (String "Membership2") original | original <- take 1 (asList rs)]))
+          (overAction5 (overMember "effect" (setMember "relation" (String "Membership2"))) selfUpdateValue)
+      )
+      [ UnsupportedReason
+          ["actions", "5", "effect", "relation"]
+          "the SetRelation effect writes a relation other than the authority relation"
+      ]
+  , unsupportedCheck
+      "a rule-2 effect payload literal is unsupported at the payload"
+      (overAction5 (overMember "effect" (setMember "payload" (enumLiteral "Admin"))) selfUpdateValue)
+      [ UnsupportedReason
+          ["actions", "5", "effect", "payload"]
+          "the SetRelation payload must be exactly the payload parameter"
+      ]
+  , unsupportedCheck
+      "a rule-2 case naming a non-SetRelation action fails the shared effect check before any rule"
+      ( overCases
+          ( overIndex 1
+              ( setMember "action" (String "Project.create")
+                  . setMember "scope" (toJSON [argumentTerm "organization"])
+              )
+          )
+          selfUpdateValue
+      )
+      [ UnsupportedReason
+          ["actions", "1"]
+          "the case action's effect is not a SetRelation on the authority relation, which the supported proof rule requires"
+      ]
+  , unsupportedCheck
+      "an explicit IsSome conjunct added to the rule-2 policy is unsupported at the allow root"
+      (overAllow5 addIsSomeConjunct selfUpdateValue)
+      [UnsupportedReason ["actions", "5", "allow"] boundMessage]
+  , unsupportedCheck
+      "a rule-2 comparison against a literal instead of the payload parameter is unsupported at the lifted value"
+      (overAllow5 (overMember "left" (setMember "value" (enumLiteral "Admin"))) selfUpdateValue)
+      [UnsupportedReason ["actions", "5", "allow", "left", "value"] boundMessage]
+  , unsupportedCheck
+      "a rule-2 comparison with swapped operands is unsupported at the allow root"
+      ( overAllow5
+          (\allow -> setMember "left" (member "right" allow) (setMember "right" (member "left" allow) allow))
+          selfUpdateValue
+      )
+      [UnsupportedReason ["actions", "5", "allow"] boundMessage]
+  , unsupportedCheck
+      "a rule-2 comparison looking up another relation is unsupported at the allow root"
+      ( overSchemaMember
+          "relations"
+          (\rs -> toJSON (asList rs <> [setMember "name" (String "Membership2") original | original <- take 1 (asList rs)]))
+          (overAllow5 (overMember "right" (setMember "relation" (String "Membership2"))) selfUpdateValue)
+      )
+      [UnsupportedReason ["actions", "5", "allow"] boundMessage]
+  , unsupportedCheck
+      "a negated rule-2 comparison is unsupported at the allow root"
+      (overAllow5 (\allow -> Aeson.object ["kind" Aeson..= String "Not", "value" Aeson..= allow]) selfUpdateValue)
+      [UnsupportedReason ["actions", "5", "allow"] boundMessage]
+  , unsupportedCheck
+      "a RemoveRelation rule-2 effect is unsupported at the action"
+      ( overAction5
+          ( overMember "effect" $ \effect ->
+              case effect of
+                Object members ->
+                  Object (KeyMap.insert "kind" (String "RemoveRelation") (KeyMap.delete "payload" members))
+                other -> other
+          )
+          selfUpdateValue
+      )
+      [ UnsupportedReason
+          ["actions", "5"]
+          "the case action's effect is not a SetRelation on the authority relation, which the supported proof rule requires"
+      ]
+  , check
+      "the two-case document's generated bytes are the golden while a supported variant with one case dropped is not"
+      ( fmap renderObligationModule (pipelineModel selfUpdateBytes >>= rightMaybe . supportPlan)
+          == Just goldenText
+          && fmap renderObligationModule
+            (pipelineModel (encodeValue (overCases (\cs -> toJSON (drop 1 (asList cs))) selfUpdateValue)) >>= rightMaybe . supportPlan)
+            /= Just goldenText
+      )
+  ]
+  where
+    selfUpdateValue = decodeValue selfUpdateBytes
+
+    planSummary value =
+      case pipelineModel (encodeValue value) of
+        Nothing -> Nothing
+        Just model ->
+          case supportPlan model of
+            Right plan ->
+              Just
+                [ (casePosition c, caseRule c, sourcedValue (caseActionName c))
+                | c <- NonEmpty.toList (planCases plan)
+                ]
+            Left _ -> Nothing
+
+    gateReasonsOf bytes =
+      case pipelineModel bytes of
+        Nothing -> Nothing
+        Just model ->
+          case supportPlan model of
+            Left (PlanUnsupported reasons) -> Just (NonEmpty.toList reasons)
+            _ -> Nothing
+
+    boundMessage =
+      "the allow policy of a bounded self-update case action must be exactly\
+      \ LessOrEqual(Some(payload parameter), Lookup(authority relation,\
+      \ [Actor, scope parameter])) at the absence-as-bottom optional\
+      \ ordering of the authority enum, with no further conjunct"
+
+    arityMessage :: Int -> Text
+    arityMessage count =
+      "the case action declares "
+        <> Text.pack (show count)
+        <> (if count == 1 then " parameter" else " parameters")
+        <> ", but the supported proof rules require exactly three (subject, scope, and payload; the change-other rule) or exactly two (scope and payload; the bounded self-update rule), in that order"
+
+    -- The rule-1 case of a document with its actor/subject guard
+    -- removed (the unsafe shape): And(floor, IsSome(membership)).
+    unsafeGuardRemoved =
+      overAllow (overMember "right" (member "right"))
+
+    addIsSomeConjunct allow =
+      Aeson.object
+        [ "kind" Aeson..= String "And"
+        , "left" Aeson..= allow
+        , "right"
+            Aeson..= Aeson.object
+              [ "kind" Aeson..= String "IsSome"
+              , "value" Aeson..= member "right" allow
+              ]
+        ]
+
+    appendParameter parameterName parameterType params =
+      toJSON
+        ( asList params
+            <> [Aeson.object ["name" Aeson..= String parameterName, "type" Aeson..= parameterType]]
+        )
+
+    projectType = Aeson.object ["kind" Aeson..= String "EntityRef", "entity" Aeson..= String "Project"]
+    boolType = Aeson.object ["kind" Aeson..= String "Bool"]
+
+    enumLiteral valueName =
+      Aeson.object
+        [ "kind" Aeson..= String "Enum"
+        , "enum" Aeson..= String "MembershipRole"
+        , "value" Aeson..= String valueName
+        ]
+
+    argumentTerm parameterName =
+      Aeson.object
+        [ "kind" Aeson..= String "Argument"
+        , "name" Aeson..= String parameterName
+        ]
+
+-- | One authored variant must land on exactly the given unsupported
+-- reasons through the pure gate.
+unsupportedCheck :: String -> Value -> [UnsupportedReason] -> Check
+unsupportedCheck name value expectedReasons =
+  check name $
+    case pipelineModel (encodeValue value) of
+      Nothing -> False
+      Just model ->
+        supportPlan model == Left (PlanUnsupported (NonEmpty.fromList expectedReasons))
+
+overAction5 :: (Value -> Value) -> Value -> Value
+overAction5 mutate = overMember "actions" (overIndex 5 mutate)
+
+overAllow5 :: (Value -> Value) -> Value -> Value
+overAllow5 mutate = overAction5 (overMember "allow" mutate)
+
+overCases :: (Value -> Value) -> Value -> Value
+overCases mutate = overGuarantee0 (overMember "cases" mutate)
+
+--------------------------------------------------------------------
+-- Group 6e: rule-2 materiality and forged models
+--------------------------------------------------------------------
+
+-- | A pinned-size mutation table over the two-case model's rule-2
+-- case: metadata mutations change the generated bytes; authored
+-- shapes outside the rule fail closed on their exact reasons; forged
+-- evidence — drifted stored types, ordered evidence, Actor entities,
+-- foreign parameter references, self-identities, and parameter
+-- positions of the second case — halts on its exact invariants.  The
+-- Wasp emitter, consuming the same plan through its Profile-v0 gate,
+-- refuses every supported variant with the deterministic profile
+-- reason and every failing variant with exactly the gate's findings.
+selfUpdateMaterialityChecks :: N.Model -> Text -> [Check]
+selfUpdateMaterialityChecks selfUpdateModel goldenText =
+  check
+    ("the rule-2 materiality table covers its pinned " <> show expectedTableSize <> " sites")
+    (length materialityTable == expectedTableSize)
+    : map runEntry materialityTable
+  where
+    expectedTableSize = 20
+
+    profileReason =
+      RenderUnsupported
+        ( UnsupportedReason
+            ["guarantees", "0"]
+            "Wasp Profile v0 lowers exactly one Rule-1 case; this guarantee selects 2 cases"
+            :| []
+        )
+
+    runEntry (name, mutate, expected) =
+      check ("rule-2 materiality: " <> name) $
+        let mutated = mutate selfUpdateModel
+         in case expected of
+              GeneratedChanges ->
+                case supportPlan mutated of
+                  Right plan ->
+                    renderObligationModule plan /= goldenText
+                      && renderBundleFromModel mutated == Left profileReason
+                  Left _ -> False
+              FailsUnsupported reasons ->
+                supportPlan mutated
+                  == Left (PlanUnsupported (NonEmpty.fromList reasons))
+                  && renderBundleFromModel mutated
+                    == Left (RenderUnsupported (NonEmpty.fromList reasons))
+              FailsInvariant violations ->
+                supportPlan mutated
+                  == Left (PlanInvariant (NonEmpty.fromList violations))
+                  && renderBundleFromModel mutated
+                    == Left (RenderInvariant (NonEmpty.fromList violations))
+
+    rename located = located {sourcedValue = "Mutated"}
+
+    policyDriftAt path =
+      VerifierInvariantViolation
+        path
+        "the stored static type of this policy term has drifted from the type the supported proof shape requires"
+
+    materialityTable :: [(String, N.Model -> N.Model, Materiality)]
+    materialityTable =
+      [ ( "forged distinguished-User anchor drift under untouched two-case evidence"
+        , \m -> m {N.modelUserEntity = EntityId 1}
+        , FailsInvariant [anchorDriftViolation]
+        )
+      , ( "forged coherent redirection of the subject endpoint and every Actor entity of both cases"
+        , redirectSubjectEntity [4, 5] (EntityId 2)
+        , FailsInvariant [anchorDriftViolation]
+        )
+      , ( "rule-2 action name metadata"
+        , onActionAt 5 (\a -> a {N.actionName = rename (N.actionName a)})
+        , GeneratedChanges
+        )
+      , ( "rule-2 scope parameter name metadata"
+        , onActionAt 5 (onParameter 0 (\p -> p {N.parameterName = rename (N.parameterName p)}))
+        , GeneratedChanges
+        )
+      , ( "rule-2 payload parameter name metadata"
+        , onActionAt 5 (onParameter 1 (\p -> p {N.parameterName = rename (N.parameterName p)}))
+        , GeneratedChanges
+        )
+      , ( "rule-2 case scope term redirected to the payload parameter fails closed"
+        , onCaseScopeTermAt 1
+            ( \t ->
+                t {N.valueTermNode = N.ArgumentNode (Ref (N.valueTermPath t) (ParameterId (ActionId 5) 1))}
+            )
+        , FailsUnsupported
+            [ UnsupportedReason
+                ["guarantees", "0", "cases", "1", "scope", "0"]
+                "the case scope term must be exactly the scope parameter of the case action"
+            ]
+        )
+      , ( "rule-2 effect subject binding replaced by an argument fails closed"
+        , onSetRelationAt 5
+            (onFirstBindingTerm (\t -> t {N.valueTermNode = N.ArgumentNode (Ref (N.valueTermPath t) (ParameterId (ActionId 5) 0))}))
+            id
+        , FailsUnsupported
+            [ UnsupportedReason
+                ["actions", "5", "effect", "endpoints", "0"]
+                "the SetRelation effect of a bounded self-update case action must bind the authority's subject endpoint to exactly Actor"
+            ]
+        )
+      , ( "rule-2 effect scope binding redirected to the payload parameter fails closed"
+        , onSetRelationAt 5
+            (onSecondBindingTerm (\t -> t {N.valueTermNode = N.ArgumentNode (Ref (N.valueTermPath t) (ParameterId (ActionId 5) 1))}))
+            id
+        , FailsUnsupported
+            [ UnsupportedReason
+                ["actions", "5", "effect", "endpoints", "1"]
+                "the SetRelation effect of a bounded self-update case action must bind the authority's scope endpoint to exactly the scope parameter"
+            ]
+        )
+      , ( "rule-2 effect payload replaced by a literal fails closed"
+        , onSetRelationAt 5 id
+            ( \t ->
+                t
+                  { N.valueTermNode =
+                      N.EnumNode (Ref (N.valueTermPath t) (EnumId 0)) (Ref (N.valueTermPath t) (EnumValueId (EnumId 0) 1))
+                  }
+            )
+        , FailsUnsupported
+            [ UnsupportedReason
+                ["actions", "5", "effect", "payload"]
+                "the SetRelation payload must be exactly the payload parameter"
+            ]
+        )
+      , ( "rule-2 lookup subject binding replaced by an argument fails closed"
+        , onAllowPolicyAtIn 5 [LeqR]
+            (onLookupBindingTerm 0 (\t -> t {N.valueTermNode = N.ArgumentNode (Ref (N.valueTermPath t) (ParameterId (ActionId 5) 0))}))
+        , FailsUnsupported
+            [ UnsupportedReason
+                ["actions", "5", "allow", "right", "endpoints", "0"]
+                "the allow policy of a bounded self-update case action must be exactly LessOrEqual(Some(payload parameter), Lookup(authority relation, [Actor, scope parameter])) at the absence-as-bottom optional ordering of the authority enum, with no further conjunct"
+            ]
+        )
+      , ( "forged stored policy type on the rule-2 allow root"
+        , onAllowPolicyAtIn 5 [] (setPolicyType (OptionalPolicyType BoolType))
+        , FailsInvariant [policyDriftAt ["actions", "5", "allow"]]
+        )
+      , ( "forged stored policy type on the rule-2 lifted payload"
+        , onAllowPolicyAtIn 5 [LeqL] (setPolicyType (ValuePolicyType BoolType))
+        , FailsInvariant [policyDriftAt ["actions", "5", "allow", "left"]]
+        )
+      , ( "forged stored value type on the rule-2 lifted payload argument"
+        , onAllowPolicyAtIn 5 [LeqL] (onPolicyValueTerm (setValueType BoolType))
+        , FailsInvariant
+            [ VerifierInvariantViolation
+                ["actions", "5", "allow", "left", "value"]
+                "the stored static type of this parameter reference has drifted from the parameter's declared type"
+            ]
+        )
+      , ( "forged stored policy type on the rule-2 lookup"
+        , onAllowPolicyAtIn 5 [LeqR] (setPolicyType (ValuePolicyType BoolType))
+        , FailsInvariant [policyDriftAt ["actions", "5", "allow", "right"]]
+        )
+      , ( "forged ordered-evidence drift on the rule-2 comparison"
+        , onAllowPolicyAtIn 5 []
+            ( \t ->
+                t
+                  { N.policyTermNode =
+                      case N.policyTermNode t of
+                        N.LessOrEqualNode _ left right ->
+                          N.LessOrEqualNode (EnumOrderedType (EnumId 0)) left right
+                        other -> other
+                  }
+            )
+        , FailsInvariant
+            [ VerifierInvariantViolation
+                ["actions", "5", "allow"]
+                "the stored ordered-comparison evidence has drifted from the absence-as-bottom optional ordering of the authority enum"
+            ]
+        )
+      , ( "forged Actor entity drift in the rule-2 lookup"
+        , onAllowPolicyAtIn 5 [LeqR]
+            (onLookupBindingTerm 0 (\t -> t {N.valueTermNode = N.ActorNode (EntityId 1)}))
+        , FailsInvariant
+            [ VerifierInvariantViolation
+                ["actions", "5", "allow", "right", "endpoints", "0"]
+                "the stored Actor entity has drifted from the authority's subject entity"
+            ]
+        )
+      , ( "forged Actor entity drift in the rule-2 effect"
+        , onSetRelationAt 5 (onFirstBindingTerm (\t -> t {N.valueTermNode = N.ActorNode (EntityId 1)})) id
+        , FailsInvariant
+            [ VerifierInvariantViolation
+                ["actions", "5", "effect", "endpoints", "0"]
+                "the stored Actor entity has drifted from the authority's subject entity"
+            ]
+        )
+      , ( "forged foreign parameter reference in the rule-2 effect scope binding"
+        , onSetRelationAt 5
+            (onSecondBindingTerm (\t -> t {N.valueTermNode = N.ArgumentNode (Ref (N.valueTermPath t) (ParameterId (ActionId 4) 1))}))
+            id
+        , FailsInvariant
+            [ VerifierInvariantViolation
+                ["actions", "5", "effect", "endpoints", "1"]
+                "this parameter reference belongs to a different action than the case action, which the typechecker cannot have accepted"
+            ]
+        )
+      , ( "forged case-action self-identity of the rule-2 case"
+        , onActionAt 5 (\a -> a {N.actionId = ActionId 9})
+        , FailsInvariant
+            [ VerifierInvariantViolation
+                ["guarantees", "0", "cases", "1", "action"]
+                "this referenced action's stored identity is not the canonical identity of its declaration position"
+            ]
+        )
+      , ( "forged misplaced declared parameter positions of the rule-2 action"
+        , onActionAt 5
+            ( onParameter 0 (\p -> p {N.parameterId = ParameterId (ActionId 5) 1})
+                . onParameter 1 (\p -> p {N.parameterId = ParameterId (ActionId 5) 0})
+            )
+        , FailsInvariant
+            [ VerifierInvariantViolation
+                ["actions", "5", "parameters", "0"]
+                "this declared parameter's stored identity is not the canonical identity of its declaration position"
+            , VerifierInvariantViolation
+                ["actions", "5", "parameters", "1"]
+                "this declared parameter's stored identity is not the canonical identity of its declaration position"
+            ]
+        )
+      ]
+
+--------------------------------------------------------------------
 -- Model surgery helpers
 --------------------------------------------------------------------
 
@@ -2687,8 +4102,11 @@ onEnum0 mutate model =
   model {N.modelEnums = onListIndex 0 mutate (N.modelEnums model)}
 
 onAction4 :: (N.Action -> N.Action) -> N.Model -> N.Model
-onAction4 mutate model =
-  model {N.modelActions = onListIndex 4 mutate (N.modelActions model)}
+onAction4 = onActionAt 4
+
+onActionAt :: Int -> (N.Action -> N.Action) -> N.Model -> N.Model
+onActionAt index mutate model =
+  model {N.modelActions = onListIndex index mutate (N.modelActions model)}
 
 onGuarantee0 :: (N.Guarantee -> N.Guarantee) -> N.Model -> N.Model
 onGuarantee0 mutate model =
@@ -2703,24 +4121,38 @@ onAuthority mutate =
       other -> other
 
 onCase0 :: (N.EscalationCase -> N.EscalationCase) -> N.Model -> N.Model
-onCase0 mutate =
+onCase0 = onCaseAt 0
+
+-- | Mutate the escalation case at the given authored position.
+onCaseAt :: Int -> (N.EscalationCase -> N.EscalationCase) -> N.Model -> N.Model
+onCaseAt index mutate =
   onGuarantee0 $ \guarantee ->
     case guarantee of
-      N.NoSelfPrivilegeEscalationGuarantee path authority (onlyCase :| rest) ->
-        N.NoSelfPrivilegeEscalationGuarantee path authority (mutate onlyCase :| rest)
+      N.NoSelfPrivilegeEscalationGuarantee path authority cases ->
+        N.NoSelfPrivilegeEscalationGuarantee
+          path
+          authority
+          (NonEmpty.fromList (onListIndex index mutate (NonEmpty.toList cases)))
       other -> other
 
 onCaseScopeTerm
   :: (N.ValueTerm 'ActorAvailable -> N.ValueTerm 'ActorAvailable)
   -> N.Model
   -> N.Model
-onCaseScopeTerm mutate =
-  onCase0 $ \onlyCase ->
-    onlyCase
+onCaseScopeTerm = onCaseScopeTermAt 0
+
+onCaseScopeTermAt
+  :: Int
+  -> (N.ValueTerm 'ActorAvailable -> N.ValueTerm 'ActorAvailable)
+  -> N.Model
+  -> N.Model
+onCaseScopeTermAt index mutate =
+  onCaseAt index $ \escalationCase ->
+    escalationCase
       { N.escalationCaseScope =
           fmap
             (\binding -> binding {N.scopeBindingTerm = mutate (N.scopeBindingTerm binding)})
-            (N.escalationCaseScope onlyCase)
+            (N.escalationCaseScope escalationCase)
       }
 
 -- | Mutate the authenticated-only allow policy and action shape of
@@ -2730,8 +4162,18 @@ onAuthenticatedBody
   -> (N.ActionShape 'ActorAvailable -> N.ActionShape 'ActorAvailable)
   -> N.Model
   -> N.Model
-onAuthenticatedBody onAllow onShape =
-  onAction4 $ \action ->
+onAuthenticatedBody = onAuthenticatedBodyAt 4
+
+-- | Mutate the authenticated-only allow policy and action shape of
+-- the action at the given position.
+onAuthenticatedBodyAt
+  :: Int
+  -> (N.PolicyTerm 'ActorAvailable -> N.PolicyTerm 'ActorAvailable)
+  -> (N.ActionShape 'ActorAvailable -> N.ActionShape 'ActorAvailable)
+  -> N.Model
+  -> N.Model
+onAuthenticatedBodyAt index onAllow onShape =
+  onActionAt index $ \action ->
     case N.actionBody action of
       N.AuthenticatedOnlyBody allow shape ->
         action
@@ -2748,14 +4190,54 @@ onSetRelation
   -> (N.ValueTerm 'ActorAvailable -> N.ValueTerm 'ActorAvailable)
   -> N.Model
   -> N.Model
-onSetRelation onBindings onPayload =
-  onAuthenticatedBody id $ \shape ->
+onSetRelation = onSetRelationAt 4
+
+onSetRelationAt
+  :: Int
+  -> ( OneOrTwo (N.EndpointBinding 'ActorAvailable)
+       -> OneOrTwo (N.EndpointBinding 'ActorAvailable)
+     )
+  -> (N.ValueTerm 'ActorAvailable -> N.ValueTerm 'ActorAvailable)
+  -> N.Model
+  -> N.Model
+onSetRelationAt index onBindings onPayload =
+  onAuthenticatedBodyAt index id $ \shape ->
     case shape of
       N.MutationShape (N.SetRelationEffect path relationRef bindings payload) resultPath ->
         N.MutationShape
           (N.SetRelationEffect path relationRef (onBindings bindings) (onPayload payload))
           resultPath
       other -> other
+
+onSecondBindingTerm
+  :: (N.ValueTerm availability -> N.ValueTerm availability)
+  -> OneOrTwo (N.EndpointBinding availability)
+  -> OneOrTwo (N.EndpointBinding availability)
+onSecondBindingTerm mutate bindings =
+  case bindings of
+    Two first second ->
+      Two
+        first
+        second {N.endpointBindingTerm = mutate (N.endpointBindingTerm second)}
+    other -> other
+
+-- | Mutate the term of the binding at the given position of a Lookup
+-- node (an unmatched node is left unchanged).
+onLookupBindingTerm
+  :: Int
+  -> (N.ValueTerm 'ActorAvailable -> N.ValueTerm 'ActorAvailable)
+  -> N.PolicyTerm 'ActorAvailable
+  -> N.PolicyTerm 'ActorAvailable
+onLookupBindingTerm index mutate term =
+  term
+    { N.policyTermNode =
+        case N.policyTermNode term of
+          N.LookupNode relationRef bindings ->
+            N.LookupNode
+              relationRef
+              ((if index == 0 then onFirstBindingTerm else onSecondBindingTerm) mutate bindings)
+          other -> other
+    }
 
 onSubjectBindingTerm
   :: (N.ValueTerm 'ActorAvailable -> N.ValueTerm 'ActorAvailable)
@@ -2863,7 +4345,16 @@ onAllowPolicyAt
   -> (N.PolicyTerm 'ActorAvailable -> N.PolicyTerm 'ActorAvailable)
   -> N.Model
   -> N.Model
-onAllowPolicyAt steps mutate = onAuthenticatedBody (walk steps) id
+onAllowPolicyAt = onAllowPolicyAtIn 4
+
+-- | 'onAllowPolicyAt' over the action at the given position.
+onAllowPolicyAtIn
+  :: Int
+  -> [PolicyStep]
+  -> (N.PolicyTerm 'ActorAvailable -> N.PolicyTerm 'ActorAvailable)
+  -> N.Model
+  -> N.Model
+onAllowPolicyAtIn index steps mutate = onAuthenticatedBodyAt index (walk steps) id
   where
     walk [] term = mutate term
     walk (step : more) term =
@@ -2955,7 +4446,7 @@ renderingChecks =
           , CheckerWorkspaceFailure "disk"
           , CheckerRejected "hostile\nlines"
           , CheckerTerminatedBySignal 9
-          , GeneratedTheoremsMissing ("no-self-escalation" :| [])
+          , GeneratedTheoremsMissing ("case 0: no-self-escalation" :| [])
           , VerifierInvariantViolations
               (VerifierInvariantViolation ["x"] "drift" :| [])
           ]

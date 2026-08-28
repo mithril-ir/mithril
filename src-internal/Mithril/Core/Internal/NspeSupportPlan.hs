@@ -13,24 +13,39 @@
 -- and the Wasp emitter ("Mithril.Core.Internal.Wasp", behind
 -- "Mithril.Core.Wasp").  Neither consumer restates any part of the
 -- classification: the verifier transcribes the plan into the trusted
--- Agda kernel, the emitter lowers the same plan into a closed Wasp
--- application, and a document outside the rule is unsupported to
--- both for exactly the same deterministic reasons.
+-- Agda kernel, the emitter lowers exactly the one case shape its
+-- profile covers from the same tagged plan, and a document outside the
+-- rule is unsupported to both for exactly the same deterministic
+-- reasons.
 --
 -- == The support rule
 --
--- Exactly one obligation shape is supported: a document that selects
--- exactly one guarantee, a @NoSelfPrivilegeEscalation@ guarantee with
--- exactly one case, whose normalized evidence corresponds
--- structurally to the already-mechanized sound proof rule of the Agda
--- spike's @Mithril.Acme@ slice (the safe @Membership.changeRole@
--- shape):
+-- Exactly one obligation family is supported: a document that selects
+-- exactly one guarantee, a @NoSelfPrivilegeEscalation@ guarantee whose
+-- non-empty case collection consists entirely of cases each matching
+-- exactly one of the two supported proof rules below.  The shared
+-- authority evidence is validated once for the whole guarantee:
 --
 -- * the authority relation is binary, with the subject endpoint at
---   the distinguished @User@ entity and one scope endpoint at a
---   different entity;
+--   the distinguished @User@ entity — anchored to the identity the
+--   normalized model carries independently for it
+--   ('Normalized.modelUserEntity': the resolver's own designation,
+--   validated by the typechecker and propagated by the normalizer),
+--   never re-derived from an authored name, a declaration position,
+--   the subject endpoint itself, or an @Actor@ term of a case — and
+--   one scope endpoint at a different entity;
 -- * the authority payload order is a two-value enum with a declared
---   (materialized) complete ranking, absence interpreted as bottom;
+--   (materialized) complete ranking, absence interpreted as bottom.
+--
+-- Every authored case is then classified independently, in authored
+-- order — never only the first case, never with a case silently
+-- dropped, reordered, or deduplicated — and tagged with the rule it
+-- matched ('NspeCasePlan', 'NspeCaseMatch'):
+--
+-- /Rule 1, change-other/ (the already-mechanized sound proof rule of
+-- the Agda spike's @Mithril.Acme@ slice, the safe
+-- @Membership.changeRole@ shape):
+--
 -- * the case action is @AuthenticatedOnly@ and declares exactly three
 --   parameters in order: subject (@EntityRef@ of the subject
 --   entity), scope (@EntityRef@ of the scope entity), payload (the
@@ -47,11 +62,35 @@
 --   parameter]))))@ at the absence-as-bottom optional ordering of the
 --   authority enum.
 --
--- The gate inspects stored identities and evidence structurally — it
--- never compares raw JSON bytes, recognizes filenames, hashes the
--- model, reparses, re-resolves, re-infers types, or evaluates policy
--- — and it deliberately rejects semantically equivalent but
--- differently authored shapes as unsupported.
+-- /Rule 2, bounded self-update/:
+--
+-- * the case action is @AuthenticatedOnly@ and declares exactly two
+--   parameters in order: scope (@EntityRef@ of the scope entity),
+--   payload (the authority enum);
+-- * the effect is @SetRelation@ on the authority relation, binding
+--   the subject endpoint to exactly @Actor@, the scope endpoint to
+--   exactly the scope parameter, and the payload to exactly the
+--   payload parameter;
+-- * the case scope term is exactly the scope parameter; and
+-- * the allow policy is exactly @LessOrEqual(Some(payload parameter),
+--   Lookup(authority, [Actor, scope parameter]))@ at the
+--   absence-as-bottom optional ordering of the authority enum — with
+--   no further conjunct: an explicit @IsSome@ is redundant under
+--   absence as bottom (a lifted value is never below an absent tuple)
+--   and is deliberately not accepted.
+--
+-- The two rules are disjoint by declared arity — three parameters
+-- against two — so the declared parameter count selects the one
+-- candidate rule of a case deterministically, no case can match both
+-- rules, and a case matching neither rule (any other arity, or a
+-- mismatch against its candidate rule) makes the complete obligation
+-- unsupported with reasons anchored at the offending case, action,
+-- parameter, policy, effect, or case-scope site.  The gate inspects
+-- stored identities and evidence structurally — it never compares raw
+-- JSON bytes, recognizes filenames, hashes the model, reparses,
+-- re-resolves, re-infers types, or evaluates policy — and it
+-- deliberately rejects semantically equivalent but differently
+-- authored shapes as unsupported.
 --
 -- Every stored identity the gate consumes first passes the one
 -- canonical identity preflight ('canonicalDeclaration',
@@ -68,17 +107,34 @@
 -- evidence, or plan construction — so a stored identity drifted
 -- coordinately with every stored reference later compared against it
 -- still halts as an invariant violation before either consumer can
--- generate anything or launch any checker.
+-- generate anything or launch any checker.  The subject entity is
+-- additionally anchored semantically, not only canonically: the
+-- entity the (validated) subject endpoint references must be exactly
+-- the distinguished @User@ identity the normalized model carries, and
+-- every @Actor@ term the rules inspect is then compared against that
+-- same anchored identity ('AuthorityFacts' stores it as
+-- 'factUserEntity').  Without the anchor, a subject endpoint, its
+-- parameter types, and every @Actor@ term redirected coherently to
+-- some other entity would agree with one another and pass every
+-- self-consistency check, while the generated module would still
+-- transcribe the subject as the kernel's fixed @UserK@; with it, such
+-- evidence halts as an invariant violation at the authority's subject
+-- endpoint reference — never as an unsupported shape and never as a
+-- verified document.
 --
--- Soundness of the rule (the verifier's concern, stated once here so
+-- Soundness of the rules (the verifier's concern, stated once here so
 -- the emitter inherits exactly the same premise): the generated Agda
--- module transcribes exactly this shape into the trusted fixed-schema
--- kernel and re-proves, with the kernel's checked frame lemmas, that
--- policy success forces the authenticated actor's index apart from
--- the subject parameter's, so the authorized @SetRelation@ write
--- cannot touch the actor's own authority tuple in the selected scope.
--- The middle guard conjunct @Not(Equal(Actor, subject parameter))@ is
--- the proof-relevant fact; every other pinned piece keeps the
+-- module transcribes exactly these shapes into the trusted
+-- fixed-schema kernel.  For rule 1 it re-proves, with the kernel's
+-- checked frame lemma, that policy success forces the authenticated
+-- actor's index apart from the subject parameter's, so the authorized
+-- @SetRelation@ write cannot touch the actor's own authority tuple in
+-- the selected scope; the middle guard conjunct @Not(Equal(Actor,
+-- subject parameter))@ is the proof-relevant fact.  For rule 2 it
+-- re-proves, with the kernel's checked point lemma, that the write
+-- installs exactly the requested payload at the actor's own tuple
+-- while policy success is exactly the bound of that payload by the
+-- actor's pre-state authority.  Every other pinned piece keeps the
 -- transcription exact.  The gate itself proves nothing, and a plan
 -- attests support only.
 --
@@ -90,7 +146,7 @@
 -- enum's canonical member identities (every stored rank equal to its
 -- position), classifies any other stored ranking evidence as an
 -- invariant violation, identifies the bottom (rank 0) and the top —
--- the privilege floor the supported allow policy names — and resolves
+-- the privilege floor the rule-1 allow policy names — and resolves
 -- their numeric ranks, and derives the rank an absent tuple takes.
 -- Both consumers read 'planRanking', 'planRankBottom', 'planRankTop',
 -- and 'planAbsentRank' as validated values; neither scans the ranking
@@ -114,8 +170,17 @@ module Mithril.Core.Internal.NspeSupportPlan
   , normalizeUnsupportedReasons
   , normalizeVerifierInvariantViolations
 
+    -- * The two supported proof rules
+  , NspeRule (..)
+  , nspeRuleLabel
+
     -- * The support plan
   , NspeSupportPlan (..)
+  , NspeCasePlan (..)
+  , NspeCaseMatch (..)
+  , ChangeOtherFacts (..)
+  , BoundedSelfUpdateFacts (..)
+  , caseRule
   , PlanEnumMember (..)
   , PlanRankedMember (..)
   , PlanBinding (..)
@@ -205,6 +270,30 @@ normalizeVerifierInvariantViolations
 normalizeVerifierInvariantViolations = map NonEmpty.head . NonEmpty.group . sort
 
 --------------------------------------------------------------------
+-- The two supported proof rules
+--------------------------------------------------------------------
+
+-- | The two supported proof rules a case can match (module header).
+-- The tag is decided once, here, and carried in the plan; downstream
+-- consumers dispatch on it and never re-derive it.
+data NspeRule
+  = -- | Rule 1: an authenticated principal changes /another/
+    -- subject's authority (the safe @Membership.changeRole@ shape).
+    ChangeOtherRule
+  | -- | Rule 2: an authenticated principal updates its /own/
+    -- authority to a payload bounded by its pre-state authority.
+    BoundedSelfUpdateRule
+  deriving (Eq, Ord, Show)
+
+-- | The deterministic human-readable identity of a rule, shared by
+-- the generated Agda evidence and the verification report.
+nspeRuleLabel :: NspeRule -> Text
+nspeRuleLabel rule =
+  case rule of
+    ChangeOtherRule -> "rule 1 (change-other)"
+    BoundedSelfUpdateRule -> "rule 2 (bounded-self-update)"
+
+--------------------------------------------------------------------
 -- The support plan
 --------------------------------------------------------------------
 
@@ -214,11 +303,17 @@ normalizeVerifierInvariantViolations = map NonEmpty.head . NonEmpty.group . sort
 -- the one supported obligation, each declared name together with its
 -- authored location (diagnostic and rendering metadata, never
 -- semantic linkage), the enum's declared members, its materialized
--- ranking, and the explicit endpoint and scope bindings the gate
--- verified.  Constructing a plan attests support only; nothing is
--- verified by it, and nothing is generated from unvalidated evidence.
+-- ranking, and — per authored case, in authored order — the explicit
+-- endpoint and scope bindings the gate verified together with the
+-- rule the case matched.  Constructing a plan attests support only;
+-- nothing is verified by it, and nothing is generated from
+-- unvalidated evidence.
 data NspeSupportPlan = NspeSupportPlan
   { planModelName :: Sourced Text
+  , planGuaranteePath :: SourcePath
+    -- ^ The authored location of the one selected guarantee (for
+    -- diagnostics anchored at the guarantee, such as a consumer
+    -- profile that covers fewer cases than the guarantee selects).
   , planRelationId :: RelationId
   , planRelationName :: Sourced Text
   , planSubjectEndpointId :: EndpointId
@@ -244,31 +339,79 @@ data NspeSupportPlan = NspeSupportPlan
     -- resolved once here from the validated ranking.
   , planRankTop :: PlanRankedMember
     -- ^ The top of the materialized ranking — the privilege floor the
-    -- supported allow policy compares the actor's authority against —
+    -- rule-1 allow policy compares the actor's authority against —
     -- with its validated numeric rank, resolved once here from the
     -- validated ranking.  Neither consumer scans the ranking for it.
   , planAbsentRank :: Int
     -- ^ The rank an absent authority tuple takes under
     -- 'planAbsenceLevel' (absence as bottom: below rank 0, so -1),
     -- derived once here.
-  , planActionId :: ActionId
-  , planActionName :: Sourced Text
-  , planSubjectParameterId :: ParameterId
-  , planSubjectParameterName :: Sourced Text
-  , planScopeParameterId :: ParameterId
-  , planScopeParameterName :: Sourced Text
-  , planPayloadParameterId :: ParameterId
-  , planPayloadParameterName :: Sourced Text
-  , planEffectBindings :: [PlanBinding]
+  , planCases :: NonEmpty NspeCasePlan
+    -- ^ Every authored case of the guarantee, in authored order, each
+    -- tagged with the rule it matched.  Complete by construction: the
+    -- gate refuses the whole guarantee unless every case matched.
+  }
+  deriving (Eq)
+
+-- | One supported escalation case: the facts every rule shares —
+-- its zero-based authored position and location, the case action,
+-- the scope and payload parameters, and the verified case scope
+-- binding — plus the rule-specific match.
+data NspeCasePlan = NspeCasePlan
+  { casePosition :: Int
+    -- ^ The zero-based authored position of the case in the
+    -- guarantee's case list; the generated theorem groups and the
+    -- verification report are qualified by it.
+  , casePath :: SourcePath
+  , caseActionId :: ActionId
+  , caseActionName :: Sourced Text
+  , caseScopeParameterId :: ParameterId
+  , caseScopeParameterName :: Sourced Text
+  , casePayloadParameterId :: ParameterId
+  , casePayloadParameterName :: Sourced Text
+  , caseScopeBinding :: PlanBinding
+    -- ^ The case scope binding the gate verified: the authority's
+    -- scope endpoint bound to the scope parameter.
+  , caseMatch :: NspeCaseMatch
+    -- ^ The rule the case matched, with the rule-specific facts.
+  }
+  deriving (Eq)
+
+-- | The rule a case matched, explicitly tagged, with the facts only
+-- that rule establishes.
+data NspeCaseMatch
+  = ChangeOtherMatch ChangeOtherFacts
+  | BoundedSelfUpdateMatch BoundedSelfUpdateFacts
+  deriving (Eq)
+
+-- | The rule-1 facts: the subject parameter the effect and policy
+-- name, and the effect's verified endpoint bindings.
+data ChangeOtherFacts = ChangeOtherFacts
+  { changeOtherSubjectParameterId :: ParameterId
+  , changeOtherSubjectParameterName :: Sourced Text
+  , changeOtherEffectBindings :: [PlanBinding]
     -- ^ The @SetRelation@ effect's endpoint bindings the gate
     -- verified, in the authority relation's endpoint order: the
     -- subject endpoint bound to the subject parameter, then the scope
     -- endpoint bound to the scope parameter.
-  , planCaseScopeBinding :: PlanBinding
-    -- ^ The case scope binding the gate verified: the authority's
-    -- scope endpoint bound to the scope parameter.
   }
   deriving (Eq)
+
+-- | The rule-2 facts: the effect writes the authority relation at
+-- (@Actor@, scope parameter) — the subject endpoint is bound to the
+-- implicit authenticated principal by the rule itself, so only the
+-- scope endpoint's verified parameter binding is recorded.
+newtype BoundedSelfUpdateFacts = BoundedSelfUpdateFacts
+  { selfUpdateEffectScopeBinding :: PlanBinding
+  }
+  deriving (Eq)
+
+-- | The rule tag of a case plan.
+caseRule :: NspeCasePlan -> NspeRule
+caseRule casePlan =
+  case caseMatch casePlan of
+    ChangeOtherMatch _ -> ChangeOtherRule
+    BoundedSelfUpdateMatch _ -> BoundedSelfUpdateRule
 
 -- | One declared member of the authority enum.
 data PlanEnumMember = PlanEnumMember
@@ -353,6 +496,17 @@ gateThen (Gate reasons violations value) continue =
 gateBoth :: Gate a -> Gate b -> Gate (a, b)
 gateBoth (Gate r1 v1 a) (Gate r2 v2 b) =
   Gate (r1 <> r2) (v1 <> v2) ((,) <$> a <*> b)
+
+-- | Map over the value of a gate, keeping its findings.
+gateMap :: (a -> b) -> Gate a -> Gate b
+gateMap f (Gate reasons violations value) = Gate reasons violations (fmap f value)
+
+-- | Combine independent gate checks over a list: every check runs and
+-- every finding is kept; the list of values exists only when every
+-- check produced one.  This is the per-case traversal — no case is
+-- skipped because an earlier one failed.
+gateAll :: [Gate a] -> Gate [a]
+gateAll = foldr (\next rest -> gateMap (uncurry (:)) (gateBoth next rest)) (gateValue [])
 
 -- | A check with findings but no interesting value.
 gateUnit :: [UnsupportedReason] -> [VerifierInvariantViolation] -> Gate ()
@@ -584,8 +738,9 @@ endpointList (Two a b) = [a, b]
 
 -- | Decide, purely and deterministically, whether the normalized
 -- model is exactly the supported obligation shape, and extract the
--- generation plan if so.  The module header states the rule and its
--- soundness; the gate consumes stored identities and evidence only.
+-- generation plan if so.  The module header states the rules and
+-- their soundness; the gate consumes stored identities and evidence
+-- only.
 supportPlan :: Normalized.Model -> Either PlanRefusal NspeSupportPlan
 supportPlan model =
   case selectObligation model `gateThen` uncurry3 (obligationPlan model) of
@@ -611,10 +766,11 @@ supportPlan model =
     uncurry3 f (a, b, c) = f a b c
 
 -- | Phase 1: the guarantee selection.  Exactly one guarantee, of the
--- NoSelfPrivilegeEscalation family, with exactly one case.
+-- NoSelfPrivilegeEscalation family; its non-empty case collection is
+-- handed on complete and in authored order.
 selectObligation
   :: Normalized.Model
-  -> Gate (SourcePath, Normalized.Authority, Normalized.EscalationCase)
+  -> Gate (SourcePath, Normalized.Authority, NonEmpty Normalized.EscalationCase)
 selectObligation model =
   case Normalized.modelGuarantees model of
     [] ->
@@ -624,16 +780,7 @@ selectObligation model =
             "the document selects no guarantee obligation, and an empty selection is never vacuously verified"
         ]
     [Normalized.NoSelfPrivilegeEscalationGuarantee path authority cases] ->
-      case cases of
-        onlyCase :| [] -> gateValue (path, authority, onlyCase)
-        _ ->
-          gateReasons
-            [ reasonAt path
-                ( "the guarantee selects "
-                    <> countText (NonEmpty.length cases)
-                    <> " escalation cases, but only exactly one case is supported"
-                )
-            ]
+      gateValue (path, authority, cases)
     guarantees ->
       gateReasons
         ( concatMap familyReason guarantees
@@ -663,29 +810,48 @@ selectObligation model =
 countText :: Int -> Text
 countText = Text.pack . show
 
--- | Phase 2: the authority, the case, and the case action.
+-- | Phase 2: the shared authority facts, then every case independently
+-- (in authored order, all of them), then the plan.
 obligationPlan
   :: Normalized.Model
   -> SourcePath
   -> Normalized.Authority
-  -> Normalized.EscalationCase
+  -> NonEmpty Normalized.EscalationCase
   -> Gate NspeSupportPlan
-obligationPlan model _guaranteePath authority onlyCase =
+obligationPlan model guaranteePath authority cases =
   authorityFacts model authority
     `gateThen` \facts ->
-      lookupAction model (Normalized.escalationCaseAction onlyCase)
-        `gateThen` \action ->
-          declaredParameterChecks action
-            `gateThen` \() ->
-              actionFacts model facts onlyCase action
-                `gateThen` \params ->
-                  gateValue (assemblePlan model facts action params)
+      casePlans model facts cases
+        `gateThen` \plans ->
+          gateValue (assemblePlan model guaranteePath facts plans)
+
+-- | Every authored case, classified independently and kept in
+-- authored order: the case at position 0 first, and every finding of
+-- every case reported — no head-only selection, no dropping, no
+-- reordering, no deduplication.
+casePlans
+  :: Normalized.Model
+  -> AuthorityFacts
+  -> NonEmpty Normalized.EscalationCase
+  -> Gate (NonEmpty NspeCasePlan)
+casePlans model facts (firstCase :| moreCases) =
+  gateMap
+    (uncurry (:|))
+    ( gateBoth
+        (classifyCase model facts 0 firstCase)
+        (gateAll [classifyCase model facts position c | (position, c) <- zip [1 ..] moreCases])
+    )
 
 -- | The authority-side facts the deep checks depend on.
 data AuthorityFacts = AuthorityFacts
   { factRelation :: Normalized.Relation
   , factSubjectEndpoint :: Normalized.Endpoint
   , factSubjectEntity :: Normalized.Entity
+  , factUserEntity :: EntityId
+    -- ^ The distinguished @User@ identity the normalized model
+    -- carries, validated (before these facts exist) to be exactly the
+    -- subject entity's canonical identity; every @Actor@ term is
+    -- compared against this anchor.
   , factScopeEndpoint :: Normalized.Endpoint
   , factScopeEntity :: Normalized.Entity
   , factAbsenceLevel :: AbsenceLevel
@@ -714,7 +880,9 @@ authorityFacts model authority =
                 `gateThen` \subjectEndpoint ->
                   lookupEntity model (Normalized.endpointEntity subjectEndpoint)
                     `gateThen` \subjectEntity ->
-                      gateValue (subjectEndpoint, subjectEntity)
+                      distinguishedUserCheck subjectEntity
+                        `gateThen` \() ->
+                          gateValue (subjectEndpoint, subjectEntity)
             )
             ( lookupEndpoint relation (refPath scopeRef) (refTarget scopeRef)
                 `gateThen` \scopeEndpoint ->
@@ -736,6 +904,7 @@ authorityFacts model authority =
                                   { factRelation = relation
                                   , factSubjectEndpoint = subjectEndpoint
                                   , factSubjectEntity = subjectEntity
+                                  , factUserEntity = Normalized.modelUserEntity model
                                   , factScopeEndpoint = scopeEndpoint
                                   , factScopeEntity = scopeEntity
                                   , factAbsenceLevel =
@@ -746,6 +915,22 @@ authorityFacts model authority =
                                   , factRanking = ranking
                                   }
   where
+    -- The semantic anchor (module header): the canonically validated
+    -- subject entity must be exactly the distinguished @User@ identity
+    -- the normalized model carries.  Anything else is forged or
+    -- drifted evidence — an invariant violation anchored where the
+    -- typechecker states the same judgment, the authority's subject
+    -- endpoint reference — and no facts are constructed from it.
+    distinguishedUserCheck subjectEntity =
+      if Normalized.entityId subjectEntity == Normalized.modelUserEntity model
+        then gateValue ()
+        else
+          gateInvariant
+            ( invariantAt
+                (refPath (Normalized.authoritySubjectEndpoint authority))
+                "the authority's subject entity is not the distinguished User entity the normalized model carries"
+            )
+
     distinctnessCheck subjectEndpoint scopeEndpoint =
       if Normalized.endpointId subjectEndpoint == Normalized.endpointId scopeEndpoint
         then
@@ -883,20 +1068,38 @@ authorityFacts model authority =
                             )
                         ]
 
--- | Phase 3: the case action's principal mode, parameters, effect,
--- allow policy, and the case scope binding.  Returns the three
--- supported parameters.
-actionFacts
+--------------------------------------------------------------------
+-- Per-case classification
+--------------------------------------------------------------------
+
+-- | Phase 3, per case: resolve and preflight the case action, check
+-- the rule-independent prerequisites (principal mode, the effect
+-- family), select the one candidate rule by declared arity, and run
+-- that rule's exact matcher.
+classifyCase
   :: Normalized.Model
   -> AuthorityFacts
+  -> Int
+  -> Normalized.EscalationCase
+  -> Gate NspeCasePlan
+classifyCase model facts position escalationCase =
+  lookupAction model (Normalized.escalationCaseAction escalationCase)
+    `gateThen` \action ->
+      declaredParameterChecks action
+        `gateThen` \() ->
+          caseFacts facts position escalationCase action
+
+-- | The case action's principal mode and effect family are required
+-- identically by both rules and are checked first; the declared
+-- parameter count then selects the candidate rule (three parameters:
+-- rule 1; two parameters: rule 2; anything else matches neither).
+caseFacts
+  :: AuthorityFacts
+  -> Int
   -> Normalized.EscalationCase
   -> Normalized.Action
-  -> Gate
-       ( Normalized.Parameter
-       , Normalized.Parameter
-       , Normalized.Parameter
-       )
-actionFacts _model facts onlyCase action =
+  -> Gate NspeCasePlan
+caseFacts facts position escalationCase action =
   case Normalized.actionBody action of
     Normalized.AnyPrincipalBody _ _ ->
       gateReasons
@@ -907,17 +1110,43 @@ actionFacts _model facts onlyCase action =
     Normalized.AuthenticatedOnlyBody allow shape ->
       supportedEffect facts action shape
         `gateThen` \(bindings, payloadTerm) ->
-          supportedParameters facts action
-            `gateThen` \params@(subjectParam, scopeParam, payloadParam) ->
-              effectBindingChecks facts params bindings payloadTerm
-                `gateThen` \() ->
-                  policyChecks facts params allow
-                    `gateThen` \() ->
-                      caseScopeCheck facts subjectParam scopeParam payloadParam onlyCase
-                        `gateThen` \() ->
-                          gateValue params
+          case Normalized.actionParameters action of
+            [subjectParam, scopeParam, payloadParam] ->
+              changeOtherCase
+                facts
+                position
+                escalationCase
+                action
+                allow
+                bindings
+                payloadTerm
+                (subjectParam, scopeParam, payloadParam)
+            [scopeParam, payloadParam] ->
+              boundedSelfUpdateCase
+                facts
+                position
+                escalationCase
+                action
+                allow
+                bindings
+                payloadTerm
+                (scopeParam, payloadParam)
+            parameters ->
+              gateReasons
+                [ reasonAt
+                    (Normalized.actionPath action)
+                    ( "the case action declares "
+                        <> countText (length parameters)
+                        <> (if length parameters == 1 then " parameter" else " parameters")
+                        <> ", but the supported proof rules require exactly"
+                        <> " three (subject, scope, and payload; the change-other rule)"
+                        <> " or exactly two (scope and payload; the bounded self-update"
+                        <> " rule), in that order"
+                    )
+                ]
 
--- | The effect must be a @SetRelation@ on the authority relation.
+-- | The effect must be a @SetRelation@ on the authority relation
+-- (required identically by both rules).
 supportedEffect
   :: AuthorityFacts
   -> Normalized.Action
@@ -946,57 +1175,100 @@ supportedEffect facts action shape =
             "the case action's effect is not a SetRelation on the authority relation, which the supported proof rule requires"
         ]
 
--- | Exactly three parameters: subject, scope, payload, in order and
--- at the authority's types.
-supportedParameters
+--------------------------------------------------------------------
+-- Rule 1: change-other
+--------------------------------------------------------------------
+
+-- | The exact rule-1 matcher over a three-parameter case action:
+-- parameter types, effect bindings, the allow conjunction, and the
+-- case scope binding, in that order.
+changeOtherCase
   :: AuthorityFacts
+  -> Int
+  -> Normalized.EscalationCase
   -> Normalized.Action
+  -> Normalized.PolicyTerm 'ActorAvailable
+  -> OneOrTwo (Normalized.EndpointBinding 'ActorAvailable)
+  -> Normalized.ValueTerm 'ActorAvailable
+  -> ( Normalized.Parameter
+     , Normalized.Parameter
+     , Normalized.Parameter
+     )
+  -> Gate NspeCasePlan
+changeOtherCase facts position escalationCase action allow bindings payloadTerm params =
+  changeOtherParameters facts params
+    `gateThen` \(subjectParam, scopeParam, payloadParam) ->
+      changeOtherBindingChecks facts params bindings payloadTerm
+        `gateThen` \() ->
+          changeOtherPolicyChecks facts params allow
+            `gateThen` \() ->
+              caseScopeCheck facts scopeParam escalationCase
+                `gateThen` \() ->
+                  gateValue
+                    NspeCasePlan
+                      { casePosition = position
+                      , casePath = Normalized.escalationCasePath escalationCase
+                      , caseActionId = Normalized.actionId action
+                      , caseActionName = Normalized.actionName action
+                      , caseScopeParameterId = Normalized.parameterId scopeParam
+                      , caseScopeParameterName = Normalized.parameterName scopeParam
+                      , casePayloadParameterId = Normalized.parameterId payloadParam
+                      , casePayloadParameterName = Normalized.parameterName payloadParam
+                      , caseScopeBinding = bindingOf (factScopeEndpoint facts) scopeParam
+                      , caseMatch =
+                          ChangeOtherMatch
+                            ChangeOtherFacts
+                              { changeOtherSubjectParameterId = Normalized.parameterId subjectParam
+                              , changeOtherSubjectParameterName = Normalized.parameterName subjectParam
+                              , changeOtherEffectBindings =
+                                  [ bindingOf (factSubjectEndpoint facts) subjectParam
+                                  , bindingOf (factScopeEndpoint facts) scopeParam
+                                  ]
+                              }
+                      }
+
+-- | Rule 1: the three parameters — subject, scope, payload, in order
+-- — at the authority's types.
+changeOtherParameters
+  :: AuthorityFacts
+  -> ( Normalized.Parameter
+     , Normalized.Parameter
+     , Normalized.Parameter
+     )
   -> Gate
        ( Normalized.Parameter
        , Normalized.Parameter
        , Normalized.Parameter
        )
-supportedParameters facts action =
-  case Normalized.actionParameters action of
-    [subjectParam, scopeParam, payloadParam] ->
-      let typeReasons =
-            [ reasonAt
-                (Normalized.parameterPath subjectParam)
-                "the first parameter must have the entity-reference type of the authority's subject endpoint"
-            | parameterStaticType (Normalized.parameterType subjectParam)
-                /= EntityRefType (Normalized.entityId (factSubjectEntity facts))
-            ]
-              <> [ reasonAt
-                     (Normalized.parameterPath scopeParam)
-                     "the second parameter must have the entity-reference type of the authority's scope endpoint"
-                 | parameterStaticType (Normalized.parameterType scopeParam)
-                     /= EntityRefType (Normalized.entityId (factScopeEntity facts))
-                 ]
-              <> [ reasonAt
-                     (Normalized.parameterPath payloadParam)
-                     "the third parameter must have the authority enum's type"
-                 | parameterStaticType (Normalized.parameterType payloadParam)
-                     /= EnumType (Normalized.enumDefinitionId (factEnum facts))
-                 ]
-       in -- A wrongly typed parameter list suppresses every
-          -- parameter-dependent check rather than cascading.
-          if null typeReasons
-            then gateValue (subjectParam, scopeParam, payloadParam)
-            else gateReasons typeReasons
-    parameters ->
-      gateReasons
+changeOtherParameters facts (subjectParam, scopeParam, payloadParam) =
+  let typeReasons =
         [ reasonAt
-            (Normalized.actionPath action)
-            ( "the case action declares "
-                <> countText (length parameters)
-                <> " parameters, but the supported proof rule requires exactly"
-                <> " three: subject, scope, and payload, in that order"
-            )
+            (Normalized.parameterPath subjectParam)
+            "the first parameter must have the entity-reference type of the authority's subject endpoint"
+        | parameterStaticType (Normalized.parameterType subjectParam)
+            /= EntityRefType (Normalized.entityId (factSubjectEntity facts))
         ]
+          <> [ reasonAt
+                 (Normalized.parameterPath scopeParam)
+                 "the second parameter must have the entity-reference type of the authority's scope endpoint"
+             | parameterStaticType (Normalized.parameterType scopeParam)
+                 /= EntityRefType (Normalized.entityId (factScopeEntity facts))
+             ]
+          <> [ reasonAt
+                 (Normalized.parameterPath payloadParam)
+                 "the third parameter must have the authority enum's type"
+             | parameterStaticType (Normalized.parameterType payloadParam)
+                 /= EnumType (Normalized.enumDefinitionId (factEnum facts))
+             ]
+   in -- A wrongly typed parameter list suppresses every
+      -- parameter-dependent check rather than cascading.
+      if null typeReasons
+        then gateValue (subjectParam, scopeParam, payloadParam)
+        else gateReasons typeReasons
 
--- | The effect must bind subject ↦ subject parameter, scope ↦ scope
--- parameter, payload ↦ payload parameter.
-effectBindingChecks
+-- | Rule 1: the effect must bind subject ↦ subject parameter, scope ↦
+-- scope parameter, payload ↦ payload parameter.
+changeOtherBindingChecks
   :: AuthorityFacts
   -> ( Normalized.Parameter
      , Normalized.Parameter
@@ -1005,7 +1277,7 @@ effectBindingChecks
   -> OneOrTwo (Normalized.EndpointBinding 'ActorAvailable)
   -> Normalized.ValueTerm 'ActorAvailable
   -> Gate ()
-effectBindingChecks facts (subjectParam, scopeParam, payloadParam) bindings payloadTerm =
+changeOtherBindingChecks facts (subjectParam, scopeParam, payloadParam) bindings payloadTerm =
   bindingPair facts bindings
     `gateThen` \(subjectBinding, scopeBinding) ->
       argumentTermCheck
@@ -1022,12 +1294,22 @@ effectBindingChecks facts (subjectParam, scopeParam, payloadParam) bindings payl
             (EntityRefType (Normalized.entityId (factScopeEntity facts)))
             "the SetRelation effect must bind the authority's scope endpoint to exactly the scope parameter"
             `gateThen` \() ->
-              argumentTermCheck
-                facts
-                payloadTerm
-                payloadParam
-                (EnumType (Normalized.enumDefinitionId (factEnum facts)))
-                "the SetRelation payload must be exactly the payload parameter"
+              payloadTermCheck facts payloadTerm payloadParam
+
+-- | Both rules: the @SetRelation@ payload must be exactly the payload
+-- parameter.
+payloadTermCheck
+  :: AuthorityFacts
+  -> Normalized.ValueTerm 'ActorAvailable
+  -> Normalized.Parameter
+  -> Gate ()
+payloadTermCheck facts payloadTerm payloadParam =
+  argumentTermCheck
+    facts
+    payloadTerm
+    payloadParam
+    (EnumType (Normalized.enumDefinitionId (factEnum facts)))
+    "the SetRelation payload must be exactly the payload parameter"
 
 -- | Split a two-endpoint binding list into (subject, scope) by
 -- stored endpoint identity; any other constellation is a forged
@@ -1123,9 +1405,24 @@ valueTypeCheck expected term =
     | Normalized.valueTermType term /= expected
     ]
 
--- | The allow policy must be exactly the supported conjunction; see
--- the module header.
-policyChecks
+-- | The stored ordered-comparison evidence of a rule's @LessOrEqual@
+-- must be exactly the absence-as-bottom optional ordering of the
+-- authority enum; anything else is drifted evidence the typechecker
+-- cannot have produced.
+orderedEvidenceCheck :: AuthorityFacts -> SourcePath -> OrderedType -> Gate ()
+orderedEvidenceCheck facts path ordered =
+  if ordered /= OptionalEnumOrderedType (Normalized.enumDefinitionId (factEnum facts))
+    then
+      gateInvariant
+        ( invariantAt
+            path
+            "the stored ordered-comparison evidence has drifted from the absence-as-bottom optional ordering of the authority enum"
+        )
+    else gateValue ()
+
+-- | Rule 1: the allow policy must be exactly the supported
+-- conjunction; see the module header.
+changeOtherPolicyChecks
   :: AuthorityFacts
   -> ( Normalized.Parameter
      , Normalized.Parameter
@@ -1133,7 +1430,7 @@ policyChecks
      )
   -> Normalized.PolicyTerm 'ActorAvailable
   -> Gate ()
-policyChecks facts (subjectParam, scopeParam, _payloadParam) allow =
+changeOtherPolicyChecks facts (subjectParam, scopeParam, _payloadParam) allow =
   case Normalized.policyTermNode allow of
     Normalized.AndNode firstConjunct rest ->
       case Normalized.policyTermNode rest of
@@ -1224,14 +1521,8 @@ policyChecks facts (subjectParam, scopeParam, _payloadParam) allow =
                     "the compared privilege-floor value belongs to an enum other than the authority enum, which the typechecker cannot have accepted"
                 )
             else
-              if ordered /= OptionalEnumOrderedType enumIdentity
-                then
-                  gateInvariant
-                    ( invariantAt
-                        (refPath enumRef)
-                        "the stored ordered-comparison evidence has drifted from the absence-as-bottom optional ordering of the authority enum"
-                    )
-                else
+              orderedEvidenceCheck facts (refPath enumRef) ordered
+                `gateThen` \() ->
                   gateUnit
                     [ reasonAt
                         (refPath valueRef)
@@ -1305,8 +1596,165 @@ policyChecks facts (subjectParam, scopeParam, _payloadParam) allow =
               gateReasons
                 [reasonAt (Normalized.policyTermPath conjunct) membershipMessage]
 
+--------------------------------------------------------------------
+-- Rule 2: bounded self-update
+--------------------------------------------------------------------
+
+-- | The exact rule-2 matcher over a two-parameter case action:
+-- parameter types, effect bindings, the single allow comparison, and
+-- the case scope binding, in that order.
+boundedSelfUpdateCase
+  :: AuthorityFacts
+  -> Int
+  -> Normalized.EscalationCase
+  -> Normalized.Action
+  -> Normalized.PolicyTerm 'ActorAvailable
+  -> OneOrTwo (Normalized.EndpointBinding 'ActorAvailable)
+  -> Normalized.ValueTerm 'ActorAvailable
+  -> (Normalized.Parameter, Normalized.Parameter)
+  -> Gate NspeCasePlan
+boundedSelfUpdateCase facts position escalationCase action allow bindings payloadTerm params =
+  boundedSelfUpdateParameters facts params
+    `gateThen` \(scopeParam, payloadParam) ->
+      boundedSelfUpdateBindingChecks facts params bindings payloadTerm
+        `gateThen` \() ->
+          boundedSelfUpdatePolicyChecks facts params allow
+            `gateThen` \() ->
+              caseScopeCheck facts scopeParam escalationCase
+                `gateThen` \() ->
+                  gateValue
+                    NspeCasePlan
+                      { casePosition = position
+                      , casePath = Normalized.escalationCasePath escalationCase
+                      , caseActionId = Normalized.actionId action
+                      , caseActionName = Normalized.actionName action
+                      , caseScopeParameterId = Normalized.parameterId scopeParam
+                      , caseScopeParameterName = Normalized.parameterName scopeParam
+                      , casePayloadParameterId = Normalized.parameterId payloadParam
+                      , casePayloadParameterName = Normalized.parameterName payloadParam
+                      , caseScopeBinding = bindingOf (factScopeEndpoint facts) scopeParam
+                      , caseMatch =
+                          BoundedSelfUpdateMatch
+                            BoundedSelfUpdateFacts
+                              { selfUpdateEffectScopeBinding =
+                                  bindingOf (factScopeEndpoint facts) scopeParam
+                              }
+                      }
+
+-- | Rule 2: the two parameters — scope, payload, in order — at the
+-- authority's types.
+boundedSelfUpdateParameters
+  :: AuthorityFacts
+  -> (Normalized.Parameter, Normalized.Parameter)
+  -> Gate (Normalized.Parameter, Normalized.Parameter)
+boundedSelfUpdateParameters facts (scopeParam, payloadParam) =
+  let typeReasons =
+        [ reasonAt
+            (Normalized.parameterPath scopeParam)
+            "the first parameter of a bounded self-update case action must have the entity-reference type of the authority's scope endpoint"
+        | parameterStaticType (Normalized.parameterType scopeParam)
+            /= EntityRefType (Normalized.entityId (factScopeEntity facts))
+        ]
+          <> [ reasonAt
+                 (Normalized.parameterPath payloadParam)
+                 "the second parameter of a bounded self-update case action must have the authority enum's type"
+             | parameterStaticType (Normalized.parameterType payloadParam)
+                 /= EnumType (Normalized.enumDefinitionId (factEnum facts))
+             ]
+   in if null typeReasons
+        then gateValue (scopeParam, payloadParam)
+        else gateReasons typeReasons
+
+-- | Rule 2: the effect must bind subject ↦ @Actor@, scope ↦ scope
+-- parameter, payload ↦ payload parameter.
+boundedSelfUpdateBindingChecks
+  :: AuthorityFacts
+  -> (Normalized.Parameter, Normalized.Parameter)
+  -> OneOrTwo (Normalized.EndpointBinding 'ActorAvailable)
+  -> Normalized.ValueTerm 'ActorAvailable
+  -> Gate ()
+boundedSelfUpdateBindingChecks facts (scopeParam, payloadParam) bindings payloadTerm =
+  bindingPair facts bindings
+    `gateThen` \(subjectBinding, scopeBinding) ->
+      actorTermCheck
+        facts
+        (Normalized.endpointBindingTerm subjectBinding)
+        "the SetRelation effect of a bounded self-update case action must bind the authority's subject endpoint to exactly Actor"
+        `gateThen` \() ->
+          argumentTermCheck
+            facts
+            (Normalized.endpointBindingTerm scopeBinding)
+            scopeParam
+            (EntityRefType (Normalized.entityId (factScopeEntity facts)))
+            "the SetRelation effect of a bounded self-update case action must bind the authority's scope endpoint to exactly the scope parameter"
+            `gateThen` \() ->
+              payloadTermCheck facts payloadTerm payloadParam
+
+-- | Rule 2: the allow policy must be exactly the single comparison
+-- @LessOrEqual(Some(payload parameter), Lookup(authority, [Actor,
+-- scope parameter]))@ at the absence-as-bottom optional ordering of
+-- the authority enum — no conjunction around it, no explicit
+-- @IsSome@, no other operand.
+boundedSelfUpdatePolicyChecks
+  :: AuthorityFacts
+  -> (Normalized.Parameter, Normalized.Parameter)
+  -> Normalized.PolicyTerm 'ActorAvailable
+  -> Gate ()
+boundedSelfUpdatePolicyChecks facts (scopeParam, payloadParam) allow =
+  case Normalized.policyTermNode allow of
+    Normalized.LessOrEqualNode ordered left right
+      | Normalized.SomeNode someValue <- Normalized.policyTermNode left
+      , Normalized.LookupNode lookupRelationRef lookupBindings <-
+          Normalized.policyTermNode right
+      , refTarget lookupRelationRef
+          == Normalized.relationId (factRelation facts) ->
+          policyTypeCheck (ValuePolicyType BoolType) allow
+            `gateThen` \() ->
+              policyTypeCheck optionalAuthorityEnumType left
+                `gateThen` \() ->
+                  argumentTermCheck
+                    facts
+                    someValue
+                    payloadParam
+                    (EnumType (Normalized.enumDefinitionId (factEnum facts)))
+                    boundMessage
+                    `gateThen` \() ->
+                      policyTypeCheck optionalAuthorityEnumType right
+                        `gateThen` \() ->
+                          bindingPair facts lookupBindings
+                            `gateThen` \(subjectBinding, scopeBinding) ->
+                              actorTermCheck facts (Normalized.endpointBindingTerm subjectBinding) boundMessage
+                                `gateThen` \() ->
+                                  argumentTermCheck
+                                    facts
+                                    (Normalized.endpointBindingTerm scopeBinding)
+                                    scopeParam
+                                    (EntityRefType (Normalized.entityId (factScopeEntity facts)))
+                                    boundMessage
+                                    `gateThen` \() ->
+                                      orderedEvidenceCheck facts (Normalized.policyTermPath allow) ordered
+    _ ->
+      gateReasons [reasonAt (Normalized.policyTermPath allow) boundMessage]
+  where
+    optionalAuthorityEnumType =
+      OptionalPolicyType
+        (EnumType (Normalized.enumDefinitionId (factEnum facts)))
+
+    boundMessage =
+      "the allow policy of a bounded self-update case action must be exactly\
+      \ LessOrEqual(Some(payload parameter), Lookup(authority relation,\
+      \ [Actor, scope parameter])) at the absence-as-bottom optional\
+      \ ordering of the authority enum, with no further conjunct"
+
+--------------------------------------------------------------------
+-- Shared checks and plan assembly
+--------------------------------------------------------------------
+
 -- | The term must be exactly the implicit authenticated principal,
--- denoting the authority's subject entity.
+-- denoting the distinguished @User@ entity — compared against the
+-- independently anchored identity ('factUserEntity', validated equal
+-- to the authority's subject entity before the facts existed), never
+-- against another term of the same case.
 actorTermCheck
   :: AuthorityFacts
   -> Normalized.ValueTerm 'ActorAvailable
@@ -1315,7 +1763,7 @@ actorTermCheck
 actorTermCheck facts term message =
   case Normalized.valueTermNode term of
     Normalized.ActorNode actorEntity ->
-      if actorEntity /= Normalized.entityId (factSubjectEntity facts)
+      if actorEntity /= factUserEntity facts
         then
           gateInvariant
             ( invariantAt
@@ -1328,21 +1776,19 @@ actorTermCheck facts term message =
             term
     _ -> gateUnit [reasonAt (Normalized.valueTermPath term) message] []
 
--- | The case scope binding must bind the authority's scope endpoint
--- to exactly the scope parameter.
+-- | Both rules: the case scope binding must bind the authority's
+-- scope endpoint to exactly the scope parameter.
 caseScopeCheck
   :: AuthorityFacts
   -> Normalized.Parameter
-  -> Normalized.Parameter
-  -> Normalized.Parameter
   -> Normalized.EscalationCase
   -> Gate ()
-caseScopeCheck facts _subjectParam scopeParam _payloadParam onlyCase =
-  case Normalized.escalationCaseScope onlyCase of
+caseScopeCheck facts scopeParam escalationCase =
+  case Normalized.escalationCaseScope escalationCase of
     Nothing ->
       gateInvariant
         ( invariantAt
-            (Normalized.escalationCasePath onlyCase)
+            (Normalized.escalationCasePath escalationCase)
             "the case names no scope binding although the authority declares a scope endpoint"
         )
     Just binding ->
@@ -1351,7 +1797,7 @@ caseScopeCheck facts _subjectParam scopeParam _payloadParam onlyCase =
         then
           gateInvariant
             ( invariantAt
-                (Normalized.escalationCasePath onlyCase)
+                (Normalized.escalationCasePath escalationCase)
                 "the case scope binding names an endpoint other than the authority's scope endpoint"
             )
         else
@@ -1362,21 +1808,29 @@ caseScopeCheck facts _subjectParam scopeParam _payloadParam onlyCase =
             (EntityRefType (Normalized.entityId (factScopeEntity facts)))
             "the case scope term must be exactly the scope parameter of the case action"
 
+-- | One verified binding of a declared endpoint to a parameter.
+bindingOf :: Normalized.Endpoint -> Normalized.Parameter -> PlanBinding
+bindingOf endpoint parameter =
+  PlanBinding
+    { planBindingEndpointId = Normalized.endpointId endpoint
+    , planBindingEndpointName = sourcedValue (Normalized.endpointName endpoint)
+    , planBindingParameterId = Normalized.parameterId parameter
+    , planBindingParameterName = sourcedValue (Normalized.parameterName parameter)
+    }
+
 -- | Assemble the plan from the checked facts.  Every stored identity
 -- and name below was validated by the preflight and the deep checks
 -- above; nothing is looked up again with a fail-open default.
 assemblePlan
   :: Normalized.Model
+  -> SourcePath
   -> AuthorityFacts
-  -> Normalized.Action
-  -> ( Normalized.Parameter
-     , Normalized.Parameter
-     , Normalized.Parameter
-     )
+  -> NonEmpty NspeCasePlan
   -> NspeSupportPlan
-assemblePlan model facts action (subjectParam, scopeParam, payloadParam) =
+assemblePlan model guaranteePath facts cases =
   NspeSupportPlan
     { planModelName = Normalized.modelName model
+    , planGuaranteePath = guaranteePath
     , planRelationId = Normalized.relationId (factRelation facts)
     , planRelationName = Normalized.relationName (factRelation facts)
     , planSubjectEndpointId = Normalized.endpointId (factSubjectEndpoint facts)
@@ -1401,28 +1855,9 @@ assemblePlan model facts action (subjectParam, scopeParam, payloadParam) =
     , planRankBottom = factRankBottom facts
     , planRankTop = factRankTop facts
     , planAbsentRank = absentRankOf (factAbsenceLevel facts)
-    , planActionId = Normalized.actionId action
-    , planActionName = Normalized.actionName action
-    , planSubjectParameterId = Normalized.parameterId subjectParam
-    , planSubjectParameterName = Normalized.parameterName subjectParam
-    , planScopeParameterId = Normalized.parameterId scopeParam
-    , planScopeParameterName = Normalized.parameterName scopeParam
-    , planPayloadParameterId = Normalized.parameterId payloadParam
-    , planPayloadParameterName = Normalized.parameterName payloadParam
-    , planEffectBindings =
-        [ bindingOf (factSubjectEndpoint facts) subjectParam
-        , bindingOf (factScopeEndpoint facts) scopeParam
-        ]
-    , planCaseScopeBinding = bindingOf (factScopeEndpoint facts) scopeParam
+    , planCases = cases
     }
   where
     -- Absence as bottom ranks strictly below every member: one below
     -- rank 0.
     absentRankOf AbsenceBottom = -1
-    bindingOf endpoint parameter =
-      PlanBinding
-        { planBindingEndpointId = Normalized.endpointId endpoint
-        , planBindingEndpointName = sourcedValue (Normalized.endpointName endpoint)
-        , planBindingParameterId = Normalized.parameterId parameter
-        , planBindingParameterName = sourcedValue (Normalized.parameterName parameter)
-        }

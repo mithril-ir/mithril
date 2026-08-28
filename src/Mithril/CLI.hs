@@ -13,11 +13,17 @@
 -- normalized document as the human-readable security contract, and
 -- @verify FILE@, the same complete pipeline followed by the first
 -- connected verifier slice: a deterministic support gate and, for
--- exactly one supported Acme-derived NoSelfPrivilegeEscalation
--- obligation shape, generated Agda checked by exactly Agda 2.8.0, and
--- @wasp generate CORE_FILE WASP_ROOT@ and @wasp check CORE_FILE
--- WASP_ROOT@, the Wasp Confinement Profile v0 of that same verified
--- slice.  No other compiler stage exists.
+-- exactly one supported obligation family — one selected
+-- NoSelfPrivilegeEscalation guarantee whose non-empty case collection
+-- is classified case by case as exact rule-1 (change-other) and\/or
+-- exact rule-2 (bounded self-update) cases — generated Agda with one
+-- proof group per case, checked by exactly Agda 2.8.0, and @wasp
+-- generate CORE_FILE WASP_ROOT@ and @wasp check CORE_FILE WASP_ROOT@,
+-- the Wasp Confinement Profile v0, which lowers only exactly one
+-- rule-1 case of a verified document: a document the verifier reports
+-- VERIFIED with a rule-2 case or with several cases is refused as
+-- unsupported by the profile's capability gate.  No other compiler
+-- stage exists.
 module Mithril.CLI
   ( Command (..)
   , parseCommand
@@ -209,8 +215,10 @@ renderHelp =
     , "                         FILE, then verify the normalized document"
     , "                         against the one implemented support rule:"
     , "                         a single selected NoSelfPrivilegeEscalation"
-    , "                         obligation matching the mechanized proof"
-    , "                         shape, checked by Agda 2.8.0."
+    , "                         obligation whose every case matches one of"
+    , "                         the two exact structural proof rules"
+    , "                         (change-other, bounded self-update),"
+    , "                         checked by Agda 2.8.0."
     , "  mithril wasp generate CORE_FILE WASP_ROOT"
     , "                         Run the complete validate pipeline and the"
     , "                         verify gate on CORE_FILE (VERIFIED required),"
@@ -246,23 +254,32 @@ renderHelp =
     , "evaluates no policy, proves and verifies nothing, generates"
     , "nothing executable, and is not a semantic diff."
     , "verify implements exactly one proof slice: a document selecting"
-    , "exactly one NoSelfPrivilegeEscalation obligation whose normalized"
-    , "structure corresponds to the mechanized safe changeRole proof rule"
-    , "is checked by generating a deterministic Agda module against the"
-    , "embedded trusted kernel and running exactly Agda 2.8.0 with"
-    , "--safe --no-libraries --ignore-interfaces (exit 0, VERIFIED)."
+    , "exactly one NoSelfPrivilegeEscalation obligation, every case of"
+    , "which matches exactly one of two exact structural rules - the"
+    , "mechanized safe changeRole change-other rule (three parameters:"
+    , "subject, scope, payload) or the bounded self-update rule (two"
+    , "parameters: scope, payload; the actor's own tuple written to a"
+    , "payload bounded by its authority) - is checked by generating a"
+    , "deterministic Agda module with one proof group per case against"
+    , "the embedded trusted kernel and running exactly Agda 2.8.0 with"
+    , "--safe --no-libraries --ignore-interfaces (exit 0, VERIFIED, for"
+    , "exactly the selected cases of that one obligation)."
     , "Everything else is UNSUPPORTED (exit 3) - including the canonical"
     , "Acme example, whose TenantIsolation and AuthenticatedMutation"
     , "obligations remain unverified, documents selecting no or several"
-    , "guarantees, and semantically equivalent but differently authored"
-    , "shapes. verify never reports a violation: an unsafe variant is"
+    , "guarantees, cases matching neither rule, and semantically"
+    , "equivalent but differently authored shapes."
+    , "verify never reports a violation: an unsafe variant is"
     , "unsupported, not a proved violation, and a checker problem is a"
     , "tool failure (exit 2), never a semantic verdict. The generator,"
     , "the embedded Agda kernel, the Agda toolchain, and the support"
-    , "rule itself remain trusted components."
+    , "rules themselves remain trusted components."
     , "wasp generate and wasp check implement the Wasp Confinement Profile v0"
-    , "for exactly the one supported NoSelfPrivilegeEscalation slice, which both"
-    , "require to be VERIFIED first: a normal Wasp 0.25.0 application on"
+    , "for exactly the singleton change-other (rule-1) NoSelfPrivilegeEscalation"
+    , "slice, which both require to be VERIFIED first; a verified document"
+    , "with a bounded self-update case or with several cases is refused by the"
+    , "profile's capability gate (exit 3) before any destination access. The"
+    , "profile is a normal Wasp 0.25.0 application on"
     , "PostgreSQL whose specification, Prisma schema, dependency configuration,"
     , "generated Action, client shell, ownership marker, and manifest are"
     , "managed inputs regenerated from the same typed normalized Core the"

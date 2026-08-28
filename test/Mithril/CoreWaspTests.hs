@@ -24,18 +24,25 @@
 --    injected auth models, and JavaScript\/TypeScript reserved words.
 --
 -- 2. /One shared plan./  The emitter is the composition of the shared
---    support gate and the (total) plan renderer; the unsafe variant
---    and the canonical Acme document are refused with exactly the
---    verifier's reasons; and an independent oracle — the declarations
---    read straight out of the authored JSON — agrees with both the
---    generated Agda module and the Wasp manifest, so the verifier and
---    the emitter provably selected the same declarations.
+--    support gate, the Profile-v0 capability gate over the tagged case
+--    collection, and the (total) plan renderer; the unsafe variant and
+--    the canonical Acme document are refused with exactly the
+--    verifier's reasons; the verified two-case self-update document,
+--    a singleton rule-2 document, and every other plan outside the
+--    profile are refused by the capability gate before any lowering
+--    or destination access; and an independent oracle — the
+--    declarations read straight out of the authored JSON — agrees
+--    with both the generated Agda module and the Wasp manifest, so
+--    the verifier and the emitter provably selected the same
+--    declarations.
 --
--- 3. /Plan-consumption inventory./  Every field of the shared plan is
+-- 3. /Plan-consumption inventory./  Every shared field, every field
+--    of the tagged per-case plan, and every rule-1 and rule-2 fact is
 --    classified (consumed by both consumers, Wasp-only, verifier-only,
---    or derived evidence), and every Wasp-relevant field has
+--    or a Wasp gate diagnostic anchor), every Wasp-rendered field has
 --    field-specific mutations whose expected output fragments are
---    absent from the base bundle and present in the mutated one.
+--    absent from the base bundle and present in the mutated one, and
+--    the rule-2 facts are never pretended to be Wasp-consumed.
 --
 -- 4. /Renamed models./  Each committed rename variant (a scope entity
 --    named @String@, Wasp's auth model names, reserved words, acronyms
@@ -87,13 +94,14 @@ module Mithril.CoreWaspTests
 
 import Control.Exception (SomeException, finally, try)
 import Control.Monad (forM, forM_)
-import Data.Aeson (Value (..))
+import Data.Aeson (Value (..), toJSON)
 import qualified Data.Aeson as Aeson
 import Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Lazy as LazyByteString
 import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
@@ -141,11 +149,17 @@ import Mithril.Command.Wasp
 import Mithril.Core.Internal.Document (CoreDocument (..))
 import qualified Mithril.Core.Internal.Normalized as N
 import Mithril.Core.Internal.NspeSupportPlan
-  ( NspeSupportPlan (..)
+  ( BoundedSelfUpdateFacts (..)
+  , ChangeOtherFacts (..)
+  , NspeCaseMatch (..)
+  , NspeCasePlan (..)
+  , NspeRule (..)
+  , NspeSupportPlan (..)
   , PlanBinding (..)
   , PlanEnumMember (..)
   , PlanRankedMember (..)
   , PlanRefusal (..)
+  , caseRule
   , supportPlan
   )
 import Mithril.Core.Internal.Resolved
@@ -157,10 +171,11 @@ import Mithril.Core.Internal.Resolved
   , ParameterId (..)
   , RelationId (..)
   )
-import Mithril.Core.Internal.SourcePath (Sourced (..))
+import Mithril.Core.Internal.SourcePath (Sourced (..), memberPath, rootPath)
 import Mithril.Core.Internal.Verify (renderObligationModule)
 import Mithril.Core.Internal.Wasp
-  ( WaspRenderingRefusal (..)
+  ( WaspProfileV0Plan (..)
+  , WaspRenderingRefusal (..)
   , WaspTargetNames (..)
   , camelToKebabCase
   , jsStringLiteral
@@ -169,6 +184,7 @@ import Mithril.Core.Internal.Wasp
   , operationPath
   , ownershipMarkerBytes
   , ownershipMarkerPath
+  , profileV0Plan
   , renderBundleFromModel
   , renderBundleFromPlan
   , targetNames
@@ -215,6 +231,9 @@ nspePath = "test/fixtures/acme-nspe.mir.json"
 
 unsafePath :: FilePath
 unsafePath = "test/fixtures/acme-nspe-unsafe.mir.json"
+
+selfUpdatePath :: FilePath
+selfUpdatePath = "test/fixtures/acme-nspe-self-update.mir.json"
 
 acmePath :: FilePath
 acmePath = "examples/acme/acme.mir.json"
@@ -264,6 +283,7 @@ tests :: IO [Check]
 tests = do
   nspeBytes <- ByteString.readFile nspePath
   unsafeBytes <- ByteString.readFile unsafePath
+  selfUpdateBytes <- ByteString.readFile selfUpdatePath
   acmeBytes <- ByteString.readFile acmePath
   case (pipelineDocument nspeBytes, pipelineModel nspeBytes) of
     (Just baseDocument, Just baseModel) ->
@@ -272,6 +292,7 @@ tests = do
           pure [check "the supported fixture renders a Wasp bundle (prerequisite)" False]
         Right baseBundle -> do
           goldenChecks <- goldenAndDeterminismChecks baseDocument baseBundle
+          gateChecks <- profileGateChecks nspeBytes selfUpdateBytes baseBundle
           renamedChecks <- renamedModelChecks baseModel baseBundle
           attackChecks <- confinementAttackChecks
           installChecks <- installationChecks baseBundle
@@ -279,6 +300,7 @@ tests = do
           pure $
             goldenChecks
               <> sharedPlanChecks nspeBytes unsafeBytes acmeBytes baseModel baseBundle
+              <> gateChecks
               <> planConsumptionChecks baseModel baseBundle
               <> renamedChecks
               <> pureConfinementChecks baseBundle
@@ -649,9 +671,9 @@ sharedPlanChecks nspeBytes unsafeBytes acmeBytes baseModel baseBundle =
       "the emitter is the composition of the shared gate and the total plan renderer"
       ( fmap bundleBytes (renderBundleFromModel baseModel)
           == Right (bundleBytes baseBundle)
-          && case supportPlan baseModel of
-            Right plan -> bundleBytes (renderBundleFromPlan plan) == bundleBytes baseBundle
-            Left _ -> False
+          && case v0PlanOf baseModel of
+            Just profile -> bundleBytes (renderBundleFromPlan profile) == bundleBytes baseBundle
+            Nothing -> False
       )
   , check
       "the unsafe variant is refused by the emitter with exactly the verifier's reasons"
@@ -700,6 +722,18 @@ sharedPlanChecks nspeBytes unsafeBytes acmeBytes baseModel baseBundle =
                      "this referenced enum's stored identity is not the canonical identity of its declaration position"
                  ]
           _ -> False
+      )
+  , check
+      "a drifted distinguished-User anchor refuses the emitter with the shared gate's anchor invariant, before any lowering"
+      ( renderBundleFromModel baseModel {N.modelUserEntity = EntityId 1}
+          == Left
+            ( RenderInvariant
+                ( VerifierInvariantViolation
+                    ["guarantees", "0", "authority", "subjectEndpoint"]
+                    "the authority's subject entity is not the distinguished User entity the normalized model carries"
+                    :| []
+                )
+            )
       )
   , check
       "the authored JSON, the generated Agda module, and the Wasp manifest name the same declarations (independent oracle)"
@@ -858,6 +892,245 @@ jsonOracle document = do
         ]
 
 --------------------------------------------------------------------
+-- Group 2b: the Profile-v0 capability gate over the tagged plan
+--------------------------------------------------------------------
+
+-- | The Wasp Profile v0 lowers exactly one rule-1 case, read off the
+-- shared tagged plan: the singleton rule-1 plan passes the gate; a
+-- singleton rule-2 plan, the two-case self-update plan (a rule-1
+-- case followed by a rule-2 case — accepted by the verifier, so a
+-- head-only gate would wrongly lower it), two rule-1 cases, three
+-- cases, and the reordered two-case plan are each refused with a
+-- deterministic reason anchored at the case or the guarantee; the
+-- gate's diagnostic anchors consume exactly the plan's recorded
+-- paths; the verifier consumes the rule-2 fact and the case position
+-- that Wasp never renders; and through the command, the verified
+-- two-case document is refused after verification and before any
+-- destination access — an absent root stays absent, an unrelated
+-- directory and an owned root stay byte-identical, and nothing is
+-- staged beside them.
+profileGateChecks :: ByteString -> ByteString -> WaspBundle -> IO [Check]
+profileGateChecks nspeBytes selfUpdateBytes baseBundle = do
+  freshRefusal <- withScratchDirectory $ \scratch -> do
+    let root = scratch </> "app"
+    outcome <- generateWaspApp selfUpdatePath root
+    rootExists <- doesPathExist root
+    entries <- listDirectory scratch
+    pure (outcome, rootExists, entries)
+  sentinelRefusal <- withScratchDirectory $ \scratch -> do
+    let root = scratch </> "sentinel"
+    createDirectory root
+    writeFile (root </> "keep.txt") "keep\n"
+    before <- snapshotDirectory root
+    outcome <- generateWaspApp selfUpdatePath root
+    after <- snapshotDirectory root
+    entries <- listDirectory scratch
+    pure (outcome, before == after, before, entries)
+  ownedRefusal <- withScratchDirectory $ \scratch -> do
+    let root = scratch </> "app"
+    _ <- generateWaspApp nspePath root
+    before <- snapshotDirectory root
+    outcome <- generateWaspApp selfUpdatePath root
+    after <- snapshotDirectory root
+    entries <- listDirectory scratch
+    pure (outcome, before == after, before, entries)
+  checkRefusal <- checkWaspApp selfUpdatePath fixtureRoot
+  pure
+    [ check
+        "the singleton rule-1 plan passes the Profile-v0 gate as its one change-other case"
+        ( case supportPlan =<< maybe (Left (PlanUnsupported (multiCaseReason 0 :| []))) Right (pipelineModel nspeBytes) of
+            Right plan ->
+              case profileV0Plan plan of
+                Right profile ->
+                  profileShared profile == plan
+                    && casePosition (profileCase profile) == 0
+                    && caseRule (profileCase profile) == ChangeOtherRule
+                    && NonEmpty.length (planCases plan) == 1
+                Left _ -> False
+            Left _ -> False
+        )
+    , check
+        "the verified two-case plan is refused by the gate with the deterministic profile reason at the guarantee (never lowered head-only)"
+        ( case pipelineModel selfUpdateBytes of
+            Just model ->
+              case supportPlan model of
+                Right plan ->
+                  map caseRule (NonEmpty.toList (planCases plan)) == [ChangeOtherRule, BoundedSelfUpdateRule]
+                    && profileV0Plan plan == Left (multiCaseReason 2 :| [])
+                    && renderBundleFromModel model == Left (RenderUnsupported (multiCaseReason 2 :| []))
+                Left _ -> False
+            Nothing -> False
+        )
+    , check
+        "the public emitter refuses the verified two-case document with the same reason"
+        ( fmap renderWaspBundle (pipelineDocument selfUpdateBytes)
+            == Just (Left (WaspRenderingUnsupported (multiCaseReason 2 :| [])))
+        )
+    , check
+        "a singleton rule-2 plan is refused by the gate with a reason anchored at the case"
+        ( gateOutcome singletonRule2Value
+            == Just (Left (singletonRule2Reason ["guarantees", "0", "cases", "0"] :| []))
+        )
+    , check
+        "two rule-1 cases are refused by the gate (the profile lowers exactly one case)"
+        (gateOutcome duplicatedRule1Value == Just (Left (multiCaseReason 2 :| [])))
+    , check
+        "three cases are refused by the gate with the exact count"
+        (gateOutcome threeCaseValue == Just (Left (multiCaseReason 3 :| [])))
+    , check
+        "the reordered two-case plan (rule 2 first) is refused as multi-case, not as a singleton rule-2 plan"
+        (gateOutcome reorderedValue == Just (Left (multiCaseReason 2 :| [])))
+    , check
+        "the gate's multi-case diagnostic is anchored at exactly the plan's recorded guarantee path"
+        ( case pipelineModel selfUpdateBytes >>= rightMaybe . supportPlan of
+            Just plan ->
+              profileV0Plan plan {planGuaranteePath = memberPath rootPath "relocated"}
+                == Left (UnsupportedReason ["relocated"] (unsupportedReasonMessage (multiCaseReason 2)) :| [])
+            Nothing -> False
+        )
+    , check
+        "the gate's singleton rule-2 diagnostic is anchored at exactly the plan's recorded case path"
+        ( case pipelineModel (encodeValue singletonRule2Value) >>= rightMaybe . supportPlan of
+            Just plan ->
+              case planCases plan of
+                onlyCase :| [] ->
+                  profileV0Plan plan {planCases = onlyCase {casePath = memberPath rootPath "relocated"} :| []}
+                    == Left (singletonRule2Reason ["relocated"] :| [])
+                _ -> False
+            Nothing -> False
+        )
+    , check
+        "the verifier consumes the rule-2 effect scope binding and the case position that Wasp never renders"
+        ( case pipelineModel selfUpdateBytes >>= rightMaybe . supportPlan of
+            Just plan ->
+              case NonEmpty.toList (planCases plan) of
+                [rule1, rule2] ->
+                  let retagged =
+                        case caseMatch rule2 of
+                          BoundedSelfUpdateMatch facts ->
+                            rule2
+                              { caseMatch =
+                                  BoundedSelfUpdateMatch
+                                    facts
+                                      { selfUpdateEffectScopeBinding =
+                                          (selfUpdateEffectScopeBinding facts) {planBindingParameterName = "Mutated"}
+                                      }
+                              }
+                          other -> rule2 {caseMatch = other}
+                      repositioned = plan {planCases = rule1 :| [rule2 {casePosition = 5}]}
+                   in renderObligationModule plan {planCases = rule1 :| [retagged]}
+                        /= renderObligationModule plan
+                        && renderObligationModule repositioned /= renderObligationModule plan
+                        && "module Case5 where" `Text.isInfixOf` renderObligationModule repositioned
+                _ -> False
+            Nothing -> False
+        )
+    , check
+        "generate refuses the verified two-case document with exit-3 classification and creates no root, staging, or backup"
+        ( case freshRefusal of
+            (Right (WaspUnsupported reasons), rootExists, entries) ->
+              reasons == multiCaseReason 2 :| []
+                && waspSuccessExitCode (WaspUnsupported reasons) == ExitFailure 3
+                && not rootExists
+                && null entries
+            _ -> False
+        )
+    , check
+        "generate refuses the two-case document without touching an unrelated existing directory"
+        ( case sentinelRefusal of
+            (Right (WaspUnsupported reasons), untouched, before, entries) ->
+              reasons == multiCaseReason 2 :| []
+                && untouched
+                && before == [("keep.txt", "keep\n")]
+                && entries == ["sentinel"]
+            _ -> False
+        )
+    , check
+        "generate refuses the two-case document without replacing an owned root generated from the singleton fixture"
+        ( case ownedRefusal of
+            (Right (WaspUnsupported reasons), untouched, before, entries) ->
+              reasons == multiCaseReason 2 :| []
+                && untouched
+                && before == bundleBytes baseBundle
+                && entries == ["app"]
+            _ -> False
+        )
+    , check
+        "check refuses the two-case document against the committed fixture with the same reason"
+        (checkRefusal == Right (WaspUnsupported (multiCaseReason 2 :| [])))
+    , check
+        "the Profile-v0 reasons are pinned literally"
+        ( unsupportedReasonMessage (multiCaseReason 2)
+            == "Wasp Profile v0 lowers exactly one Rule-1 case; this guarantee selects 2 cases"
+            && unsupportedReasonMessage (singletonRule2Reason [])
+              == "Wasp Profile v0 lowers exactly one Rule-1 case; this case matches rule 2 (bounded-self-update), which the profile does not lower"
+        )
+    ]
+  where
+    selfUpdateValue = decodeValue selfUpdateBytes
+    nspeValue = decodeValue nspeBytes
+    overCases mutate = overMember "guarantees" (overIndex 0 (overMember "cases" mutate))
+    singletonRule2Value = overCases (\cs -> toJSON (drop 1 (asList cs))) selfUpdateValue
+    duplicatedRule1Value = overCases (\cs -> toJSON (asList cs <> asList cs)) nspeValue
+    threeCaseValue = overCases (\cs -> toJSON (asList cs <> drop 1 (asList cs))) selfUpdateValue
+    reorderedValue = overCases (\cs -> toJSON (reverse (asList cs))) selfUpdateValue
+
+    gateOutcome value =
+      case pipelineModel (encodeValue value) of
+        Nothing -> Nothing
+        Just model ->
+          case supportPlan model of
+            Right plan -> Just (profileV0Plan plan)
+            Left _ -> Nothing
+
+    multiCaseReason :: Int -> UnsupportedReason
+    multiCaseReason count =
+      UnsupportedReason
+        ["guarantees", "0"]
+        ("Wasp Profile v0 lowers exactly one Rule-1 case; this guarantee selects " <> Text.pack (show count) <> " cases")
+
+    singletonRule2Reason path =
+      UnsupportedReason
+        path
+        "Wasp Profile v0 lowers exactly one Rule-1 case; this case matches rule 2 (bounded-self-update), which the profile does not lower"
+
+-- | The Profile-v0 plan of a model, when the shared gate and the
+-- profile gate both accept it.
+v0PlanOf :: N.Model -> Maybe WaspProfileV0Plan
+v0PlanOf model = rightMaybe (supportPlan model) >>= rightMaybe . profileV0Plan
+
+--------------------------------------------------------------------
+-- JSON mutation plumbing (authored variants of the fixtures)
+--------------------------------------------------------------------
+
+decodeValue :: ByteString -> Value
+decodeValue bytes =
+  case Aeson.decodeStrict bytes of
+    Just value -> value
+    Nothing -> Null
+
+encodeValue :: Value -> ByteString
+encodeValue = LazyByteString.toStrict . Aeson.encode
+
+overMember :: Text -> (Value -> Value) -> Value -> Value
+overMember name mutate value =
+  case value of
+    Object members ->
+      case KeyMap.lookup (Key.fromText name) members of
+        Just old -> Object (KeyMap.insert (Key.fromText name) (mutate old) members)
+        Nothing -> value
+    other -> other
+
+asList :: Value -> [Value]
+asList value =
+  case Aeson.fromJSON value of
+    Aeson.Success values -> values
+    Aeson.Error _ -> []
+
+overIndex :: Int -> (Value -> Value) -> Value -> Value
+overIndex index mutate value = toJSON (onIndex index mutate (asList value))
+
+--------------------------------------------------------------------
 -- Group 3: the plan-consumption inventory
 --------------------------------------------------------------------
 
@@ -866,13 +1139,14 @@ data Consumer
   = ConsumedByBoth
   | WaspOnly
   | VerifierOnly
-  | DerivedEvidence
+  | WaspGateDiagnostic
   deriving (Eq, Show)
 
--- | The classification of every field of 'NspeSupportPlan'.
-planFieldInventory :: [(String, Consumer)]
-planFieldInventory =
+-- | The classification of every shared field of 'NspeSupportPlan'.
+sharedFieldInventory :: [(String, Consumer)]
+sharedFieldInventory =
   [ ("planModelName", ConsumedByBoth)
+  , ("planGuaranteePath", WaspGateDiagnostic)
   , ("planRelationId", ConsumedByBoth)
   , ("planRelationName", ConsumedByBoth)
   , ("planSubjectEndpointId", ConsumedByBoth)
@@ -891,50 +1165,108 @@ planFieldInventory =
   , ("planRankBottom", ConsumedByBoth)
   , ("planRankTop", ConsumedByBoth)
   , ("planAbsentRank", WaspOnly)
-  , ("planActionId", ConsumedByBoth)
-  , ("planActionName", ConsumedByBoth)
-  , ("planSubjectParameterId", ConsumedByBoth)
-  , ("planSubjectParameterName", ConsumedByBoth)
-  , ("planScopeParameterId", ConsumedByBoth)
-  , ("planScopeParameterName", ConsumedByBoth)
-  , ("planPayloadParameterId", ConsumedByBoth)
-  , ("planPayloadParameterName", ConsumedByBoth)
-  , ("planEffectBindings", WaspOnly)
-  , ("planCaseScopeBinding", WaspOnly)
+  , ("planCases", ConsumedByBoth)
   ]
 
--- | One field-specific mutation: the field, the mutation, and the
--- output fragments (file, text) the mutated bundle must contain and
--- the base bundle must not.
-type FieldMutation = (String, NspeSupportPlan -> NspeSupportPlan, [(FilePath, Text)])
+-- | The classification of every field of the tagged 'NspeCasePlan'.
+caseFieldInventory :: [(String, Consumer)]
+caseFieldInventory =
+  [ ("casePosition", VerifierOnly)
+  , ("casePath", WaspGateDiagnostic)
+  , ("caseActionId", ConsumedByBoth)
+  , ("caseActionName", ConsumedByBoth)
+  , ("caseScopeParameterId", ConsumedByBoth)
+  , ("caseScopeParameterName", ConsumedByBoth)
+  , ("casePayloadParameterId", ConsumedByBoth)
+  , ("casePayloadParameterName", ConsumedByBoth)
+  , ("caseScopeBinding", WaspOnly)
+  , ("caseMatch", ConsumedByBoth)
+  ]
+
+-- | The classification of every rule-1 fact.
+changeOtherFieldInventory :: [(String, Consumer)]
+changeOtherFieldInventory =
+  [ ("changeOtherSubjectParameterId", ConsumedByBoth)
+  , ("changeOtherSubjectParameterName", ConsumedByBoth)
+  , ("changeOtherEffectBindings", WaspOnly)
+  ]
+
+-- | The classification of every rule-2 fact: Wasp Profile v0 lowers
+-- no rule-2 case, so nothing here is Wasp-consumed — the verifier
+-- consumes it, which the Profile-v0 gate group pins.
+boundedSelfUpdateFieldInventory :: [(String, Consumer)]
+boundedSelfUpdateFieldInventory =
+  [ ("selfUpdateEffectScopeBinding", VerifierOnly)
+  ]
+
+-- | The fields the Wasp path consumes only in its gate (bundle bytes
+-- never depend on them) or that have a single constructor: they are
+-- pinned by gate assertions or evidence presence, not by byte
+-- mutations.
+gateOrConstantFields :: [String]
+gateOrConstantFields = ["planAbsenceLevel", "planCases", "caseMatch"]
+
+-- | One field-specific mutation of the Profile-v0 plan: the field,
+-- the mutation, and the output fragments (file, text) the mutated
+-- bundle must contain and the base bundle must not.
+type FieldMutation = (String, WaspProfileV0Plan -> WaspProfileV0Plan, [(FilePath, Text)])
+
+onShared :: (NspeSupportPlan -> NspeSupportPlan) -> WaspProfileV0Plan -> WaspProfileV0Plan
+onShared mutate profile = profile {profileShared = mutate (profileShared profile)}
+
+onCase :: (NspeCasePlan -> NspeCasePlan) -> WaspProfileV0Plan -> WaspProfileV0Plan
+onCase mutate profile = profile {profileCase = mutate (profileCase profile)}
+
+onFacts :: (ChangeOtherFacts -> ChangeOtherFacts) -> WaspProfileV0Plan -> WaspProfileV0Plan
+onFacts mutate profile = profile {profileFacts = mutate (profileFacts profile)}
 
 planConsumptionChecks :: N.Model -> WaspBundle -> [Check]
 planConsumptionChecks baseModel baseBundle =
-  case supportPlan baseModel of
-    Left _ -> [check "the supported fixture yields a plan (prerequisite)" False]
-    Right basePlan ->
+  case v0PlanOf baseModel of
+    Nothing -> [check "the supported fixture yields a Profile-v0 plan (prerequisite)" False]
+    Just basePlan ->
       [ check
-          ("the plan-consumption inventory classifies every plan field (" <> show expectedFieldCount <> ")")
-          (length planFieldInventory == expectedFieldCount && length (dedupe (map fst planFieldInventory)) == expectedFieldCount)
+          ("the plan-consumption inventory classifies every shared, per-case, rule-1, and rule-2 field (" <> show expectedCounts <> ")")
+          ( map length inventories == expectedCounts
+              && length (dedupe (map fst (concat inventories))) == sum expectedCounts
+          )
       , check
-          "no plan field is verifier-only or unconsumed derived evidence, so every field is Wasp-relevant"
-          (all (\(_, consumer) -> consumer `elem` [ConsumedByBoth, WaspOnly]) planFieldInventory)
+          "no plan field is unclassified: every field is consumed by both backends, by Wasp only, by the verifier only, or by the Wasp gate's diagnostics"
+          (all (\(_, consumer) -> consumer `elem` [ConsumedByBoth, WaspOnly, VerifierOnly, WaspGateDiagnostic]) (concat inventories))
       , check
-          "every Wasp-relevant field has a field-specific mutation and every mutation names an inventoried field"
-          ( let inventoried = map fst planFieldInventory
+          "the rule-2 facts are never Wasp-consumed, and the gate-diagnostic and verifier-only fields are exactly the expected ones"
+          ( all ((== VerifierOnly) . snd) boundedSelfUpdateFieldInventory
+              && [name | (name, WaspGateDiagnostic) <- concat inventories] == ["planGuaranteePath", "casePath"]
+              && [name | (name, VerifierOnly) <- concat inventories] == ["casePosition", "selfUpdateEffectScopeBinding"]
+          )
+      , check
+          "every Wasp-rendered field has a field-specific mutation and every mutation names an inventoried field"
+          ( let rendered =
+                  [ name
+                  | (name, consumer) <- concat inventories
+                  , consumer `elem` [ConsumedByBoth, WaspOnly]
+                  , name `notElem` gateOrConstantFields
+                  ]
                 mutated = dedupe [name | (name, _, _) <- fieldMutations]
-             in filter (/= "planAbsenceLevel") inventoried `allElem` mutated
-                  && mutated `allElem` inventoried
+             in rendered `allElem` mutated
+                  && mutated `allElem` map fst (concat inventories)
           )
       , check
           "the single-constructor absence level is rendered as evidence in the base bundle"
           ( "authority absence level: Bottom" `Text.isInfixOf` textOf baseBundle operationFile
               && "\"absence\": { \"level\": \"Bottom\"" `Text.isInfixOf` textOf baseBundle manifestFile
           )
+      , check
+          "the verifier-only case position never reaches the bundle bytes"
+          ( bundleBytes (renderBundleFromPlan (onCase (\c -> c {casePosition = 7}) basePlan))
+              == bundleBytes baseBundle
+          )
       ]
         <> map (runMutation basePlan) fieldMutations
   where
-    expectedFieldCount = 29
+    inventories =
+      [sharedFieldInventory, caseFieldInventory, changeOtherFieldInventory, boundedSelfUpdateFieldInventory]
+    expectedCounts = [21, 10, 3, 1]
     allElem xs ys = all (`elem` ys) xs
 
     runMutation basePlan (name, mutate, fragments) =
@@ -955,160 +1287,160 @@ planConsumptionChecks baseModel baseBundle =
     fieldMutations :: [FieldMutation]
     fieldMutations =
       [ ( "planModelName"
-        , \p -> p {planModelName = rename (planModelName p)}
+        , onShared (\p -> p {planModelName = rename (planModelName p)})
         , [ (manifestFile, "\"model\": \"Mutated\",")
           , (specFile, "title: \"Mutated\",")
           , (operationFile, "//   model: \"Mutated\"")
           ]
         )
       , ( "planRelationId"
-        , \p -> p {planRelationId = RelationId 7}
+        , onShared (\p -> p {planRelationId = RelationId 7})
         , [ (operationFile, "authority relation: \"Membership\" (relation 7)")
           , (manifestFile, "\"authorityRelation\": { \"authored\": \"Membership\", \"position\": 7,")
           ]
         )
       , ( "planRelationName"
-        , \p -> p {planRelationName = rename (planRelationName p)}
+        , onShared (\p -> p {planRelationName = rename (planRelationName p)})
         , [ (operationFile, "authority relation: \"Mutated\" (relation 0)")
           , (manifestFile, "\"authorityRelation\": { \"authored\": \"Mutated\", \"position\": 0, \"model\": \"MithrilAuthority\"")
           ]
         )
       , ( "planSubjectEndpointId"
-        , \p -> p {planSubjectEndpointId = EndpointId (RelationId 0) 5}
+        , onShared (\p -> p {planSubjectEndpointId = EndpointId (RelationId 0) 5})
         , [ (operationFile, "authority subject endpoint: \"user\" (endpoint 5 of relation 0)")
           , (manifestFile, "\"subjectEndpoint\": { \"authored\": \"user\", \"position\": 5, \"field\": \"subject\"")
           ]
         )
       , ( "planSubjectEndpointName"
-        , \p -> p {planSubjectEndpointName = rename (planSubjectEndpointName p)}
+        , onShared (\p -> p {planSubjectEndpointName = rename (planSubjectEndpointName p)})
         , [ (operationFile, "authority subject endpoint: \"Mutated\" (endpoint 0 of relation 0)")
           , (manifestFile, "\"subjectEndpoint\": { \"authored\": \"Mutated\", \"position\": 0, \"field\": \"subject\"")
           , (schemaFile, "subjectId for the subject endpoint \"Mutated\" (endpoint 0)")
           ]
         )
       , ( "planSubjectEntityId"
-        , \p -> p {planSubjectEntityId = EntityId 5}
+        , onShared (\p -> p {planSubjectEntityId = EntityId 5})
         , [ (operationFile, "entity \"User\" (entity 5)")
           , (manifestFile, "\"subjectEntity\": { \"authored\": \"User\", \"position\": 5, \"model\": \"MithrilSubject\" }")
           , (schemaFile, "the subject entity \"User\" (entity 5)")
           ]
         )
       , ( "planSubjectEntityName"
-        , \p -> p {planSubjectEntityName = rename (planSubjectEntityName p)}
+        , onShared (\p -> p {planSubjectEntityName = rename (planSubjectEntityName p)})
         , [ (operationFile, "entity \"Mutated\" (entity 0)")
           , (manifestFile, "\"subjectEntity\": { \"authored\": \"Mutated\", \"position\": 0, \"model\": \"MithrilSubject\" }")
           , (operationFile, "parameter 0: \"target\" : EntityRef \"Mutated\"")
           ]
         )
       , ( "planScopeEndpointId"
-        , \p -> p {planScopeEndpointId = EndpointId (RelationId 0) 6}
+        , onShared (\p -> p {planScopeEndpointId = EndpointId (RelationId 0) 6})
         , [ (operationFile, "authority scope endpoint: \"organization\" (endpoint 6 of relation 0)")
           , (manifestFile, "\"scopeEndpoint\": { \"authored\": \"organization\", \"position\": 6, \"field\": \"scope\"")
           ]
         )
       , ( "planScopeEndpointName"
-        , \p -> p {planScopeEndpointName = rename (planScopeEndpointName p)}
+        , onShared (\p -> p {planScopeEndpointName = rename (planScopeEndpointName p)})
         , [ (operationFile, "authority scope endpoint: \"Mutated\" (endpoint 1 of relation 0)")
           , (manifestFile, "\"scopeEndpoint\": { \"authored\": \"Mutated\", \"position\": 1, \"field\": \"scope\"")
           ]
         )
       , ( "planScopeEntityId"
-        , \p -> p {planScopeEntityId = EntityId 6}
+        , onShared (\p -> p {planScopeEntityId = EntityId 6})
         , [ (operationFile, "entity \"Organization\" (entity 6)")
           , (manifestFile, "\"scopeEntity\": { \"authored\": \"Organization\", \"position\": 6, \"model\": \"MithrilScope\" }")
           ]
         )
       , ( "planScopeEntityName"
-        , \p -> p {planScopeEntityName = rename (planScopeEntityName p)}
+        , onShared (\p -> p {planScopeEntityName = rename (planScopeEntityName p)})
         , [ (operationFile, "entity \"Mutated\" (entity 1)")
           , (manifestFile, "\"scopeEntity\": { \"authored\": \"Mutated\", \"position\": 1, \"model\": \"MithrilScope\" }")
           , (operationFile, "parameter 1: \"organization\" : EntityRef \"Mutated\"")
           ]
         )
       , ( "planEnumId"
-        , \p -> p {planEnumId = EnumId 3}
+        , onShared (\p -> p {planEnumId = EnumId 3})
         , [ (operationFile, "authority payload order: enum \"MembershipRole\" (enum 3)")
           , (operationFile, "\"Member\" (value 0 of enum 3)")
           , (manifestFile, "\"payloadEnum\": { \"authored\": \"MembershipRole\", \"position\": 3, \"enum\": \"MithrilPayload\" }")
           ]
         )
       , ( "planEnumName"
-        , \p -> p {planEnumName = rename (planEnumName p)}
+        , onShared (\p -> p {planEnumName = rename (planEnumName p)})
         , [ (operationFile, "authority payload order: enum \"Mutated\" (enum 0)")
           , (manifestFile, "\"payloadEnum\": { \"authored\": \"Mutated\", \"position\": 0, \"enum\": \"MithrilPayload\" }")
           , (operationFile, "parameter 2: \"newRole\" : Enum \"Mutated\"")
           ]
         )
       , ( "planEnumMembers"
-        , \p -> p {planEnumMembers = onIndex 0 (\m -> m {planMemberId = EnumValueId (EnumId 0) 9}) (planEnumMembers p)}
+        , onShared (\p -> p {planEnumMembers = onIndex 0 (\m -> m {planMemberId = EnumValueId (EnumId 0) 9}) (planEnumMembers p)})
         , [ (operationFile, "type Payload = \"Value9\" | \"Value1\";")
           , (schemaFile, "enum MithrilPayload {\n  Value9\n  Value1\n}")
           , (manifestFile, "\"members\": [{ \"authored\": \"Member\", \"position\": 9, \"value\": \"Value9\" }")
           ]
         )
       , ( "planEnumMembers"
-        , \p -> p {planEnumMembers = onIndex 1 (\m -> m {planMemberName = rename (planMemberName m)}) (planEnumMembers p)}
+        , onShared (\p -> p {planEnumMembers = onIndex 1 (\m -> m {planMemberName = rename (planMemberName m)}) (planEnumMembers p)})
         , [ (schemaFile, "Value1 = \"Mutated\"")
           , (manifestFile, "{ \"authored\": \"Mutated\", \"position\": 1, \"value\": \"Value1\" }]")
           ]
         )
       , ( "planEnumMembers"
-        , \p -> p {planEnumMembers = reverse (planEnumMembers p)}
+        , onShared (\p -> p {planEnumMembers = reverse (planEnumMembers p)})
         , [ (operationFile, "type Payload = \"Value1\" | \"Value0\";")
           , (schemaFile, "enum MithrilPayload {\n  Value1\n  Value0\n}")
           ]
         )
       , ( "planRanking"
-        , \p -> p {planRanking = [r {planRankedRank = planRankedRank r + 5} | r <- planRanking p]}
+        , onShared (\p -> p {planRanking = [r {planRankedRank = planRankedRank r + 5} | r <- planRanking p]})
         , [ (operationFile, "const payloadRank: Readonly<Record<Payload, number>> = { \"Value0\": 5, \"Value1\": 6 };")
           , (manifestFile, "\"ranking\": [{ \"rank\": 5, \"authored\": \"Member\", \"position\": 0, \"value\": \"Value0\" }, { \"rank\": 6,")
           ]
         )
       , ( "planRanking"
-        , \p -> p {planRanking = onIndex 0 (\r -> r {planRankedId = EnumValueId (EnumId 0) 9}) (planRanking p)}
+        , onShared (\p -> p {planRanking = onIndex 0 (\r -> r {planRankedId = EnumValueId (EnumId 0) 9}) (planRanking p)})
         , [ (operationFile, "const payloadRank: Readonly<Record<Payload, number>> = { \"Value9\": 0, \"Value1\": 1 };")
           , (manifestFile, "\"ranking\": [{ \"rank\": 0, \"authored\": \"Member\", \"position\": 9, \"value\": \"Value9\" }")
           ]
         )
       , ( "planRanking"
-        , \p -> p {planRanking = onIndex 0 (\r -> r {planRankedName = "Mutated"}) (planRanking p)}
+        , onShared (\p -> p {planRanking = onIndex 0 (\r -> r {planRankedName = "Mutated"}) (planRanking p)})
         , [ (operationFile, "materialized authority ranking: rank 0 = \"Mutated\" (value 0 of enum 0)")
           , (manifestFile, "\"ranking\": [{ \"rank\": 0, \"authored\": \"Mutated\",")
           ]
         )
       , ( "planRanking"
-        , \p -> p {planRanking = reverse (planRanking p)}
+        , onShared (\p -> p {planRanking = reverse (planRanking p)})
         , [ (operationFile, "const payloadRank: Readonly<Record<Payload, number>> = { \"Value1\": 1, \"Value0\": 0 };")
           , (manifestFile, "\"ranking\": [{ \"rank\": 1, \"authored\": \"Admin\", \"position\": 1, \"value\": \"Value1\" }, { \"rank\": 0,")
           ]
         )
       , ( "planRankBottom"
-        , \p -> p {planRankBottom = (planRankBottom p) {planRankedRank = 4}}
+        , onShared (\p -> p {planRankBottom = (planRankBottom p) {planRankedRank = 4}})
         , [ (operationFile, "materialized bottom: rank 4 = \"Member\" (value 0 of enum 0)")
           , (manifestFile, "\"bottom\": { \"rank\": 4, \"authored\": \"Member\"")
           ]
         )
       , ( "planRankBottom"
-        , \p -> p {planRankBottom = (planRankBottom p) {planRankedName = "Mutated"}}
+        , onShared (\p -> p {planRankBottom = (planRankBottom p) {planRankedName = "Mutated"}})
         , [ (operationFile, "materialized bottom: rank 0 = \"Mutated\" (value 0 of enum 0)")
           , (manifestFile, "\"bottom\": { \"rank\": 0, \"authored\": \"Mutated\"")
           ]
         )
       , ( "planRankBottom"
-        , \p -> p {planRankBottom = (planRankBottom p) {planRankedId = EnumValueId (EnumId 0) 9}}
+        , onShared (\p -> p {planRankBottom = (planRankBottom p) {planRankedId = EnumValueId (EnumId 0) 9}})
         , [ (operationFile, "materialized bottom: rank 0 = \"Member\" (value 9 of enum 0)")
           , (manifestFile, "\"bottom\": { \"rank\": 0, \"authored\": \"Member\", \"position\": 9, \"value\": \"Value9\" }")
           ]
         )
       , ( "planRankTop"
-        , \p -> p {planRankTop = (planRankTop p) {planRankedRank = 7}}
+        , onShared (\p -> p {planRankTop = (planRankTop p) {planRankedRank = 7}})
         , [ (operationFile, "const floorRank = 7;")
           , (operationFile, "privilege floor: rank 7 = \"Admin\" (value 1 of enum 0)")
           , (manifestFile, "\"floor\": { \"rank\": 7, \"authored\": \"Admin\"")
           ]
         )
       , ( "planRankTop"
-        , \p -> p {planRankTop = (planRankTop p) {planRankedName = "Mutated"}}
+        , onShared (\p -> p {planRankTop = (planRankTop p) {planRankedName = "Mutated"}})
         , [ (operationFile, "privilege floor: rank 1 = \"Mutated\" (value 1 of enum 0)")
           , (operationFile, "Some(Enum[\"MembershipRole\".\"Mutated\"])")
           , (operationFile, "the privilege floor is the rank of Value1 (\"Mutated\")")
@@ -1116,109 +1448,109 @@ planConsumptionChecks baseModel baseBundle =
           ]
         )
       , ( "planRankTop"
-        , \p -> p {planRankTop = (planRankTop p) {planRankedId = EnumValueId (EnumId 0) 9}}
+        , onShared (\p -> p {planRankTop = (planRankTop p) {planRankedId = EnumValueId (EnumId 0) 9}})
         , [ (operationFile, "the privilege floor is the rank of Value9 (\"Admin\")")
           , (manifestFile, "\"floor\": { \"rank\": 1, \"authored\": \"Admin\", \"position\": 9, \"value\": \"Value9\" }")
           ]
         )
       , ( "planAbsentRank"
-        , \p -> p {planAbsentRank = -3}
+        , onShared (\p -> p {planAbsentRank = -3})
         , [ (operationFile, "const absentRank = -3;")
           , (operationFile, "absent rank: -3")
           , (manifestFile, "\"absence\": { \"level\": \"Bottom\", \"rank\": -3 }")
           ]
         )
-      , ( "planActionId"
-        , \p -> p {planActionId = ActionId 9}
+      , ( "caseActionId"
+        , onCase (\c -> c {caseActionId = ActionId 9})
         , [ (operationFile, "case action: \"Membership.changeRole\" (action 9)")
           , (manifestFile, "\"caseAction\": { \"authored\": \"Membership.changeRole\", \"position\": 9,")
           ]
         )
-      , ( "planActionName"
-        , \p -> p {planActionName = rename (planActionName p)}
+      , ( "caseActionName"
+        , onCase (\c -> c {caseActionName = rename (caseActionName c)})
         , [ (operationFile, "case action: \"Mutated\" (action 4)")
           , (manifestFile, "\"caseAction\": { \"authored\": \"Mutated\", \"position\": 4, \"operation\": \"mithrilCaseAction\"")
           , (specFile, "authored action \"Mutated\".")
           , ("src/MainPage.tsx", "case action shape of \\\"Mutated\\\".")
           ]
         )
-      , ( "planSubjectParameterId"
-        , \p -> p {planSubjectParameterId = ParameterId (ActionId 4) 7}
+      , ( "changeOtherSubjectParameterId"
+        , onFacts (\f -> f {changeOtherSubjectParameterId = ParameterId (ActionId 4) 7})
         , [ (operationFile, "parameter 7: \"target\" : EntityRef \"User\"")
           , (manifestFile, "{ \"role\": \"subject\", \"authored\": \"target\", \"position\": 7, \"argument\": \"subject\" }")
           ]
         )
-      , ( "planSubjectParameterName"
-        , \p -> p {planSubjectParameterName = rename (planSubjectParameterName p)}
+      , ( "changeOtherSubjectParameterName"
+        , onFacts (\f -> f {changeOtherSubjectParameterName = rename (changeOtherSubjectParameterName f)})
         , [ (operationFile, "parameter 0: \"Mutated\" : EntityRef \"User\"")
           , (operationFile, "subject carries the parameter \"Mutated\",")
           , (manifestFile, "{ \"role\": \"subject\", \"authored\": \"Mutated\", \"position\": 0, \"argument\": \"subject\" }")
           ]
         )
-      , ( "planScopeParameterId"
-        , \p -> p {planScopeParameterId = ParameterId (ActionId 4) 8}
+      , ( "caseScopeParameterId"
+        , onCase (\c -> c {caseScopeParameterId = ParameterId (ActionId 4) 8})
         , [ (operationFile, "parameter 8: \"organization\" : EntityRef \"Organization\"")
           , (manifestFile, "{ \"role\": \"scope\", \"authored\": \"organization\", \"position\": 8, \"argument\": \"scope\" }")
           ]
         )
-      , ( "planScopeParameterName"
-        , \p -> p {planScopeParameterName = rename (planScopeParameterName p)}
+      , ( "caseScopeParameterName"
+        , onCase (\c -> c {caseScopeParameterName = rename (caseScopeParameterName c)})
         , [ (operationFile, "parameter 1: \"Mutated\" : EntityRef \"Organization\"")
           , (operationFile, "scope carries the parameter \"Mutated\",")
           , (manifestFile, "{ \"role\": \"scope\", \"authored\": \"Mutated\", \"position\": 1, \"argument\": \"scope\" }")
           ]
         )
-      , ( "planPayloadParameterId"
-        , \p -> p {planPayloadParameterId = ParameterId (ActionId 4) 9}
+      , ( "casePayloadParameterId"
+        , onCase (\c -> c {casePayloadParameterId = ParameterId (ActionId 4) 9})
         , [ (operationFile, "parameter 9: \"newRole\" : Enum \"MembershipRole\"")
           , (manifestFile, "{ \"role\": \"payload\", \"authored\": \"newRole\", \"position\": 9, \"argument\": \"payload\" }")
           ]
         )
-      , ( "planPayloadParameterName"
-        , \p -> p {planPayloadParameterName = rename (planPayloadParameterName p)}
+      , ( "casePayloadParameterName"
+        , onCase (\c -> c {casePayloadParameterName = rename (casePayloadParameterName c)})
         , [ (operationFile, "parameter 2: \"Mutated\" : Enum \"MembershipRole\"")
           , (operationFile, "payload carries the parameter \"Mutated\";")
           , (manifestFile, "{ \"role\": \"payload\", \"authored\": \"Mutated\", \"position\": 2, \"argument\": \"payload\" }")
           ]
         )
-      , ( "planEffectBindings"
-        , \p -> p {planEffectBindings = onIndex 0 (\b -> b {planBindingEndpointId = EndpointId (RelationId 0) 7}) (planEffectBindings p)}
+      , ( "changeOtherEffectBindings"
+        , onFacts (\f -> f {changeOtherEffectBindings = onIndex 0 (\b -> b {planBindingEndpointId = EndpointId (RelationId 0) 7}) (changeOtherEffectBindings f)})
         , [ (operationFile, "effect: SetRelation[\"Membership\"](endpoint \"user\" (endpoint 7) = Argument \"target\" (parameter 0)")
           , (manifestFile, "\"effectBindings\": [{ \"endpoint\": \"user\", \"endpointPosition\": 7, \"parameter\": \"target\", \"parameterPosition\": 0 }")
           ]
         )
-      , ( "planEffectBindings"
-        , \p -> p {planEffectBindings = onIndex 0 (\b -> b {planBindingParameterId = ParameterId (ActionId 4) 8}) (planEffectBindings p)}
+      , ( "changeOtherEffectBindings"
+        , onFacts (\f -> f {changeOtherEffectBindings = onIndex 0 (\b -> b {planBindingParameterId = ParameterId (ActionId 4) 8}) (changeOtherEffectBindings f)})
         , [ (operationFile, "effect: SetRelation[\"Membership\"](endpoint \"user\" (endpoint 0) = Argument \"target\" (parameter 8)")
           , (manifestFile, "\"effectBindings\": [{ \"endpoint\": \"user\", \"endpointPosition\": 0, \"parameter\": \"target\", \"parameterPosition\": 8 }")
           ]
         )
-      , ( "planEffectBindings"
-        , \p -> p {planEffectBindings = onIndex 1 (\b -> b {planBindingEndpointName = "Mutated", planBindingParameterName = "Mutated2"}) (planEffectBindings p)}
+      , ( "changeOtherEffectBindings"
+        , onFacts (\f -> f {changeOtherEffectBindings = onIndex 1 (\b -> b {planBindingEndpointName = "Mutated", planBindingParameterName = "Mutated2"}) (changeOtherEffectBindings f)})
         , [ (operationFile, "endpoint \"Mutated\" (endpoint 1) = Argument \"Mutated2\" (parameter 1)) payload Argument[\"newRole\"]")
           , (manifestFile, "{ \"endpoint\": \"Mutated\", \"endpointPosition\": 1, \"parameter\": \"Mutated2\", \"parameterPosition\": 1 }]")
           ]
         )
-      , ( "planEffectBindings"
-        , \p -> p {planEffectBindings = reverse (planEffectBindings p)}
+      , ( "changeOtherEffectBindings"
+        , onFacts (\f -> f {changeOtherEffectBindings = reverse (changeOtherEffectBindings f)})
         , [ (operationFile, "effect: SetRelation[\"Membership\"](endpoint \"organization\" (endpoint 1) = Argument \"organization\" (parameter 1), endpoint \"user\" (endpoint 0)")
           , (manifestFile, "\"effectBindings\": [{ \"endpoint\": \"organization\", \"endpointPosition\": 1,")
           ]
         )
-      , ( "planCaseScopeBinding"
-        , \p -> p {planCaseScopeBinding = (planCaseScopeBinding p) {planBindingEndpointId = EndpointId (RelationId 0) 7}}
+      , ( "caseScopeBinding"
+        , onCase (\c -> c {caseScopeBinding = (caseScopeBinding c) {planBindingEndpointId = EndpointId (RelationId 0) 7}})
         , [ (operationFile, "case scope binding: endpoint \"organization\" (endpoint 7) = Argument \"organization\" (parameter 1)")
           , (manifestFile, "\"caseScopeBinding\": { \"endpoint\": \"organization\", \"endpointPosition\": 7, \"parameter\": \"organization\", \"parameterPosition\": 1 }")
           ]
         )
-      , ( "planCaseScopeBinding"
-        , \p -> p {planCaseScopeBinding = (planCaseScopeBinding p) {planBindingParameterId = ParameterId (ActionId 4) 8}}
+      , ( "caseScopeBinding"
+        , onCase (\c -> c {caseScopeBinding = (caseScopeBinding c) {planBindingParameterId = ParameterId (ActionId 4) 8}})
         , [ (operationFile, "case scope binding: endpoint \"organization\" (endpoint 1) = Argument \"organization\" (parameter 8)")
           , (manifestFile, "\"caseScopeBinding\": { \"endpoint\": \"organization\", \"endpointPosition\": 1, \"parameter\": \"organization\", \"parameterPosition\": 8 }")
           ]
         )
-      , ( "planCaseScopeBinding"
-        , \p -> p {planCaseScopeBinding = (planCaseScopeBinding p) {planBindingEndpointName = "Mutated", planBindingParameterName = "Mutated2"}}
+      , ( "caseScopeBinding"
+        , onCase (\c -> c {caseScopeBinding = (caseScopeBinding c) {planBindingEndpointName = "Mutated", planBindingParameterName = "Mutated2"}})
         , [ (operationFile, "case scope binding: endpoint \"Mutated\" (endpoint 1) = Argument \"Mutated2\" (parameter 1)")
           , (manifestFile, "\"caseScopeBinding\": { \"endpoint\": \"Mutated\", \"endpointPosition\": 1, \"parameter\": \"Mutated2\", \"parameterPosition\": 1 }")
           ]
@@ -1356,29 +1688,45 @@ renamedModelChecks baseModel baseBundle = do
              )
          , check
              "hostile plan names cannot inject syntax: line counts, code lines, and manifest validity are unchanged"
-             ( case supportPlan baseModel of
-                 Right plan ->
+             ( case v0PlanOf baseModel of
+                 Just profile ->
                    let hostile = \located -> located {sourcedValue = "Evil\n*/ } eval(1); // \"\\ \x2028 \ESC"}
                        hostilePlan =
-                         plan
-                           { planModelName = hostile (planModelName plan)
-                           , planRelationName = hostile (planRelationName plan)
-                           , planSubjectEndpointName = hostile (planSubjectEndpointName plan)
-                           , planScopeEndpointName = hostile (planScopeEndpointName plan)
-                           , planSubjectEntityName = hostile (planSubjectEntityName plan)
-                           , planScopeEntityName = hostile (planScopeEntityName plan)
-                           , planEnumName = hostile (planEnumName plan)
-                           , planEnumMembers = [m {planMemberName = hostile (planMemberName m)} | m <- planEnumMembers plan]
-                           , planRanking = [r {planRankedName = "Ev\nil"} | r <- planRanking plan]
-                           , planRankBottom = (planRankBottom plan) {planRankedName = "Ev\nil"}
-                           , planRankTop = (planRankTop plan) {planRankedName = "Ev\nil"}
-                           , planActionName = hostile (planActionName plan)
-                           , planSubjectParameterName = hostile (planSubjectParameterName plan)
-                           , planScopeParameterName = hostile (planScopeParameterName plan)
-                           , planPayloadParameterName = hostile (planPayloadParameterName plan)
-                           , planEffectBindings = [b {planBindingEndpointName = "Ev\nil", planBindingParameterName = "Ev\nil"} | b <- planEffectBindings plan]
-                           , planCaseScopeBinding = (planCaseScopeBinding plan) {planBindingEndpointName = "Ev\nil", planBindingParameterName = "Ev\nil"}
-                           }
+                         onFacts
+                           ( \f ->
+                               f
+                                 { changeOtherSubjectParameterName = hostile (changeOtherSubjectParameterName f)
+                                 , changeOtherEffectBindings = [b {planBindingEndpointName = "Ev\nil", planBindingParameterName = "Ev\nil"} | b <- changeOtherEffectBindings f]
+                                 }
+                           )
+                           ( onCase
+                               ( \c ->
+                                   c
+                                     { caseActionName = hostile (caseActionName c)
+                                     , caseScopeParameterName = hostile (caseScopeParameterName c)
+                                     , casePayloadParameterName = hostile (casePayloadParameterName c)
+                                     , caseScopeBinding = (caseScopeBinding c) {planBindingEndpointName = "Ev\nil", planBindingParameterName = "Ev\nil"}
+                                     }
+                               )
+                               ( onShared
+                                   ( \plan ->
+                                       plan
+                                         { planModelName = hostile (planModelName plan)
+                                         , planRelationName = hostile (planRelationName plan)
+                                         , planSubjectEndpointName = hostile (planSubjectEndpointName plan)
+                                         , planScopeEndpointName = hostile (planScopeEndpointName plan)
+                                         , planSubjectEntityName = hostile (planSubjectEntityName plan)
+                                         , planScopeEntityName = hostile (planScopeEntityName plan)
+                                         , planEnumName = hostile (planEnumName plan)
+                                         , planEnumMembers = [m {planMemberName = hostile (planMemberName m)} | m <- planEnumMembers plan]
+                                         , planRanking = [r {planRankedName = "Ev\nil"} | r <- planRanking plan]
+                                         , planRankBottom = (planRankBottom plan) {planRankedName = "Ev\nil"}
+                                         , planRankTop = (planRankTop plan) {planRankedName = "Ev\nil"}
+                                         }
+                                   )
+                                   profile
+                               )
+                           )
                        hostileBundle = renderBundleFromPlan hostilePlan
                        sameLineCount path = length (Text.lines (textOf hostileBundle path)) == length (Text.lines (textOf baseBundle path))
                     in all sameLineCount expectedInventory
@@ -1387,7 +1735,7 @@ renamedModelChecks baseModel baseBundle = do
                          && codeLines hostileBundle operationFile == codeLines baseBundle operationFile
                          && (Aeson.decodeStrict (fileOf hostileBundle manifestFile) :: Maybe Value) /= Nothing
                          && map managedPath (waspBundleFiles hostileBundle) == expectedInventory
-                 Left _ -> False
+                 Nothing -> False
              )
          ]
   where
