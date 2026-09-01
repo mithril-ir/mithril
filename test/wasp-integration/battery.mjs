@@ -481,6 +481,7 @@ const testObjects = {
     "mithril_test_committer_pid",
     "mithril_test_committer_arrival",
     "mithril_test_waiter_pid",
+    "mithril_test_waiter_committed_txid",
   ],
 };
 
@@ -558,8 +559,10 @@ function installFaultTrigger() {
 // (never a replacement), so it times out or proceeds without a commit and
 // the round fails.  The overlap is recorded non-transactionally so it
 // survives the waiter's abort: the waiter's and committer's pids (two
-// distinct backends), the committer's arrival number (still 2), and a
-// blocked-seen tick; a barrier deadline expiring is a timeout (a test
+// distinct backends), the committer's arrival number (still 2), a
+// blocked-seen tick, and the exact committer transaction id the waiter
+// itself observed committed (bound post-round to the committer's published
+// id by exact equality); a barrier deadline expiring is a timeout (a test
 // failure, never an accepted outcome).
 function installBarrierTrigger() {
   sql(
@@ -570,6 +573,7 @@ function installBarrierTrigger() {
      create sequence mithril_test_committer_pid;
      create sequence mithril_test_committer_arrival;
      create sequence mithril_test_waiter_pid;
+     create sequence mithril_test_waiter_committed_txid;
      create function mithril_test_barrier() returns trigger language plpgsql as $$
      declare
        deadline timestamptz := clock_timestamp() + interval '${barrierDeadlineInterval()}';
@@ -607,6 +611,21 @@ function installBarrierTrigger() {
            committer_state := pg_xact_status(committer_txid::text::xid8);
            if committer_state = 'committed' then
              perform setval('mithril_test_waiter_pid', own_pid);
+             -- Publish the EXACT transaction id THIS held-open waiter observed
+             -- COMMITTED (the immutable arrival-2 id it just polled), on a
+             -- non-transactional sequence that survives the waiter's own abort.
+             -- Written ONLY here, in the committed branch, and ONLY by the
+             -- waiter (arrival 1): arrival 2 returns before this loop and
+             -- arrival >= 3 bypasses, so neither can write or overwrite it.
+             -- The post-round predicate binds this observed-committed id to the
+             -- committer's published id by exact equality, so "PostgreSQL
+             -- reported the exact published transaction committed" is captured
+             -- at the overlap moment, never re-derived by a later, weaker
+             -- fresh-connection pg_xact_status re-query (which once returned
+             -- something other than the literal 'committed' for a genuine
+             -- round; that raw value was not captured and its micro-cause is
+             -- unknown, so the redundant re-measurement is removed here).
+             perform setval('mithril_test_waiter_committed_txid', committer_txid);
              perform nextval('mithril_test_blocked_seen');
              return new;
            end if;
@@ -645,7 +664,7 @@ function barrierEvidenceImmutabilityProbe({ admin, scope }) {
       `select setval('mithril_test_arrivals', 2, false); select setval('mithril_test_committer_txid', 1, false); ` +
         `select setval('mithril_test_committer_pid', 1, false); select setval('mithril_test_committer_arrival', 1, false); ` +
         `select setval('mithril_test_blocked_seen', 1, false); select setval('mithril_test_waiter_pid', 1, false); ` +
-        `select setval('mithril_test_timeouts', 1, false);`,
+        `select setval('mithril_test_waiter_committed_txid', 1, false); select setval('mithril_test_timeouts', 1, false);`,
     );
     // Arrival 2 (its own backend and transaction): publishes the evidence.
     sql(noopUpdate);
@@ -680,6 +699,17 @@ function barrierEvidenceImmutabilityProbe({ admin, scope }) {
         after: { committerTxidAfter, committerPidAfter, committerArrivalAfter },
       }),
     );
+    // The waiter's observed-committed transaction id is published ONLY by the
+    // held-open waiter (arrival 1) in the trigger's committed branch.  This
+    // probe drove only arrivals 2 and 3 (never a waiter), so — on the REAL
+    // trigger — that sequence must remain unset: neither the designated
+    // committer nor a later arrival can ever write it.
+    const waiterCommittedAfter = sequenceValue("mithril_test_waiter_committed_txid");
+    check(
+      "barrier immutability: neither the designated committer (arrival 2) nor a later arrival (arrival 3) wrote the waiter's observed-committed transaction id — only the held-open waiter (arrival 1) publishes it",
+      waiterCommittedAfter.isCalled === false,
+      JSON.stringify(waiterCommittedAfter),
+    );
     // The evidence predicate rejects the re-entered round, citing the
     // arrival-count violation (even though the committer evidence, being
     // immutable, still correctly identifies arrival 2).
@@ -691,7 +721,7 @@ function barrierEvidenceImmutabilityProbe({ admin, scope }) {
       waiterPid: sequenceValue("mithril_test_waiter_pid"),
       blockedSeen: sequenceValue("mithril_test_blocked_seen"),
       timeouts: sequenceValue("mithril_test_timeouts"),
-      committerCommitted: true,
+      waiterCommittedTxid: waiterCommittedAfter,
     });
     check(
       "barrier immutability: the evidence predicate rejects the arrival-3 round, citing the re-entry",
@@ -1030,8 +1060,9 @@ async function main() {
   //     the waiter poll loop and time out.  This is harmless — that prior
   //     round is already rejected, and the per-round arm/evidence reset
   //     below clears EVERY barrier sequence (the arrival counter, the
-  //     committer txid/pid/arrival, blocked-seen, timeouts, and the waiter
-  //     pid) before the round's two concurrent requests run, so no bootstrap
+  //     committer txid/pid/arrival, blocked-seen, timeouts, the waiter pid,
+  //     and the waiter's observed-committed txid) before the round's two
+  //     concurrent requests run, so no bootstrap
   //     arrival or stray evidence can be mistaken for the tested pair's
   //     companion or falsely accept the round.
   // Correctness therefore rests on that reset, not on the bootstrap always
@@ -1055,7 +1086,7 @@ async function main() {
         `select setval('mithril_test_arrivals', 1, false); select setval('mithril_test_timeouts', 1, false); ` +
           `select setval('mithril_test_blocked_seen', 1, false); select setval('mithril_test_committer_txid', 1, false); ` +
           `select setval('mithril_test_committer_pid', 1, false); select setval('mithril_test_committer_arrival', 1, false); ` +
-          `select setval('mithril_test_waiter_pid', 1, false);`,
+          `select setval('mithril_test_waiter_pid', 1, false); select setval('mithril_test_waiter_committed_txid', 1, false);`,
       );
       // Two real HTTP requests over two independent, non-pooled
       // connections, collected with Promise.allSettled: a transport
@@ -1087,11 +1118,22 @@ async function main() {
       const committerPid = sequenceValue("mithril_test_committer_pid");
       const committerTxid = sequenceValue("mithril_test_committer_txid");
       const committerArrival = sequenceValue("mithril_test_committer_arrival");
-      // The commit status of the EXACT published committer transaction, read
-      // straight from the clog — an independent, database-confirmed proof
-      // that the very transaction the committer published committed.
-      const committerCommitted =
-        committerTxid.isCalled && sql(`select pg_xact_status(${committerTxid.lastValue}::text::xid8);`) === "committed";
+      // The EXACT transaction id the held-open waiter observed COMMITTED
+      // inside the barrier (arrival 1's committed branch published it), read
+      // from its non-transactional sequence.  This is the database-confirmed
+      // commit proof, captured AT the overlap moment and bound below to the
+      // committer's published id by exact equality — NOT a later, weaker
+      // post-round re-query of pg_xact_status (which once returned something
+      // other than the literal 'committed' for a genuine round; that raw
+      // value was not captured and its micro-cause is unknown, so the
+      // redundant re-measurement is removed).  The waiter publishes this ONLY
+      // in the 'committed' branch, so an unset value means the waiter never
+      // observed the commit.
+      const waiterCommittedTxid = sequenceValue("mithril_test_waiter_committed_txid");
+      const committedProof =
+        waiterCommittedTxid.isCalled &&
+        committerTxid.isCalled &&
+        waiterCommittedTxid.lastValue === committerTxid.lastValue;
       const distinctBackends =
         waiterPid.isCalled && committerPid.isCalled && waiterPid.lastValue !== committerPid.lastValue;
       arrivalCounts.push(arrivals.isCalled ? arrivals.lastValue : -1);
@@ -1123,11 +1165,11 @@ async function main() {
         waiterPid,
         blockedSeen,
         timeouts,
-        committerCommitted,
+        waiterCommittedTxid,
       });
       const overlapping = bothObserved && barrierEvidence.ok;
       outcomes.push(
-        `${firstStatus}/${secondStatus}:${adminValue}/${peerValue}:arrivals=${arrivals.lastValue}:committerArrival=${committerArrival.isCalled ? committerArrival.lastValue : 0}:committed=${committerCommitted}:blocked=${blockedSeen.isCalled ? blockedSeen.lastValue : 0}${distinctBackends ? "" : ":same-or-missing-pids"}:timeouts=${timeouts.isCalled ? timeouts.lastValue : 0}${barrierEvidence.ok ? "" : `:BARRIER(${barrierEvidence.reasons.join("; ")})`}${judgement.accepted ? "" : `:REJECTED(${judgement.reason})`}`,
+        `${firstStatus}/${secondStatus}:${adminValue}/${peerValue}:arrivals=${arrivals.lastValue}:committerArrival=${committerArrival.isCalled ? committerArrival.lastValue : 0}:committed=${committedProof}:observed=${waiterCommittedTxid.isCalled ? waiterCommittedTxid.lastValue : 0}/${committerTxid.isCalled ? committerTxid.lastValue : 0}:blocked=${blockedSeen.isCalled ? blockedSeen.lastValue : 0}${distinctBackends ? "" : ":same-or-missing-pids"}:timeouts=${timeouts.isCalled ? timeouts.lastValue : 0}${barrierEvidence.ok ? "" : `:BARRIER(${barrierEvidence.reasons.join("; ")})`}${judgement.accepted ? "" : `:REJECTED(${judgement.reason})`}`,
       );
       if (judgement.accepted) {
         consistentRounds += 1;

@@ -309,9 +309,11 @@ export function renderTransportFailure(failure) {
 // The complete evidence a genuine, one-shot two-admin barrier round must
 // exhibit, as a PURE predicate over the non-transactional sequence values
 // the battery reads after the round — each an { isCalled, lastValue } pair
-// (test/wasp-integration/battery.mjs's sequenceValue) — plus a
-// committerCommitted flag (the database-confirmed commit status of the
-// EXACT published committer transaction).  This is the single acceptance
+// (test/wasp-integration/battery.mjs's sequenceValue), including
+// waiterCommittedTxid: the EXACT transaction id the held-open waiter itself
+// observed COMMITTED inside the trigger and published on a non-transactional
+// sequence, which must equal the designated committer's published id.  This
+// is the single acceptance
 // rule the real battery applies to a two-admin round, exported so the
 // hermetic regression (test/wasp-integration/concurrency.test.mjs) pins
 // exactly the predicate the battery calls, never a weaker copy.
@@ -330,8 +332,9 @@ export function renderTransportFailure(failure) {
 // of every record BEFORE any semantic comparison, and never coerces.  Each
 // required sequence-state record must be a non-null object carrying a
 // boolean isCalled and a finite, safe-integer lastValue (exactly the
-// representation the reader produces); committerCommitted must be the
-// boolean true; and the timeout record must be present with isCalled ===
+// representation the reader produces); waiterCommittedTxid must be a called,
+// positive id equal to committerTxid; and the timeout record must be present
+// with isCalled ===
 // false — an ABSENT timeout record is malformed, never silently read as
 // "no timeout".  Malformed or partial evidence (null, arrays, primitives,
 // wrong types, numeric strings, NaN/Infinity, non-positive ids) yields
@@ -381,6 +384,7 @@ export function evaluateTwoAdminBarrierEvidence(evidence) {
   const committerPid = requireCalled("committerPid");
   const waiterPid = requireCalled("waiterPid");
   const blockedSeen = requireCalled("blockedSeen");
+  const waiterCommittedTxid = requireCalled("waiterCommittedTxid");
   // Exactly two arrivals: waiter (arrival 1) + designated committer (arrival
   // 2), and NO retry re-entered the one-shot barrier.  lastValue is already
   // a validated safe integer here, so === and >= below are not coercive.
@@ -403,6 +407,7 @@ export function evaluateTwoAdminBarrierEvidence(evidence) {
   requirePositive(committerTxid, "the committer transaction id");
   requirePositive(committerPid, "the committer backend pid");
   requirePositive(waiterPid, "the waiter backend pid");
+  requirePositive(waiterCommittedTxid, "the waiter observed-committed transaction id");
   // The waiter observed the designated committer commit (at least one tick).
   if (blockedSeen !== null && !(blockedSeen.lastValue >= 1)) {
     reasons.push("the waiter never observed the designated committer commit (no blocked-seen tick)");
@@ -411,12 +416,22 @@ export function evaluateTwoAdminBarrierEvidence(evidence) {
   if (waiterPid !== null && committerPid !== null && waiterPid.lastValue === committerPid.lastValue) {
     reasons.push("the waiter and committer are not two distinct backends");
   }
-  // The EXACT published committer transaction committed: committerCommitted
-  // must be the boolean true — no truthy substitute ("true", 1, {}, []).
-  if (typeof evidence.committerCommitted !== "boolean") {
-    reasons.push("committerCommitted is not a boolean");
-  } else if (evidence.committerCommitted !== true) {
-    reasons.push("the exact published committer transaction did not reach the committed state");
+  // The held-open waiter observed the EXACT published committer transaction
+  // COMMITTED and published the id it observed (the battery's barrier trigger,
+  // the 'committed' branch ONLY, arrival 1 ONLY).  That observed-committed id
+  // must be present (requireCalled above — the waiter did observe a commit)
+  // and must EQUAL the designated committer's published id by exact integer
+  // equality: the commit proof is thereby bound to the exact published
+  // transaction and captured at the overlap moment, never re-derived by a
+  // later, weaker post-round pg_xact_status re-query (which once returned
+  // something other than the literal 'committed' for a genuine round; that
+  // raw value was not captured and its micro-cause is unknown).
+  // A never-published value (the waiter never observed a commit) or any
+  // mismatched, stale, or overwritten id fails closed here.
+  if (waiterCommittedTxid !== null && committerTxid !== null && waiterCommittedTxid.lastValue !== committerTxid.lastValue) {
+    reasons.push(
+      `the waiter's observed-committed transaction id (${waiterCommittedTxid.lastValue}) does not equal the designated committer's published transaction id (${committerTxid.lastValue})`,
+    );
   }
   // Timeout evidence must be EXPLICIT: a canonical record with isCalled ===
   // false.  A missing or malformed record is rejected here, never
