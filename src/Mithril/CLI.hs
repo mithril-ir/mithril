@@ -19,11 +19,11 @@
 -- exact rule-2 (bounded self-update) cases — generated Agda with one
 -- proof group per case, checked by exactly Agda 2.8.0, and @wasp
 -- generate CORE_FILE WASP_ROOT@ and @wasp check CORE_FILE WASP_ROOT@,
--- the Wasp Confinement Profile v0, which lowers only exactly one
--- rule-1 case of a verified document: a document the verifier reports
--- VERIFIED with a rule-2 case or with several cases is refused as
--- unsupported by the profile's capability gate.  No other compiler
--- stage exists.
+-- the Wasp Confinement Profiles: Profile v0 lowers only exactly one
+-- rule-1 case of a verified document and Profile v1 only the exact
+-- ordered rule-1, rule-2 case pair; every other verified plan is
+-- refused as unsupported by the profile dispatcher.  No other
+-- compiler stage exists.
 module Mithril.CLI
   ( Command (..)
   , parseCommand
@@ -274,20 +274,27 @@ renderHelp =
     , "tool failure (exit 2), never a semantic verdict. The generator,"
     , "the embedded Agda kernel, the Agda toolchain, and the support"
     , "rules themselves remain trusted components."
-    , "wasp generate and wasp check implement the Wasp Confinement Profile v0"
-    , "for exactly the singleton change-other (rule-1) NoSelfPrivilegeEscalation"
-    , "slice, which both require to be VERIFIED first; a verified document"
-    , "with a bounded self-update case or with several cases is refused by the"
-    , "profile's capability gate (exit 3) before any destination access. The"
-    , "profile is a normal Wasp 0.25.0 application on"
+    , "wasp generate and wasp check implement the Wasp Confinement Profiles for"
+    , "the verified NoSelfPrivilegeEscalation slice, which both require to be"
+    , "VERIFIED first: Profile v0 lowers exactly the singleton change-other"
+    , "(rule-1) case as one authenticated Action, and Profile v1 lowers exactly"
+    , "the ordered change-other, bounded self-update (rule-1, rule-2) case pair"
+    , "as two authenticated Actions exported by the one generated operation"
+    , "file over the same fourteen managed paths; arbitrary multi-case lowering"
+    , "is not implemented, so a verified document with any other case sequence"
+    , "(a singleton bounded self-update case, two rule-1 cases, the reversed"
+    , "pair, three or more cases) is refused by the profile dispatcher (exit 3)"
+    , "before any destination access - VERIFIED but Wasp-UNSUPPORTED is a valid"
+    , "outcome. Each profile is a normal Wasp 0.25.0 application on"
     , "PostgreSQL whose specification, Prisma schema, dependency configuration,"
-    , "generated Action, client shell, ownership marker, and manifest are"
+    , "generated Actions, client shell, ownership marker, and manifest are"
     , "managed inputs regenerated from the same typed normalized Core the"
     , "verifier consumed, with fixed target names (never authored names) for"
     , "every identifier, file, and route. check walks the source root without"
     , "following symbolic links, rejects hard links, and rejects every missing,"
     , "altered, or unexpected input (exit 4); generate stages the complete"
-    , "bundle beside the root, checks it, swaps it into place as a whole,"
+    , "bundle beside the root, checks it, swaps it into place as a whole"
+    , "(an owned root of either profile transitions to the requested one),"
     , "refuses an unmarked nonempty root or an unmanaged path without mutation"
     , "(exit 4), refuses root paths with dot, empty, or trailing-separator"
     , "components, linked ancestors, a linked root, or an existing backup"
@@ -295,14 +302,15 @@ renderHelp =
     , "umask), and finishes with the same check."
     , "A document outside the support rule is UNSUPPORTED (exit 3). Wasp, Node,"
     , "Prisma, PostgreSQL, the templates, and the lowering remain trusted; no"
-    , "semantic-preservation theorem exists; the confinement claim covers the"
+    , "semantic-preservation theorem exists (a rendered bundle is trusted"
+    , "correspondence evidence, not a proof); the confinement claim covers the"
     , "source snapshot at the time of checking, not concurrent same-user"
     , "mutation after it, privileged users, checker or CI compromise,"
     , "dependency compromise, external database credential holders, or"
     , "tampering after the Wasp build; this is not a general Wasp backend, a"
     , "whole-product generator, a complete verifier, or a runtime sandbox."
     , "No other compiler stage is implemented: no complete verifier, no"
-    , "semantic diff, and no target generation beyond this one slice."
+    , "semantic diff, and no target generation beyond these two profiles."
     ]
 
 -- | Version line for the given package version string.

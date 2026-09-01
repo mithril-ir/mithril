@@ -207,11 +207,13 @@ checks =
           && ("wasp check CORE_FILE WASP_ROOT" `isInfixOf` renderHelp)
       )
   , check
-      "help scopes the wasp commands to the one confined slice on Wasp 0.25.0 and PostgreSQL"
-      ( ("Wasp Confinement Profile v0" `isInfixOf` renderHelp)
+      "help scopes the wasp commands to the two confined profiles on Wasp 0.25.0 and PostgreSQL"
+      ( ("implement the Wasp Confinement Profiles for" `isInfixOf` renderHelp)
           && ("Wasp 0.25.0 application on\nPostgreSQL" `isInfixOf` renderHelp)
-          && ("exactly the singleton change-other (rule-1) NoSelfPrivilegeEscalation\nslice, which both require to be VERIFIED first" `isInfixOf` renderHelp)
-          && ("bounded self-update case or with several cases is refused by the\nprofile's capability gate (exit 3) before any destination access" `isInfixOf` renderHelp)
+          && ("which both require to be\nVERIFIED first: Profile v0 lowers exactly the singleton change-other\n(rule-1) case as one authenticated Action, and Profile v1 lowers exactly\nthe ordered change-other, bounded self-update (rule-1, rule-2) case pair\nas two authenticated Actions exported by the one generated operation\nfile over the same fourteen managed paths" `isInfixOf` renderHelp)
+          && ("arbitrary multi-case lowering\nis not implemented" `isInfixOf` renderHelp)
+          && ("(a singleton bounded self-update case, two rule-1 cases, the reversed\npair, three or more cases) is refused by the profile dispatcher (exit 3)\nbefore any destination access - VERIFIED but Wasp-UNSUPPORTED is a valid\noutcome" `isInfixOf` renderHelp)
+          && ("(an owned root of either profile transitions to the requested one)" `isInfixOf` renderHelp)
       )
   , check
       "help states the confinement boundary and the wasp exit classifications"
@@ -225,7 +227,7 @@ checks =
   , check
       "help names the Wasp trusted components and the wasp non-claims"
       ( ("Wasp, Node,\nPrisma, PostgreSQL, the templates, and the lowering remain trusted" `isInfixOf` renderHelp)
-          && ("no\nsemantic-preservation theorem exists" `isInfixOf` renderHelp)
+          && ("no\nsemantic-preservation theorem exists (a rendered bundle is trusted\ncorrespondence evidence, not a proof)" `isInfixOf` renderHelp)
           && ("this is not a general Wasp backend, a\nwhole-product generator, a complete verifier, or a runtime sandbox" `isInfixOf` renderHelp)
           && ("not concurrent same-user\nmutation after it, privileged users, checker or CI compromise,\ndependency compromise, external database credential holders, or\ntampering after the Wasp build" `isInfixOf` renderHelp)
       )
@@ -238,7 +240,7 @@ checks =
   , check
       "help states that no compiler stage beyond the five commands is implemented"
       ( "No other compiler stage is implemented: no complete verifier, no\n\
-        \semantic diff, and no target generation beyond this one slice.\n"
+        \semantic diff, and no target generation beyond these two profiles.\n"
           `isInfixOf` renderHelp
       )
   , check

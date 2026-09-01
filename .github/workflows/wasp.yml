@@ -1,22 +1,30 @@
 name: Wasp
 
-# The real Wasp 0.25.0 / PostgreSQL vertical test of the one generated
-# slice (the Wasp Confinement Profile v0 of the supported
-# NoSelfPrivilegeEscalation fixture): the stub-driven self-tests of the
-# harness library (the physical working directory under a symlinked
-# TMPDIR, database ownership, identity-bound process termination,
-# cleanup), deterministic generation into a private working root
-# (resolved to its physical path) compared byte-for-byte with the
-# committed fixture, the confinement check of that fresh root and its
-# private 0700 mode, the same generation under umask 000 with a real
-# install and build, the renamed-model install/build matrix, then — in that freshly generated
-# root itself, never a copy of the fixture — wasp install, compile,
-# migrate-dev, and build, the built server, and the external HTTP
-# battery that exercises the generated Action through Wasp's real
+# The real Wasp 0.25.0 / PostgreSQL vertical test of the two generated
+# slices (the Wasp Confinement Profile v0 of the singleton rule-1
+# NoSelfPrivilegeEscalation fixture and the Wasp Confinement Profile
+# v1 of the two-case rule-1/rule-2 fixture): the stub-driven self-tests
+# of the harness library (the physical working directory under a
+# symlinked TMPDIR, database ownership of one database per profile
+# root, identity-bound process termination, cleanup, the battery's
+# manifest reading in plan mode), deterministic generation of both
+# profiles into private working roots (resolved to their physical
+# paths) compared byte-for-byte with the committed fixtures, the
+# confinement checks of those fresh roots and their private 0700 mode,
+# the v0 -> v1 -> v0 transitions through the real binary, the same
+# Profile-v0 generation under umask 000 with a real install and build,
+# the renamed-model install/build matrix, then — in each freshly
+# generated root itself, never a copy of a fixture — wasp install,
+# compile, migrate-dev, and build, the built server, and the external
+# HTTP battery that exercises the generated Actions through Wasp's real
 # generated HTTP and authentication path (uniform 401/400/403 answers
-# with the complete authority relation unchanged, the allowed path, the
-# trigger-proven three-attempt P2034 retry and pinned 409 and 500, and
-# barrier-proven concurrency).  Two jobs cover the two database
+# with the complete authority relation unchanged, the allowed paths,
+# the trigger-proven three-attempt P2034 retry and pinned 409 and 500,
+# barrier-proven concurrency judged against explicit serial-outcome
+# tables; for Profile v1 additionally the rule-2 self-update Action,
+# its same-operation concurrency, the rule-1/rule-2 cross-operation
+# overlap, and the same-row barrier's decoy-waiter regression).  Two
+# jobs cover the two database
 # branches of the harness: a PostgreSQL 16 service container reached
 # through MITHRIL_PG_ADMIN_URL (the run owns and drops only the
 # database it created), and a private cluster initialized by the

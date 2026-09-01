@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 -- | The CLI boundary of @mithril wasp generate CORE_FILE WASP_ROOT@
 -- and @mithril wasp check CORE_FILE WASP_ROOT@.
@@ -11,12 +12,24 @@
 -- ('Mithril.Core.Verification.verifyCoreDocument') to report the
 -- document VERIFIED, and then render the closed Wasp bundle
 -- ('Mithril.Core.Wasp.renderWaspBundle') of the same normalized
--- document.  Rendering itself attests only that the shared support
--- gate accepted the document; the VERIFIED provenance a successful
--- report states is established here, by the verifier having
--- returned VERIFIED before anything was rendered — a document the
--- verifier reports unsupported, or a verifier tool failure, never
--- writes or replaces a Wasp root.
+-- document: the Wasp Confinement Profile v0 for a singleton rule-1
+-- plan, the Wasp Confinement Profile v1 for the exact ordered rule-1,
+-- rule-2 pair, and a deterministic UNSUPPORTED refusal (exit 3) for
+-- every other verified plan — decided before any destination is
+-- resolved, inspected, staged, backed up, or written.  Rendering
+-- itself attests only that the shared support gate accepted the
+-- document; the VERIFIED provenance a successful report states is
+-- established here, by the verifier having returned VERIFIED before
+-- anything was rendered — a document the verifier reports
+-- unsupported, or a verifier tool failure, never writes or replaces a
+-- Wasp root.  The report names the selected profile explicitly and
+-- lists every lowered operation in authored case order; the
+-- Profile-v0 report is byte-for-byte what it was before Profile v1
+-- existed.  The outcome type keeps the construction and matching
+-- surface it had before Profile v1 — the two-argument
+-- @WaspNotConfined root violations@ — as a pattern synonym next to
+-- the profile-aware constructor 'WaspRootNotConfined' the commands
+-- produce and the reports read.
 --
 -- * @generate@ renders the complete bundle before touching the
 --   filesystem, validates WASP_ROOT lexically (no empty, dot, or
@@ -26,11 +39,13 @@
 --   (@WASP_ROOT.mithril-wasp-backup@, never touched), and installs
 --   the bundle as a complete directory: an absent or empty
 --   destination is initialized; a nonempty destination is replaced
---   as a whole only when it carries the byte-exact Mithril ownership
---   marker and nothing outside the fixed inventory (altered or
---   missing managed files are recovered by the replacement); an
---   unmarked nonempty root or any unmanaged path refuses the command
---   without mutation.  The new bundle is written to a sibling staging
+--   as a whole only when it carries one of the two byte-exact Mithril
+--   ownership markers (Profile v0 or Profile v1 — so an owned root of
+--   either profile transitions to the requested one as a whole) and
+--   nothing outside the fixed inventory (altered or missing managed
+--   files are recovered by the replacement); an unmarked nonempty
+--   root or any unmanaged path refuses the command without
+--   mutation.  The new bundle is written to a sibling staging
 --   directory created private (permission bits @0700@ regardless of
 --   the umask, so the installed root is private too), checked there,
 --   and swapped into place by whole-directory renames with rollback
@@ -76,7 +91,7 @@
 -- behind, since the user must know where the previous root is.
 module Mithril.Command.Wasp
   ( WaspFileError (..)
-  , WaspFileSuccess (..)
+  , WaspFileSuccess (.., WaspNotConfined)
   , WaspReport (..)
   , generateWaspApp
   , checkWaspApp
@@ -125,10 +140,15 @@ import Mithril.Core.Wasp
   , VerifierInvariantViolation (..)
   , WaspBundle
   , WaspBundleSummary (..)
+  , WaspOperationSummary (..)
+  , WaspProfile (..)
   , WaspRenderingFailure (..)
   , checkWaspConfinement
+  , nspeRuleLabel
   , renderWaspBundle
+  , waspBundleProfile
   , waspBundleSummary
+  , waspProfileLabel
   , waspTargetVersion
   )
 
@@ -161,15 +181,35 @@ data WaspFileSuccess
   = -- | Exit 3: the document lies outside the support rule; the
     -- reasons are non-empty, sorted, and deduplicated.
     WaspUnsupported (NonEmpty UnsupportedReason)
-  | -- | Exit 4: WASP_ROOT is not the closed profile (@check@), or is
-    -- a nonempty root @generate@ may not replace (unmarked, or
-    -- holding an unmanaged path; nothing was mutated).
-    WaspNotConfined FilePath (NonEmpty ConfinementViolation)
+  | -- | Exit 4: WASP_ROOT is not the closed profile the document
+    -- selects (@check@), or is a nonempty root @generate@ may not
+    -- replace (unmarked, or holding an unmanaged path; nothing was
+    -- mutated).  The profile is the one the document selected — the
+    -- report names it explicitly.  The pattern synonym
+    -- 'WaspNotConfined' is the two-argument compatibility view of
+    -- this constructor.
+    WaspRootNotConfined WaspProfile FilePath (NonEmpty ConfinementViolation)
   | -- | Exit 0: the bundle was installed and the root is confined.
     WaspGenerated WaspReport
   | -- | Exit 0: the root is exactly the closed profile.
     WaspConfined WaspReport
   deriving (Eq, Show)
+
+-- | The two-argument construction and matching surface of the
+-- not-confined outcome, exactly as it existed before Profile v1:
+-- matching @WaspNotConfined root violations@ ignores the requested
+-- profile (which 'WaspRootNotConfined' carries and the report
+-- names), and constructing through it yields the Profile-v0 outcome
+-- — the only profile that existed then.  Together with the other
+-- three constructors it covers every outcome (the @COMPLETE@ pragma
+-- below), so a downstream match over the pre-Profile-v1
+-- constructors stays exhaustive.
+pattern WaspNotConfined :: FilePath -> NonEmpty ConfinementViolation -> WaspFileSuccess
+pattern WaspNotConfined root violations <- WaspRootNotConfined _ root violations
+  where
+    WaspNotConfined root violations = WaspRootNotConfined WaspProfileV0 root violations
+
+{-# COMPLETE WaspUnsupported, WaspNotConfined, WaspGenerated, WaspConfined #-}
 
 -- | What a successful command reports: the Core file, the root, and
 -- the bundle summary (no bytes, no temporary paths).
@@ -222,7 +262,7 @@ checkWaspApp coreFile root = do
             Right RootAbsent -> Left (WaspRootError root "does not exist")
             Right (RootDirectory entries) ->
               case NonEmpty.nonEmpty (checkWaspConfinement FullCheck bundle entries) of
-                Just violations -> Right (WaspNotConfined root violations)
+                Just violations -> Right (WaspRootNotConfined (waspBundleProfile bundle) root violations)
                 Nothing -> Right (WaspConfined (report coreFile root bundle))
 
 -- | @mithril wasp generate CORE_FILE WASP_ROOT@ (module header).
@@ -240,9 +280,9 @@ generateWaspApp coreFile root = do
           installed <- installBundle noInstallHooks bundle absolute
           pure $ case installed of
             Left (InstallUnusableRoot reason) -> Left (WaspRootError root reason)
-            Left (InstallNotOwned violations) -> Right (WaspNotConfined root violations)
+            Left (InstallNotOwned violations) -> Right (WaspRootNotConfined (waspBundleProfile bundle) root violations)
             Left (InstallWorkspaceFailure reason) -> Left (WaspWorkspaceError reason)
-            Left (InstallNotConfined violations) -> Right (WaspNotConfined root violations)
+            Left (InstallNotConfined violations) -> Right (WaspRootNotConfined (waspBundleProfile bundle) root violations)
             Right () -> Right (WaspGenerated (report coreFile root bundle))
 
 report :: FilePath -> FilePath -> WaspBundle -> WaspReport
@@ -257,10 +297,16 @@ report coreFile root bundle =
 -- Rendering and exit classification
 --------------------------------------------------------------------
 
-profileLabel :: Text
-profileLabel = "Wasp Confinement Profile v0"
-
 -- | Render a completed outcome for stdout (no trailing newline).
+--
+-- The Profile-v0 report (one case action, one operation line) is
+-- byte-for-byte the report that existed before Profile v1; the
+-- Profile-v1 report lists the operation count and then every lowered
+-- case in authored order with its position, rule, authored action,
+-- and fixed operation and route — the second operation is never
+-- hidden and the bundle is never presented as a singleton.  The
+-- rendering dispatches on the summary's explicit profile identity,
+-- never on the operation count.
 renderWaspSuccess :: FilePath -> WaspFileSuccess -> Text
 renderWaspSuccess coreFile success =
   case success of
@@ -275,10 +321,10 @@ renderWaspSuccess coreFile success =
               | reason <- NonEmpty.toList reasons
               ]
         )
-    WaspNotConfined root violations ->
+    WaspRootNotConfined profile root violations ->
       Text.intercalate
         "\n"
-        ( (displayPath root <> ": NOT CONFINED (" <> profileLabel <> ")")
+        ( (displayPath root <> ": NOT CONFINED (" <> waspProfileLabel profile <> ")")
             : [ "  "
                   <> escapeControlChars (confinementPath violation)
                   <> ": "
@@ -293,22 +339,45 @@ renderWaspSuccess coreFile success =
   where
     reportLines verdict completed =
       let summary = reportSummary completed
-       in [ displayPath (reportRoot completed) <> ": " <> verdict <> " (" <> profileLabel <> ")"
+       in [ displayPath (reportRoot completed) <> ": " <> verdict <> " (" <> waspProfileLabel (summaryProfile summary) <> ")"
           , "  core: " <> displayPath (reportCore completed)
           , "  verification: VERIFIED by the production verifier before the bundle was rendered"
           , "  guarantee: " <> escapeControlChars (summaryGuarantee summary)
-          , "  case action: " <> escapeControlChars (Text.pack (show (summaryCaseAction summary)))
-          , "  operation: "
-              <> escapeControlChars (summaryOperation summary)
-              <> " (POST "
-              <> escapeControlChars (summaryRoute summary)
-              <> ")"
-          , "  target: Wasp " <> waspTargetVersion <> ", PostgreSQL, Prisma runtime supplied by Wasp"
-          , "  managed files: " <> Text.pack (show (length (summaryManagedPaths summary)))
           ]
+            <> operationLines summary
+            <> [ "  target: Wasp " <> waspTargetVersion <> ", PostgreSQL, Prisma runtime supplied by Wasp"
+               , "  managed files: " <> Text.pack (show (length (summaryManagedPaths summary)))
+               ]
             <> [ "    " <> escapeControlChars (Text.pack path)
                | path <- summaryManagedPaths summary
                ]
+    operationLines summary =
+      case summaryProfile summary of
+        WaspProfileV0 ->
+          concat
+            [ [ "  case action: " <> escapeControlChars (Text.pack (show (operationCaseAction operation)))
+              , "  operation: " <> operationLine operation
+              ]
+            | operation <- NonEmpty.toList (summaryOperations summary)
+            ]
+        WaspProfileV1 ->
+          ("  operations: " <> Text.pack (show (NonEmpty.length (summaryOperations summary))))
+            : concat
+              [ [ "  case "
+                    <> Text.pack (show (operationCasePosition operation))
+                    <> ": "
+                    <> nspeRuleLabel (operationRule operation)
+                    <> ", action "
+                    <> escapeControlChars (Text.pack (show (operationCaseAction operation)))
+                , "    operation: " <> operationLine operation
+                ]
+              | operation <- NonEmpty.toList (summaryOperations summary)
+              ]
+    operationLine operation =
+      escapeControlChars (operationName operation)
+        <> " (POST "
+        <> escapeControlChars (operationRoute operation)
+        <> ")"
 
 -- | Render a failure for stderr (no trailing newline).
 renderWaspFailure :: WaspFileError -> Text
@@ -348,7 +417,7 @@ waspSuccessExitCode success =
     WaspGenerated _ -> ExitSuccess
     WaspConfined _ -> ExitSuccess
     WaspUnsupported _ -> ExitFailure 3
-    WaspNotConfined _ _ -> ExitFailure 4
+    WaspRootNotConfined _ _ _ -> ExitFailure 4
 
 -- | Exit classification of failures: input failures keep the
 -- validate boundary's status, an unusable root exits 1, and every

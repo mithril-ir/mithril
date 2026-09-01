@@ -30,6 +30,7 @@ import {
   PRISMA_TRANSACTION_TIMEOUT_MS,
   barrierDeadlineInterval,
   describeTransportError,
+  evaluateTwoAdminBarrierEvidence,
   independentRequest,
   renderTransportFailure,
   settleConcurrent,
@@ -744,6 +745,161 @@ function overlapAccepted(metrics, observations, transportFailures) {
     JSON.stringify(metrics),
   );
   await barrier.close();
+}
+
+{
+  // The two-admin barrier-evidence predicate (evaluateTwoAdminBarrierEvidence)
+  // is the SINGLE acceptance rule the real battery applies to a two-admin
+  // round, so pinning it here pins the battery's own rule, not a weaker
+  // copy.  A genuine round is exactly one-shot (arrival count 2, arrival 1
+  // the waiter and arrival 2 the designated committer); a round whose count
+  // reached 3 or more — a retry re-entered the barrier — is rejected even
+  // when the statuses, bodies, final state, pids, and commit evidence are
+  // otherwise valid.  The predicate is also strictly FAIL-CLOSED: it
+  // validates the canonical shape of every record before any semantic
+  // comparison, so malformed or partial evidence (missing/absent records,
+  // null, arrays, primitives, wrong types, numeric strings, NaN/Infinity,
+  // non-positive ids, an absent-not-negative timeout record) is rejected
+  // with a deterministic, field-identifying reason and never throws.  The
+  // real battery reads only correctly-typed evidence, so these malformed
+  // cases pin the guard, not real-battery behavior.
+  const seq = (lastValue) => ({ isCalled: true, lastValue });
+  const unset = { isCalled: false, lastValue: 0 };
+  const validEvidence = () => ({
+    arrivals: seq(2),
+    committerArrival: seq(2),
+    committerTxid: seq(4242),
+    committerPid: seq(1001),
+    waiterPid: seq(1002),
+    blockedSeen: seq(1),
+    timeouts: { isCalled: false, lastValue: 1 },
+    committerCommitted: true,
+  });
+  // The complete, correctly-typed round with exactly one field omitted.
+  const omit = (key) => {
+    const evidence = validEvidence();
+    delete evidence[key];
+    return evidence;
+  };
+  // A malformed/partial round must be REJECTED (ok:false) WITHOUT throwing,
+  // and must name the offending field/invariant in a deterministic reason.
+  const expectFail = (name, evidence, cite) => {
+    let result;
+    try {
+      result = evaluateTwoAdminBarrierEvidence(evidence);
+    } catch (error) {
+      check(name, false, `threw instead of returning ok:false — ${error && error.message}`);
+      return;
+    }
+    const cited =
+      cite === undefined || (Array.isArray(result.reasons) && result.reasons.some((r) => r.includes(cite)));
+    check(name, result.ok === false && cited, JSON.stringify(result));
+  };
+
+  // --- the valid, complete, correctly-typed round is accepted ---
+  check(
+    "the barrier-evidence predicate accepts a genuine one-shot round (arrival count exactly 2)",
+    evaluateTwoAdminBarrierEvidence(validEvidence()).ok === true,
+    JSON.stringify(evaluateTwoAdminBarrierEvidence(validEvidence())),
+  );
+
+  // --- arrival re-entry: arrivals -> 3/4 with committerArrival still 2 ---
+  expectFail(
+    "the predicate rejects an arrival-3 round even with otherwise-valid pids and commit evidence, citing the re-entry",
+    { ...validEvidence(), arrivals: seq(3) },
+    "arrival count",
+  );
+  {
+    const arrivalThree = evaluateTwoAdminBarrierEvidence({ ...validEvidence(), arrivals: seq(3) });
+    check(
+      "the arrival-3 rejection cites 'not exactly 2' specifically",
+      arrivalThree.ok === false &&
+        arrivalThree.reasons.some((r) => r.includes("arrival count") && r.includes("not exactly 2")),
+      JSON.stringify(arrivalThree),
+    );
+  }
+  expectFail("the predicate rejects an arrival-4 round", { ...validEvidence(), arrivals: seq(4) }, "arrival count");
+
+  // --- committer-arrival clause, proven INDEPENDENTLY: arrivals stays
+  //     exactly 2 and only committerArrival changes to 3, so the failure is
+  //     attributable to the committer-arrival clause alone ---
+  {
+    const onlyCommitterArrival = evaluateTwoAdminBarrierEvidence({ ...validEvidence(), committerArrival: seq(3) });
+    check(
+      "the predicate rejects a round whose committer evidence identifies arrival 3 while arrivals is still exactly 2",
+      onlyCommitterArrival.ok === false &&
+        onlyCommitterArrival.reasons.some((r) => r.includes("identifies arrival 3, not arrival 2")) &&
+        !onlyCommitterArrival.reasons.some((r) => r.includes("arrival count")),
+      JSON.stringify(onlyCommitterArrival),
+    );
+  }
+
+  // --- structural: null / primitive / array / empty top-level evidence ---
+  expectFail("the predicate rejects null evidence", null, "not an object");
+  expectFail("the predicate rejects a numeric primitive as evidence", 42, "not an object");
+  expectFail("the predicate rejects a string primitive as evidence", "nope", "not an object");
+  expectFail("the predicate rejects a boolean primitive as evidence", true, "not an object");
+  expectFail("the predicate rejects an array as evidence", [], "not an object");
+  check(
+    "the predicate is total for empty evidence (rejects, does not throw)",
+    evaluateTwoAdminBarrierEvidence({}).ok === false,
+    JSON.stringify(evaluateTwoAdminBarrierEvidence({})),
+  );
+
+  // --- missing required sequence records (absence, not just uninitialized) ---
+  expectFail("the predicate rejects a missing arrivals record", omit("arrivals"), "arrivals:");
+  expectFail("the predicate rejects a missing committerArrival record", omit("committerArrival"), "committerArrival:");
+  expectFail("the predicate rejects a missing committerTxid record", omit("committerTxid"), "committerTxid:");
+  expectFail("the predicate rejects a missing committerPid record", omit("committerPid"), "committerPid:");
+  expectFail("the predicate rejects a missing waiterPid record", omit("waiterPid"), "waiterPid:");
+  expectFail("the predicate rejects a missing blockedSeen record", omit("blockedSeen"), "blockedSeen:");
+  // --- uninitialized (isCalled false) required records ---
+  expectFail("the predicate rejects an uninitialized arrivals sequence", { ...validEvidence(), arrivals: unset }, "arrivals:");
+  expectFail(
+    "the predicate rejects a round whose committer evidence was never published",
+    { ...validEvidence(), committerArrival: unset, committerTxid: unset, committerPid: unset },
+    "committerArrival:",
+  );
+
+  // --- timeout evidence must be EXPLICIT and negative, never synthesized
+  //     from an absent record ---
+  expectFail("the predicate rejects missing timeouts (absence is not 'no timeout')", omit("timeouts"), "timeouts:");
+  expectFail("the predicate rejects a null timeouts record", { ...validEvidence(), timeouts: null }, "timeouts:");
+  expectFail("the predicate rejects timeouts missing isCalled", { ...validEvidence(), timeouts: { lastValue: 1 } }, "timeouts: isCalled");
+  expectFail("the predicate rejects a string-valued timeouts.isCalled flag", { ...validEvidence(), timeouts: { isCalled: "false", lastValue: 1 } }, "timeouts: isCalled");
+  expectFail("the predicate rejects a numeric-zero timeouts.isCalled flag", { ...validEvidence(), timeouts: { isCalled: 0, lastValue: 1 } }, "timeouts: isCalled");
+  expectFail("the predicate rejects a malformed timeout lastValue (string)", { ...validEvidence(), timeouts: { isCalled: false, lastValue: "1" } }, "timeouts: lastValue");
+  expectFail("the predicate rejects an actual barrier timeout (isCalled true)", { ...validEvidence(), timeouts: seq(1) }, "barrier deadline expired");
+
+  // --- committer transaction id: null / zero / negative / fractional /
+  //     NaN / Infinity / string ---
+  expectFail("the predicate rejects committerTxid.lastValue = null", { ...validEvidence(), committerTxid: { isCalled: true, lastValue: null } }, "committerTxid: lastValue");
+  expectFail("the predicate rejects a zero transaction id", { ...validEvidence(), committerTxid: seq(0) }, "committer transaction id");
+  expectFail("the predicate rejects a negative transaction id", { ...validEvidence(), committerTxid: seq(-5) }, "committer transaction id");
+  expectFail("the predicate rejects a fractional transaction id", { ...validEvidence(), committerTxid: { isCalled: true, lastValue: 1.5 } }, "committerTxid: lastValue");
+  expectFail("the predicate rejects a NaN transaction id", { ...validEvidence(), committerTxid: { isCalled: true, lastValue: NaN } }, "committerTxid: lastValue");
+  expectFail("the predicate rejects an Infinity transaction id", { ...validEvidence(), committerTxid: { isCalled: true, lastValue: Infinity } }, "committerTxid: lastValue");
+  expectFail("the predicate rejects a string transaction id", { ...validEvidence(), committerTxid: { isCalled: true, lastValue: "4242" } }, "committerTxid: lastValue");
+
+  // --- backend pids: negative / equal / string ---
+  expectFail("the predicate rejects a negative committer pid", { ...validEvidence(), committerPid: seq(-1) }, "committer backend pid");
+  expectFail("the predicate rejects a negative waiter pid", { ...validEvidence(), waiterPid: seq(-2) }, "waiter backend pid");
+  expectFail("the predicate rejects equal positive waiter/committer pids", { ...validEvidence(), waiterPid: seq(1001) }, "two distinct backends");
+  expectFail("the predicate rejects a string-valued committer pid", { ...validEvidence(), committerPid: { isCalled: true, lastValue: "1001" } }, "committerPid: lastValue");
+  expectFail("the predicate rejects a string-valued waiter pid", { ...validEvidence(), waiterPid: { isCalled: true, lastValue: "1002" } }, "waiterPid: lastValue");
+
+  // --- blocked-seen count: string / zero / negative / fractional ---
+  expectFail("the predicate rejects a string-valued blocked count", { ...validEvidence(), blockedSeen: { isCalled: true, lastValue: "1" } }, "blockedSeen: lastValue");
+  expectFail("the predicate rejects a zero blocked count", { ...validEvidence(), blockedSeen: seq(0) }, "no blocked-seen tick");
+  expectFail("the predicate rejects a negative blocked count", { ...validEvidence(), blockedSeen: seq(-1) }, "no blocked-seen tick");
+  expectFail("the predicate rejects a fractional blocked count", { ...validEvidence(), blockedSeen: { isCalled: true, lastValue: 0.5 } }, "blockedSeen: lastValue");
+
+  // --- committed-status flag must be the boolean true, no truthy substitute ---
+  expectFail("the predicate rejects committerCommitted = false", { ...validEvidence(), committerCommitted: false }, "did not reach the committed state");
+  expectFail("the predicate rejects a string committerCommitted flag", { ...validEvidence(), committerCommitted: "true" }, "committerCommitted is not a boolean");
+  expectFail("the predicate rejects a numeric committerCommitted flag", { ...validEvidence(), committerCommitted: 1 }, "committerCommitted is not a boolean");
+  expectFail("the predicate rejects an object committerCommitted flag", { ...validEvidence(), committerCommitted: {} }, "committerCommitted is not a boolean");
+  expectFail("the predicate rejects missing committerCommitted", omit("committerCommitted"), "committerCommitted is not a boolean");
 }
 
 if (failures > 0) {

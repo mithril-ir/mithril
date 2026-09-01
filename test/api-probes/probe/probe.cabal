@@ -6,13 +6,15 @@ description:
   Downstream probes of the mithril-ir stage abstraction, written
   exactly as an external package would write them (depending on
   mithril-ir as an external package, never by adding its src/ to a
-  module search path).  One executable — probe-control — is the
-  legitimate external-consumer control and must COMPILE; the
-  twenty-nine attack executables must each FAIL to compile for their
-  intended boundary reason.  The driver test/api-probes/run-api-probes.sh
-  builds them one by one and treats a failing control, a compiling
-  attack, or an attack failing with an unintended message as a broken
-  API boundary.
+  module search path).  Two executables are legitimate
+  external-consumer controls and must COMPILE — probe-control (the
+  public pipeline) and probe-compatibility (the adapter surface as it
+  was frozen before the Wasp Confinement Profile v1, next to the
+  Profile-v1 APIs); the twenty-nine attack executables must each FAIL
+  to compile for their intended boundary reason.  The driver
+  test/api-probes/run-api-probes.sh builds them one by one and treats
+  a failing control, a compiling attack, or an attack failing with an
+  unintended message as a broken API boundary.
 license:            Apache-2.0
 author:             Mithril contributors
 maintainer:         Mithril contributors
@@ -27,9 +29,9 @@ flag werror
   manual:      True
   default:     False
 
--- Every probe component — the control and the twenty-nine attacks —
--- imports this stanza, so all thirty compile under the same
--- warning set as the repository's own components, with -Werror
+-- Every probe component — the two controls and the twenty-nine
+-- attacks — imports this stanza, so all thirty-one compile under the
+-- same warning set as the repository's own components, with -Werror
 -- active; the driver verifies both from the generated build plan and
 -- from this file.
 common probe
@@ -59,6 +61,16 @@ common probe
 executable probe-control
   import:  probe
   main-is: Control.hs
+
+-- Compatibility control: the adapter surface frozen before the Wasp
+-- Confinement Profile v1 (the legacy WaspBundleSummary view, its
+-- three selectors, the two-argument WaspNotConfined outcome) used by
+-- downstream source next to the Profile-v1 APIs.  This one must
+-- COMPILE under the warning policy; the driver builds it right after
+-- probe-control.
+executable probe-compatibility
+  import:  probe
+  main-is: Compatibility.hs
 
 -- Attack 1: import the hidden module that owns the CoreDocument
 -- representation.

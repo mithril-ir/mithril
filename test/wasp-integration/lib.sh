@@ -1,8 +1,9 @@
-# The shell library of the Wasp Confinement Profile v0 integration
-# harness: the private working directory, isolated-database
-# ownership, identity-bound process and cluster termination, and the
-# one cleanup path.  Sourced by run-wasp-integration.sh (the real
-# Wasp 0.25.0 / PostgreSQL vertical test) and by test-harness.sh (the
+# The shell library of the Wasp Confinement Profile v0 / v1
+# integration harness: the private working directory,
+# isolated-database ownership (one database per generated profile
+# root), identity-bound process and cluster termination, and the one
+# cleanup path.  Sourced by run-wasp-integration.sh (the real Wasp
+# 0.25.0 / PostgreSQL vertical test) and by test-harness.sh (the
 # terminating self-tests that drive these functions with stubbed
 # psql, pg_ctl, initdb, and kill executables, a fake proc tree, and a
 # symlinked TMPDIR).  POSIX sh on Linux (the process identities come
@@ -19,13 +20,18 @@
 # and nothing outside it, so a symlinked TMPDIR and its target stay
 # untouched.
 #
-# Ownership rule of the isolated database (administrative-URL mode):
+# Ownership rule of the isolated databases (administrative-URL mode):
 # a candidate name is chosen with a collision-resistant suffix, but
 # the database counts as owned by this run — and therefore droppable
 # by cleanup — ONLY after CREATE DATABASE succeeded.  A candidate
 # that already exists was not created here and is never dropped; the
 # run fails safely instead.  Cleanup never targets the administrative
-# database of the URL.
+# database of the URL.  mithril_provision_database may be called once
+# per generated profile root (the Profile-v0 root and the Profile-v1
+# root each get their own database, since each root migrates its own
+# schema); every database created here is recorded in
+# owned_databases and dropped at cleanup, and in local-cluster mode
+# the private cluster is initialized and started once and reused.
 #
 # Process termination rule: a numeric pid is not a stable process
 # identity, so the built server is bound to the identity token
@@ -59,7 +65,9 @@
 #   pg_port    the local cluster's TCP port (local-cluster mode)
 #   MITHRIL_PG_ADMIN_URL  optional administrative connection URL
 # Variables owned by this library:
-#   owned_database    set only after CREATE DATABASE succeeded
+#   owned_database    the most recently created owned database, set
+#                     only after CREATE DATABASE succeeded
+#   owned_databases   every owned database of this run, space-separated
 #   cluster_started   yes only after pg_ctl start succeeded
 #   server_pid        the built server's process id, once started
 #   cleanup_failures  the recorded cleanup failures, one per line
@@ -74,6 +82,7 @@
 #   MITHRIL_KILL_WAIT         seconds to wait after KILL (default 5)
 
 owned_database=''
+owned_databases=''
 cluster_started=no
 server_pid=''
 cleanup_failures=''
@@ -132,9 +141,14 @@ mithril_record_cleanup_failure() {
   echo "CLEANUP FAILURE: $1" >&2
 }
 
-# Provision the isolated database and export DATABASE_URL.  Returns
-# nonzero (without exiting) when it cannot; the caller decides.
+# mithril_provision_database [LABEL]: provision an isolated database
+# and export DATABASE_URL.  LABEL (optional, e.g. v1) names a further
+# database of the same run — in local-cluster mode the database
+# mithril_wasp_LABEL of the one private cluster, in administrative-URL
+# mode another collision-resistant candidate.  Returns nonzero
+# (without exiting) when it cannot; the caller decides.
 mithril_provision_database() {
+  database_label=${1:-}
   if [ -n "${MITHRIL_PG_ADMIN_URL:-}" ]; then
     candidate=$(mithril_candidate_database_name)
     admin_name=$(mithril_admin_database_name "$MITHRIL_PG_ADMIN_URL")
@@ -156,30 +170,34 @@ mithril_provision_database() {
       return 1
     fi
     owned_database=$candidate
+    owned_databases="${owned_databases}${owned_databases:+ }$candidate"
     DATABASE_URL=$(mithril_database_url "$MITHRIL_PG_ADMIN_URL" "$candidate")
     echo "database: created $candidate on the administrative server (owned by this run)"
   else
-    if [ ! -x "$pg_bin/initdb" ]; then
-      echo "FAIL: initdb not found under $pg_bin (set MITHRIL_PG_BIN or MITHRIL_PG_ADMIN_URL)" >&2
+    if [ "$cluster_started" != yes ]; then
+      if [ ! -x "$pg_bin/initdb" ]; then
+        echo "FAIL: initdb not found under $pg_bin (set MITHRIL_PG_BIN or MITHRIL_PG_ADMIN_URL)" >&2
+        return 1
+      fi
+      if ! "$pg_bin/initdb" -D "$work/pgdata" -U mithril --auth=trust -E UTF8 --no-locale >"$work/initdb.log" 2>&1; then
+        cat "$work/initdb.log" >&2
+        echo "FAIL: initdb failed" >&2
+        return 1
+      fi
+      if ! "$pg_bin/pg_ctl" -D "$work/pgdata" -o "-p $pg_port -c listen_addresses=127.0.0.1 -c unix_socket_directories=''" -l "$work/pg.log" -w start >/dev/null 2>&1; then
+        cat "$work/pg.log" >&2 2>/dev/null || true
+        echo "FAIL: pg_ctl start failed" >&2
+        return 1
+      fi
+      cluster_started=yes
+    fi
+    local_database="mithril_wasp${database_label:+_$database_label}"
+    if ! mithril_psql -h 127.0.0.1 -p "$pg_port" -U mithril -d postgres -q -v ON_ERROR_STOP=1 -c "create database $local_database;" >/dev/null 2>&1; then
+      echo "FAIL: could not create the isolated database $local_database in the private cluster" >&2
       return 1
     fi
-    if ! "$pg_bin/initdb" -D "$work/pgdata" -U mithril --auth=trust -E UTF8 --no-locale >"$work/initdb.log" 2>&1; then
-      cat "$work/initdb.log" >&2
-      echo "FAIL: initdb failed" >&2
-      return 1
-    fi
-    if ! "$pg_bin/pg_ctl" -D "$work/pgdata" -o "-p $pg_port -c listen_addresses=127.0.0.1 -c unix_socket_directories=''" -l "$work/pg.log" -w start >/dev/null 2>&1; then
-      cat "$work/pg.log" >&2 2>/dev/null || true
-      echo "FAIL: pg_ctl start failed" >&2
-      return 1
-    fi
-    cluster_started=yes
-    if ! mithril_psql -h 127.0.0.1 -p "$pg_port" -U mithril -d postgres -q -v ON_ERROR_STOP=1 -c "create database mithril_wasp;" >/dev/null 2>&1; then
-      echo "FAIL: could not create the isolated database in the private cluster" >&2
-      return 1
-    fi
-    DATABASE_URL="postgresql://mithril@127.0.0.1:$pg_port/mithril_wasp"
-    echo "database: private cluster under $work/pgdata (port $pg_port)"
+    DATABASE_URL="postgresql://mithril@127.0.0.1:$pg_port/$local_database"
+    echo "database: $local_database in the private cluster under $work/pgdata (port $pg_port)"
   fi
   export DATABASE_URL
   return 0
@@ -380,13 +398,15 @@ mithril_cleanup() {
       mithril_record_cleanup_failure "stopping the private PostgreSQL cluster under $work/pgdata failed"
     fi
   fi
-  if [ -n "$owned_database" ]; then
+  if [ -n "$owned_databases" ]; then
     admin_name=$(mithril_admin_database_name "${MITHRIL_PG_ADMIN_URL:-}")
-    if [ "$owned_database" = "$admin_name" ]; then
-      mithril_record_cleanup_failure "refusing to drop $owned_database: it is the administrative database"
-    elif ! mithril_psql "$MITHRIL_PG_ADMIN_URL" -q -v ON_ERROR_STOP=1 -c "drop database \"$owned_database\" with (force);" >/dev/null 2>&1; then
-      mithril_record_cleanup_failure "dropping the owned database $owned_database failed; it remains on the administrative server"
-    fi
+    for owned in $owned_databases; do
+      if [ "$owned" = "$admin_name" ]; then
+        mithril_record_cleanup_failure "refusing to drop $owned: it is the administrative database"
+      elif ! mithril_psql "$MITHRIL_PG_ADMIN_URL" -q -v ON_ERROR_STOP=1 -c "drop database \"$owned\" with (force);" >/dev/null 2>&1; then
+        mithril_record_cleanup_failure "dropping the owned database $owned failed; it remains on the administrative server"
+      fi
+    done
   fi
   if [ -n "${work:-}" ] && [ -d "$work" ]; then
     if ! rm -rf "$work"; then

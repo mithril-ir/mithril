@@ -24,17 +24,18 @@
 --    injected auth models, and JavaScript\/TypeScript reserved words.
 --
 -- 2. /One shared plan./  The emitter is the composition of the shared
---    support gate, the Profile-v0 capability gate over the tagged case
---    collection, and the (total) plan renderer; the unsafe variant and
---    the canonical Acme document are refused with exactly the
---    verifier's reasons; the verified two-case self-update document,
---    a singleton rule-2 document, and every other plan outside the
---    profile are refused by the capability gate before any lowering
---    or destination access; and an independent oracle — the
---    declarations read straight out of the authored JSON — agrees
---    with both the generated Agda module and the Wasp manifest, so
---    the verifier and the emitter provably selected the same
---    declarations.
+--    support gate, the profile dispatcher over the tagged case
+--    collection (Profile v0 for the exact singleton rule-1 plan,
+--    Profile v1 for the exact ordered rule-1, rule-2 pair, every
+--    other plan refused), and the (total) plan renderer; the unsafe
+--    variant and the canonical Acme document are refused with exactly
+--    the verifier's reasons; a singleton rule-2 document and every
+--    other verified plan outside both profiles are refused by the
+--    dispatcher before any lowering or destination access; and an
+--    independent oracle — the declarations read straight out of the
+--    authored JSON — agrees with both the generated Agda module and
+--    the Wasp manifest, so the verifier and the emitter provably
+--    selected the same declarations.
 --
 -- 3. /Plan-consumption inventory./  Every shared field, every field
 --    of the tagged per-case plan, and every rule-1 and rule-2 fact is
@@ -88,13 +89,68 @@
 --
 -- 8. /Command outcomes./  Reports, exit classifications, and the
 --    unsupported\/invalid paths through the command.
+--
+-- 9. /Profile v1 golden./  The two-case fixture renders the Wasp
+--    Confinement Profile v1: the committed fixture
+--    @test\/fixtures\/wasp-acme-self-update@ is exactly the fresh
+--    bundle over exactly the fourteen Profile-v0 paths; the one
+--    operation file exports both Actions, the rule-1 Action's code
+--    lines being exactly Profile v0's; the rule-2 Action's semantics,
+--    the two-Action specification, the format-1 manifest with its
+--    ordered operations array, the explicit profile identity, the
+--    distinct literal markers, and the summary are pinned.
+--
+-- 10. /Profile dispatcher./  The ordered rule tags select Profile v0
+--    (@[rule 1]@) or Profile v1 (@[rule 1, rule 2]@); a singleton
+--    rule-2 case, two rule-1 cases, the reversed pair, two rule-2
+--    cases, three and four cases are refused with exact reasons at
+--    exact paths, through the emitter and — with zero destination
+--    access, proven against a destination trap that fails every
+--    resolution, read-only inspection, or mutation deterministically
+--    (its positive controls: both commands on both supported
+--    documents fail on it), as well as against absent, unrelated,
+--    and owned roots of both profiles — through the command; retagged
+--    and swapped plans prove the dispatcher reads only the tags.
+--
+-- 11. /Profile-v1 plan consumption./  The Profile-v1 inventory (the
+--    case position and the rule-2 fact become consumed) and a
+--    field-specific mutation table over the shared facts and both
+--    cases.
+--
+-- 12. /Profile-v1 renames and hostile names./  Every committed rename
+--    variant extended in memory by a bounded self-update action; the
+--    hostile-name regression over both cases.
+--
+-- 13. /Profile-v1 confinement./  Exact snapshots, the cross-profile
+--    full checks with their exact violations, replacement ownership
+--    of both literal markers (and only those), and the labelling of
+--    missing or additional Actions.
+--
+-- 14. /Transitions./  v0 → v1 and v1 → v0 through the installation
+--    seam and the command: whole-root replacement, recovery, refusals
+--    without mutation, atomic failure with rollback, private mode,
+--    and no staging or backup leftovers.
+--
+-- 15. /Profile-v1 command outcomes./  The committed fixture's checks
+--    in both directions and the pinned Profile-v1 reports, with the
+--    Profile-v0 reports unchanged.
+--
+-- 16. /The frozen compatibility surface./  The pre-Profile-v1
+--    construction and matching surface — the legacy
+--    @WaspBundleSummary@ record view with its three selectors and
+--    the two-argument @WaspNotConfined@ outcome — keeps its pinned
+--    semantics (legacy construction builds the Profile-v0 singleton;
+--    legacy matching projects operation 0 and hides nothing from the
+--    complete view; a match over the four pre-Profile-v1
+--    constructors is exhaustive) next to the trusted complete views
+--    the CLI reports.
 module Mithril.CoreWaspTests
   ( tests
   ) where
 
 import Control.Exception (SomeException, finally, try)
 import Control.Monad (forM, forM_)
-import Data.Aeson (Value (..), toJSON)
+import Data.Aeson (Value (..), object, toJSON, (.=))
 import qualified Data.Aeson as Aeson
 import Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Data.Aeson.Key as Key
@@ -174,7 +230,9 @@ import Mithril.Core.Internal.Resolved
 import Mithril.Core.Internal.SourcePath (Sourced (..), memberPath, rootPath)
 import Mithril.Core.Internal.Verify (renderObligationModule)
 import Mithril.Core.Internal.Wasp
-  ( WaspProfileV0Plan (..)
+  ( WaspProfilePlan (..)
+  , WaspProfileV0Plan (..)
+  , WaspProfileV1Plan (..)
   , WaspRenderingRefusal (..)
   , WaspTargetNames (..)
   , camelToKebabCase
@@ -182,11 +240,14 @@ import Mithril.Core.Internal.Wasp
   , managedPaths
   , memberTargetName
   , operationPath
-  , ownershipMarkerBytes
+  , ownershipMarkerBytesOf
   , ownershipMarkerPath
-  , profileV0Plan
+  , profileNameOf
+  , profilePlanProfile
+  , recognizedOwnershipMarkers
   , renderBundleFromModel
   , renderBundleFromPlan
+  , selectWaspProfile
   , targetNames
   )
 import Mithril.Core.Internal.WaspFilesystem
@@ -218,11 +279,16 @@ import Mithril.Core.Wasp
   , WaspBundle
   , WaspBundleSummary (..)
   , WaspManagedFile (..)
+  , WaspOperationSummary (..)
+  , WaspProfile (..)
   , WaspRenderingFailure (..)
   , checkWaspConfinement
   , renderWaspBundle
   , waspBundleFiles
+  , waspBundleProfile
   , waspBundleSummary
+  , waspProfileLabel
+  , waspProfileName
   )
 import Mithril.Test (Check, check)
 
@@ -285,22 +351,24 @@ tests = do
   unsafeBytes <- ByteString.readFile unsafePath
   selfUpdateBytes <- ByteString.readFile selfUpdatePath
   acmeBytes <- ByteString.readFile acmePath
-  case (pipelineDocument nspeBytes, pipelineModel nspeBytes) of
-    (Just baseDocument, Just baseModel) ->
-      case renderWaspBundle baseDocument of
-        Left _ ->
-          pure [check "the supported fixture renders a Wasp bundle (prerequisite)" False]
-        Right baseBundle -> do
+  case (pipelineDocument nspeBytes, pipelineModel nspeBytes, pipelineDocument selfUpdateBytes, pipelineModel selfUpdateBytes) of
+    (Just baseDocument, Just baseModel, Just selfUpdateDocument, Just selfUpdateModel) ->
+      case (renderWaspBundle baseDocument, renderWaspBundle selfUpdateDocument) of
+        (Right baseBundle, Right v1Bundle) -> do
           goldenChecks <- goldenAndDeterminismChecks baseDocument baseBundle
-          gateChecks <- profileGateChecks nspeBytes selfUpdateBytes baseBundle
+          selectionChecks <- profileSelectionChecks nspeBytes selfUpdateBytes baseBundle v1Bundle
           renamedChecks <- renamedModelChecks baseModel baseBundle
           attackChecks <- confinementAttackChecks
           installChecks <- installationChecks baseBundle
           commandChecks <- commandOutcomeChecks baseBundle
+          v1Golden <- v1GoldenChecks selfUpdateDocument v1Bundle baseBundle
+          v1Renamed <- v1RenamedModelChecks v1Bundle
+          transitions <- transitionChecks baseBundle v1Bundle
+          v1Command <- v1CommandChecks baseBundle v1Bundle
           pure $
             goldenChecks
               <> sharedPlanChecks nspeBytes unsafeBytes acmeBytes baseModel baseBundle
-              <> gateChecks
+              <> selectionChecks
               <> planConsumptionChecks baseModel baseBundle
               <> renamedChecks
               <> pureConfinementChecks baseBundle
@@ -308,10 +376,20 @@ tests = do
               <> installChecks
               <> commandChecks
               <> renderingChecks baseBundle
+              <> v1Golden
+              <> v1PlanConsumptionChecks selfUpdateModel v1Bundle
+              <> v1Renamed
+              <> v1HostileNameChecks selfUpdateModel v1Bundle
+              <> v1ConfinementChecks baseBundle v1Bundle
+              <> transitions
+              <> v1Command
+              <> compatibilityChecks baseBundle v1Bundle
+        _ ->
+          pure [check "the supported fixtures render their Wasp bundles (prerequisite)" False]
     _ ->
       pure
         [ check
-            "the supported fixture normalizes through the public pipeline (prerequisite)"
+            "the supported fixtures normalize through the public pipeline (prerequisite)"
             False
         ]
 
@@ -431,8 +509,8 @@ goldenAndDeterminismChecks baseDocument baseBundle = do
         )
     , check
         "the ownership marker is a managed file with fixed bytes"
-        ( fileOf baseBundle markerFile == ownershipMarkerBytes
-            && "mithril-wasp-bundle wasp-confinement-profile-v0\n" `ByteString.isSuffixOf` ownershipMarkerBytes
+        ( fileOf baseBundle markerFile == ownershipMarkerBytesOf WaspProfileV0
+            && "mithril-wasp-bundle wasp-confinement-profile-v0\n" `ByteString.isSuffixOf` ownershipMarkerBytesOf WaspProfileV0
         )
     , check
         "the manifest parses as JSON with the pinned scalar fields"
@@ -550,15 +628,8 @@ goldenAndDeterminismChecks baseDocument baseBundle = do
         )
     , check
         "the summary reports the authored names, the fixed operation and route, and the inventory"
-        ( waspBundleSummary baseBundle
-            == WaspBundleSummary
-              { summaryModelName = "Acme"
-              , summaryGuarantee = "NoSelfPrivilegeEscalation"
-              , summaryCaseAction = "Membership.changeRole"
-              , summaryOperation = "mithrilCaseAction"
-              , summaryRoute = "/operations/mithril-case-action"
-              , summaryManagedPaths = expectedInventory
-              }
+        ( waspBundleSummary baseBundle == v0Summary
+            && waspBundleProfile baseBundle == WaspProfileV0
         )
     , check
         "the fixed target names are pinned"
@@ -579,6 +650,9 @@ goldenAndDeterminismChecks baseDocument baseBundle = do
               , targetOperation = "mithrilCaseAction"
               , targetOperationType = "MithrilCaseAction"
               , targetRoute = "/operations/mithril-case-action"
+              , targetSelfUpdateOperation = "mithrilSelfUpdateAction"
+              , targetSelfUpdateOperationType = "MithrilSelfUpdateAction"
+              , targetSelfUpdateRoute = "/operations/mithril-self-update-action"
               , targetSubjectArgument = "subject"
               , targetScopeArgument = "scope"
               , targetPayloadArgument = "payload"
@@ -640,7 +714,8 @@ goldenAndDeterminismChecks baseDocument baseBundle = do
         <> argumentNames
         <> [ targetAuthorityAccessor targetNames, targetBackField targetNames
            , targetCompoundKey targetNames, targetOperation targetNames
-           , targetOperationType targetNames, targetAppName targetNames
+           , targetOperationType targetNames, targetSelfUpdateOperation targetNames
+           , targetSelfUpdateOperationType targetNames, targetAppName targetNames
            ]
 
 -- | The closed lists no fixed target name may fall into: Prisma's
@@ -672,7 +747,7 @@ sharedPlanChecks nspeBytes unsafeBytes acmeBytes baseModel baseBundle =
       ( fmap bundleBytes (renderBundleFromModel baseModel)
           == Right (bundleBytes baseBundle)
           && case v0PlanOf baseModel of
-            Just profile -> bundleBytes (renderBundleFromPlan profile) == bundleBytes baseBundle
+            Just profile -> bundleBytes (renderBundleFromPlan (ProfileV0Plan profile)) == bundleBytes baseBundle
             Nothing -> False
       )
   , check
@@ -891,213 +966,14 @@ jsonOracle document = do
         , Just entity <- [text =<< KeyMap.lookup "entity" endpoint]
         ]
 
---------------------------------------------------------------------
--- Group 2b: the Profile-v0 capability gate over the tagged plan
---------------------------------------------------------------------
-
--- | The Wasp Profile v0 lowers exactly one rule-1 case, read off the
--- shared tagged plan: the singleton rule-1 plan passes the gate; a
--- singleton rule-2 plan, the two-case self-update plan (a rule-1
--- case followed by a rule-2 case — accepted by the verifier, so a
--- head-only gate would wrongly lower it), two rule-1 cases, three
--- cases, and the reordered two-case plan are each refused with a
--- deterministic reason anchored at the case or the guarantee; the
--- gate's diagnostic anchors consume exactly the plan's recorded
--- paths; the verifier consumes the rule-2 fact and the case position
--- that Wasp never renders; and through the command, the verified
--- two-case document is refused after verification and before any
--- destination access — an absent root stays absent, an unrelated
--- directory and an owned root stay byte-identical, and nothing is
--- staged beside them.
-profileGateChecks :: ByteString -> ByteString -> WaspBundle -> IO [Check]
-profileGateChecks nspeBytes selfUpdateBytes baseBundle = do
-  freshRefusal <- withScratchDirectory $ \scratch -> do
-    let root = scratch </> "app"
-    outcome <- generateWaspApp selfUpdatePath root
-    rootExists <- doesPathExist root
-    entries <- listDirectory scratch
-    pure (outcome, rootExists, entries)
-  sentinelRefusal <- withScratchDirectory $ \scratch -> do
-    let root = scratch </> "sentinel"
-    createDirectory root
-    writeFile (root </> "keep.txt") "keep\n"
-    before <- snapshotDirectory root
-    outcome <- generateWaspApp selfUpdatePath root
-    after <- snapshotDirectory root
-    entries <- listDirectory scratch
-    pure (outcome, before == after, before, entries)
-  ownedRefusal <- withScratchDirectory $ \scratch -> do
-    let root = scratch </> "app"
-    _ <- generateWaspApp nspePath root
-    before <- snapshotDirectory root
-    outcome <- generateWaspApp selfUpdatePath root
-    after <- snapshotDirectory root
-    entries <- listDirectory scratch
-    pure (outcome, before == after, before, entries)
-  checkRefusal <- checkWaspApp selfUpdatePath fixtureRoot
-  pure
-    [ check
-        "the singleton rule-1 plan passes the Profile-v0 gate as its one change-other case"
-        ( case supportPlan =<< maybe (Left (PlanUnsupported (multiCaseReason 0 :| []))) Right (pipelineModel nspeBytes) of
-            Right plan ->
-              case profileV0Plan plan of
-                Right profile ->
-                  profileShared profile == plan
-                    && casePosition (profileCase profile) == 0
-                    && caseRule (profileCase profile) == ChangeOtherRule
-                    && NonEmpty.length (planCases plan) == 1
-                Left _ -> False
-            Left _ -> False
-        )
-    , check
-        "the verified two-case plan is refused by the gate with the deterministic profile reason at the guarantee (never lowered head-only)"
-        ( case pipelineModel selfUpdateBytes of
-            Just model ->
-              case supportPlan model of
-                Right plan ->
-                  map caseRule (NonEmpty.toList (planCases plan)) == [ChangeOtherRule, BoundedSelfUpdateRule]
-                    && profileV0Plan plan == Left (multiCaseReason 2 :| [])
-                    && renderBundleFromModel model == Left (RenderUnsupported (multiCaseReason 2 :| []))
-                Left _ -> False
-            Nothing -> False
-        )
-    , check
-        "the public emitter refuses the verified two-case document with the same reason"
-        ( fmap renderWaspBundle (pipelineDocument selfUpdateBytes)
-            == Just (Left (WaspRenderingUnsupported (multiCaseReason 2 :| [])))
-        )
-    , check
-        "a singleton rule-2 plan is refused by the gate with a reason anchored at the case"
-        ( gateOutcome singletonRule2Value
-            == Just (Left (singletonRule2Reason ["guarantees", "0", "cases", "0"] :| []))
-        )
-    , check
-        "two rule-1 cases are refused by the gate (the profile lowers exactly one case)"
-        (gateOutcome duplicatedRule1Value == Just (Left (multiCaseReason 2 :| [])))
-    , check
-        "three cases are refused by the gate with the exact count"
-        (gateOutcome threeCaseValue == Just (Left (multiCaseReason 3 :| [])))
-    , check
-        "the reordered two-case plan (rule 2 first) is refused as multi-case, not as a singleton rule-2 plan"
-        (gateOutcome reorderedValue == Just (Left (multiCaseReason 2 :| [])))
-    , check
-        "the gate's multi-case diagnostic is anchored at exactly the plan's recorded guarantee path"
-        ( case pipelineModel selfUpdateBytes >>= rightMaybe . supportPlan of
-            Just plan ->
-              profileV0Plan plan {planGuaranteePath = memberPath rootPath "relocated"}
-                == Left (UnsupportedReason ["relocated"] (unsupportedReasonMessage (multiCaseReason 2)) :| [])
-            Nothing -> False
-        )
-    , check
-        "the gate's singleton rule-2 diagnostic is anchored at exactly the plan's recorded case path"
-        ( case pipelineModel (encodeValue singletonRule2Value) >>= rightMaybe . supportPlan of
-            Just plan ->
-              case planCases plan of
-                onlyCase :| [] ->
-                  profileV0Plan plan {planCases = onlyCase {casePath = memberPath rootPath "relocated"} :| []}
-                    == Left (singletonRule2Reason ["relocated"] :| [])
-                _ -> False
-            Nothing -> False
-        )
-    , check
-        "the verifier consumes the rule-2 effect scope binding and the case position that Wasp never renders"
-        ( case pipelineModel selfUpdateBytes >>= rightMaybe . supportPlan of
-            Just plan ->
-              case NonEmpty.toList (planCases plan) of
-                [rule1, rule2] ->
-                  let retagged =
-                        case caseMatch rule2 of
-                          BoundedSelfUpdateMatch facts ->
-                            rule2
-                              { caseMatch =
-                                  BoundedSelfUpdateMatch
-                                    facts
-                                      { selfUpdateEffectScopeBinding =
-                                          (selfUpdateEffectScopeBinding facts) {planBindingParameterName = "Mutated"}
-                                      }
-                              }
-                          other -> rule2 {caseMatch = other}
-                      repositioned = plan {planCases = rule1 :| [rule2 {casePosition = 5}]}
-                   in renderObligationModule plan {planCases = rule1 :| [retagged]}
-                        /= renderObligationModule plan
-                        && renderObligationModule repositioned /= renderObligationModule plan
-                        && "module Case5 where" `Text.isInfixOf` renderObligationModule repositioned
-                _ -> False
-            Nothing -> False
-        )
-    , check
-        "generate refuses the verified two-case document with exit-3 classification and creates no root, staging, or backup"
-        ( case freshRefusal of
-            (Right (WaspUnsupported reasons), rootExists, entries) ->
-              reasons == multiCaseReason 2 :| []
-                && waspSuccessExitCode (WaspUnsupported reasons) == ExitFailure 3
-                && not rootExists
-                && null entries
-            _ -> False
-        )
-    , check
-        "generate refuses the two-case document without touching an unrelated existing directory"
-        ( case sentinelRefusal of
-            (Right (WaspUnsupported reasons), untouched, before, entries) ->
-              reasons == multiCaseReason 2 :| []
-                && untouched
-                && before == [("keep.txt", "keep\n")]
-                && entries == ["sentinel"]
-            _ -> False
-        )
-    , check
-        "generate refuses the two-case document without replacing an owned root generated from the singleton fixture"
-        ( case ownedRefusal of
-            (Right (WaspUnsupported reasons), untouched, before, entries) ->
-              reasons == multiCaseReason 2 :| []
-                && untouched
-                && before == bundleBytes baseBundle
-                && entries == ["app"]
-            _ -> False
-        )
-    , check
-        "check refuses the two-case document against the committed fixture with the same reason"
-        (checkRefusal == Right (WaspUnsupported (multiCaseReason 2 :| [])))
-    , check
-        "the Profile-v0 reasons are pinned literally"
-        ( unsupportedReasonMessage (multiCaseReason 2)
-            == "Wasp Profile v0 lowers exactly one Rule-1 case; this guarantee selects 2 cases"
-            && unsupportedReasonMessage (singletonRule2Reason [])
-              == "Wasp Profile v0 lowers exactly one Rule-1 case; this case matches rule 2 (bounded-self-update), which the profile does not lower"
-        )
-    ]
-  where
-    selfUpdateValue = decodeValue selfUpdateBytes
-    nspeValue = decodeValue nspeBytes
-    overCases mutate = overMember "guarantees" (overIndex 0 (overMember "cases" mutate))
-    singletonRule2Value = overCases (\cs -> toJSON (drop 1 (asList cs))) selfUpdateValue
-    duplicatedRule1Value = overCases (\cs -> toJSON (asList cs <> asList cs)) nspeValue
-    threeCaseValue = overCases (\cs -> toJSON (asList cs <> drop 1 (asList cs))) selfUpdateValue
-    reorderedValue = overCases (\cs -> toJSON (reverse (asList cs))) selfUpdateValue
-
-    gateOutcome value =
-      case pipelineModel (encodeValue value) of
-        Nothing -> Nothing
-        Just model ->
-          case supportPlan model of
-            Right plan -> Just (profileV0Plan plan)
-            Left _ -> Nothing
-
-    multiCaseReason :: Int -> UnsupportedReason
-    multiCaseReason count =
-      UnsupportedReason
-        ["guarantees", "0"]
-        ("Wasp Profile v0 lowers exactly one Rule-1 case; this guarantee selects " <> Text.pack (show count) <> " cases")
-
-    singletonRule2Reason path =
-      UnsupportedReason
-        path
-        "Wasp Profile v0 lowers exactly one Rule-1 case; this case matches rule 2 (bounded-self-update), which the profile does not lower"
-
 -- | The Profile-v0 plan of a model, when the shared gate and the
--- profile gate both accept it.
+-- profile dispatcher select it.
 v0PlanOf :: N.Model -> Maybe WaspProfileV0Plan
-v0PlanOf model = rightMaybe (supportPlan model) >>= rightMaybe . profileV0Plan
+v0PlanOf model = do
+  plan <- rightMaybe (supportPlan model)
+  case selectWaspProfile plan of
+    Right (ProfileV0Plan profile) -> Just profile
+    _ -> Nothing
 
 --------------------------------------------------------------------
 -- JSON mutation plumbing (authored variants of the fixtures)
@@ -1191,9 +1067,10 @@ changeOtherFieldInventory =
   , ("changeOtherEffectBindings", WaspOnly)
   ]
 
--- | The classification of every rule-2 fact: Wasp Profile v0 lowers
--- no rule-2 case, so nothing here is Wasp-consumed — the verifier
--- consumes it, which the Profile-v0 gate group pins.
+-- | The classification of every rule-2 fact under Profile v0: Wasp
+-- Profile v0 lowers no rule-2 case, so nothing here is consumed by
+-- it — the verifier consumes it (Profile v1 consumes it too; its
+-- own inventory below says so).
 boundedSelfUpdateFieldInventory :: [(String, Consumer)]
 boundedSelfUpdateFieldInventory =
   [ ("selfUpdateEffectScopeBinding", VerifierOnly)
@@ -1226,7 +1103,7 @@ planConsumptionChecks baseModel baseBundle =
     Nothing -> [check "the supported fixture yields a Profile-v0 plan (prerequisite)" False]
     Just basePlan ->
       [ check
-          ("the plan-consumption inventory classifies every shared, per-case, rule-1, and rule-2 field (" <> show expectedCounts <> ")")
+          ("the Profile-v0 plan-consumption inventory classifies every shared, per-case, rule-1, and rule-2 field (" <> show expectedCounts <> ")")
           ( map length inventories == expectedCounts
               && length (dedupe (map fst (concat inventories))) == sum expectedCounts
           )
@@ -1234,7 +1111,7 @@ planConsumptionChecks baseModel baseBundle =
           "no plan field is unclassified: every field is consumed by both backends, by Wasp only, by the verifier only, or by the Wasp gate's diagnostics"
           (all (\(_, consumer) -> consumer `elem` [ConsumedByBoth, WaspOnly, VerifierOnly, WaspGateDiagnostic]) (concat inventories))
       , check
-          "the rule-2 facts are never Wasp-consumed, and the gate-diagnostic and verifier-only fields are exactly the expected ones"
+          "under Profile v0 the rule-2 facts are never Wasp-consumed, and the gate-diagnostic and verifier-only fields are exactly the expected ones"
           ( all ((== VerifierOnly) . snd) boundedSelfUpdateFieldInventory
               && [name | (name, WaspGateDiagnostic) <- concat inventories] == ["planGuaranteePath", "casePath"]
               && [name | (name, VerifierOnly) <- concat inventories] == ["casePosition", "selfUpdateEffectScopeBinding"]
@@ -1258,7 +1135,7 @@ planConsumptionChecks baseModel baseBundle =
           )
       , check
           "the verifier-only case position never reaches the bundle bytes"
-          ( bundleBytes (renderBundleFromPlan (onCase (\c -> c {casePosition = 7}) basePlan))
+          ( bundleBytes (renderBundleFromPlan (ProfileV0Plan (onCase (\c -> c {casePosition = 7}) basePlan)))
               == bundleBytes baseBundle
           )
       ]
@@ -1271,7 +1148,7 @@ planConsumptionChecks baseModel baseBundle =
 
     runMutation basePlan (name, mutate, fragments) =
       check ("plan consumption: " <> name <> " → " <> concatMap (\(path, fragment) -> path <> ":" <> Text.unpack (Text.take 40 fragment) <> "; ") fragments) $
-        let mutated = renderBundleFromPlan (mutate basePlan)
+        let mutated = renderBundleFromPlan (ProfileV0Plan (mutate basePlan))
          in not (null fragments)
               && all
                 ( \(path, fragment) ->
@@ -1637,10 +1514,12 @@ renamedModelChecks baseModel baseBundle = do
          in [ check
                 ("renamed model " <> variantName variant <> ": renders with the fixed inventory and fixed target names")
                 ( map managedPath (waspBundleFiles bundle) == expectedInventory
-                    && summaryOperation (waspBundleSummary bundle) == "mithrilCaseAction"
-                    && summaryRoute (waspBundleSummary bundle) == "/operations/mithril-case-action"
+                    && waspBundleProfile bundle == WaspProfileV0
+                    && summaryProfile (waspBundleSummary bundle) == WaspProfileV0
+                    && map operationName (NonEmpty.toList (summaryOperations (waspBundleSummary bundle))) == ["mithrilCaseAction"]
+                    && map operationRoute (NonEmpty.toList (summaryOperations (waspBundleSummary bundle))) == ["/operations/mithril-case-action"]
                     && summaryModelName (waspBundleSummary bundle) == variantModel variant
-                    && summaryCaseAction (waspBundleSummary bundle) == variantAction variant
+                    && map operationCaseAction (NonEmpty.toList (summaryOperations (waspBundleSummary bundle))) == [variantAction variant]
                 )
             , check
                 ("renamed model " <> variantName variant <> ": the manifest states the authored names and the target mapping")
@@ -1727,7 +1606,7 @@ renamedModelChecks baseModel baseBundle = do
                                    profile
                                )
                            )
-                       hostileBundle = renderBundleFromPlan hostilePlan
+                       hostileBundle = renderBundleFromPlan (ProfileV0Plan hostilePlan)
                        sameLineCount path = length (Text.lines (textOf hostileBundle path)) == length (Text.lines (textOf baseBundle path))
                     in all sameLineCount expectedInventory
                          && codeLines hostileBundle schemaFile == codeLines baseBundle schemaFile
@@ -1795,14 +1674,14 @@ pureConfinementChecks bundle =
       ( checkWaspConfinement OwnershipCheck bundle [] == []
           && checkWaspConfinement OwnershipCheck bundle (snapshotOf bundle) == []
           && checkWaspConfinement OwnershipCheck bundle (replaceEntry operationFile (RegularFile "tampered") (snapshotOf bundle)) == []
-          && checkWaspConfinement OwnershipCheck bundle [RootEntry markerFile (RegularFile ownershipMarkerBytes)] == []
-          && checkWaspConfinement OwnershipCheck bundle [RootEntry markerFile (RegularFile ownershipMarkerBytes), RootEntry "src" Directory] == []
+          && checkWaspConfinement OwnershipCheck bundle [RootEntry markerFile (RegularFile (ownershipMarkerBytesOf WaspProfileV0))] == []
+          && checkWaspConfinement OwnershipCheck bundle [RootEntry markerFile (RegularFile (ownershipMarkerBytesOf WaspProfileV0)), RootEntry "src" Directory] == []
       )
   , check
       "the ownership rule refuses an unmarked nonempty root and an altered marker"
       ( checkWaspConfinement OwnershipCheck bundle [RootEntry ".gitignore" (RegularFile (fileOf bundle ".gitignore"))] == [markerViolation]
           && checkWaspConfinement OwnershipCheck bundle (replaceEntry markerFile (RegularFile "mithril-wasp-bundle wasp-confinement-profile-v1\n") (snapshotOf bundle)) == [markerViolation]
-          && checkWaspConfinement OwnershipCheck bundle [RootEntry markerFile (RegularFile ownershipMarkerBytes), RootEntry "notes.txt" (RegularFile "x")]
+          && checkWaspConfinement OwnershipCheck bundle [RootEntry markerFile (RegularFile (ownershipMarkerBytesOf WaspProfileV0)), RootEntry "notes.txt" (RegularFile "x")]
             == [ConfinementViolation "notes.txt" "an unexpected file is not part of the closed path inventory"]
           && checkWaspConfinement OwnershipCheck bundle (snapshotOf bundle <> [RootEntry "src/link" SymbolicLink])
             == [ConfinementViolation "src/link" "a symbolic link is not allowed inside the confined source root (path escape)"]
@@ -2020,7 +1899,7 @@ confinementAttackChecks = do
       outcome <- checkWaspApp nspePath root
       pure
         ( attackName attack
-        , outcome == Right (WaspNotConfined root (NonEmpty.fromList (attackExpected attack)))
+        , outcome == Right (WaspRootNotConfined WaspProfileV0 root (NonEmpty.fromList (attackExpected attack)))
         )
   fixtureRootAbsolute <- canonicalizePath fixtureRoot
   linkedRoot <- withScratchDirectory $ \scratch -> do
@@ -2878,7 +2757,8 @@ commandOutcomeChecks bundle = do
         "an unmarked root holding an unmanaged file is refused with exit 4 and nothing is written"
         ( collisionOutcome
             == Right
-              ( WaspNotConfined
+              ( WaspRootNotConfined
+                  WaspProfileV0
                   (collisionRoot collisionOutcome)
                   (markerViolation :| [ConfinementViolation "notes.txt" "an unexpected file is not part of the closed path inventory"])
               )
@@ -2926,7 +2806,7 @@ commandOutcomeChecks bundle = do
         _ -> False
     collisionRoot outcome =
       case outcome of
-        Right (WaspNotConfined root _) -> root
+        Right (WaspRootNotConfined _ root _) -> root
         _ -> ""
     isRootError reason outcome =
       case outcome of
@@ -2966,7 +2846,8 @@ renderingChecks bundle =
       "the NOT CONFINED report escapes hostile paths and messages on single lines"
       ( renderWaspSuccess
           nspePath
-          ( WaspNotConfined
+          ( WaspRootNotConfined
+              WaspProfileV0
               "app"
               (ConfinementViolation "evil\nname" "why\ESC" :| [ConfinementViolation "b" "c"])
           )
@@ -2991,7 +2872,7 @@ renderingChecks bundle =
       ( waspSuccessExitCode (WaspGenerated completed) == ExitSuccess
           && waspSuccessExitCode (WaspConfined completed) == ExitSuccess
           && waspSuccessExitCode (WaspUnsupported (UnsupportedReason [] "x" :| [])) == ExitFailure 3
-          && waspSuccessExitCode (WaspNotConfined "app" (ConfinementViolation "a" "b" :| [])) == ExitFailure 4
+          && waspSuccessExitCode (WaspRootNotConfined WaspProfileV1 "app" (ConfinementViolation "a" "b" :| [])) == ExitFailure 4
           && waspFailureExitCode (WaspRootError "app" "x") == ExitFailure 1
           && waspFailureExitCode (WaspWorkspaceError "x") == ExitFailure 2
           && waspFailureExitCode (WaspRenderInvariantError (VerifierInvariantViolation [] "x" :| [])) == ExitFailure 2
@@ -3086,3 +2967,1989 @@ snapshotDirectory root = do
             else do
               bytes <- ByteString.readFile fullPath
               pure [(relativePath, bytes)]
+
+--------------------------------------------------------------------
+-- Group 9: Profile v1 — golden, determinism, and the two operations
+--------------------------------------------------------------------
+
+v1FixtureRoot :: FilePath
+v1FixtureRoot = "test/fixtures/wasp-acme-self-update"
+
+-- | The pinned summary of the Profile-v0 bundle of the singleton
+-- fixture: the explicit profile and its one operation.
+v0Summary :: WaspBundleSummary
+v0Summary =
+  WaspProfileSummary
+    { profileSummaryModelName = "Acme"
+    , profileSummaryGuarantee = "NoSelfPrivilegeEscalation"
+    , summaryProfile = WaspProfileV0
+    , summaryOperations = changeOtherOperationSummary :| []
+    , profileSummaryManagedPaths = expectedInventory
+    }
+
+-- | The pinned summary of the Profile-v1 bundle of the two-case
+-- fixture: the explicit profile and both operations in authored
+-- case order.
+v1Summary :: WaspBundleSummary
+v1Summary =
+  WaspProfileSummary
+    { profileSummaryModelName = "Acme"
+    , profileSummaryGuarantee = "NoSelfPrivilegeEscalation"
+    , summaryProfile = WaspProfileV1
+    , summaryOperations = changeOtherOperationSummary :| [selfUpdateOperationSummary]
+    , profileSummaryManagedPaths = expectedInventory
+    }
+
+changeOtherOperationSummary :: WaspOperationSummary
+changeOtherOperationSummary =
+  WaspOperationSummary
+    { operationCasePosition = 0
+    , operationRule = ChangeOtherRule
+    , operationCaseAction = "Membership.changeRole"
+    , operationName = "mithrilCaseAction"
+    , operationRoute = "/operations/mithril-case-action"
+    }
+
+selfUpdateOperationSummary :: WaspOperationSummary
+selfUpdateOperationSummary =
+  WaspOperationSummary
+    { operationCasePosition = 1
+    , operationRule = BoundedSelfUpdateRule
+    , operationCaseAction = "Membership.changeOwnRole"
+    , operationName = "mithrilSelfUpdateAction"
+    , operationRoute = "/operations/mithril-self-update-action"
+    }
+
+-- | The two literal operation objects of the Profile-v1 manifest of
+-- the two-case fixture, in authored order.
+v1ManifestOperationLines :: [Text]
+v1ManifestOperationLines =
+  [ "    { \"case\": 0, \"rule\": \"rule 1 (change-other)\", \"authored\": \"Membership.changeRole\", \"position\": 4, \"operation\": \"mithrilCaseAction\", \"operationType\": \"MithrilCaseAction\", \"route\": \"/operations/mithril-case-action\", \"file\": \"src/mithrilCaseAction.ts\", \"parameters\": [{ \"role\": \"subject\", \"authored\": \"target\", \"position\": 0, \"argument\": \"subject\" }, { \"role\": \"scope\", \"authored\": \"organization\", \"position\": 1, \"argument\": \"scope\" }, { \"role\": \"payload\", \"authored\": \"newRole\", \"position\": 2, \"argument\": \"payload\" }], \"effectBindings\": [{ \"endpoint\": \"user\", \"endpointPosition\": 0, \"parameter\": \"target\", \"parameterPosition\": 0 }, { \"endpoint\": \"organization\", \"endpointPosition\": 1, \"parameter\": \"organization\", \"parameterPosition\": 1 }], \"caseScopeBinding\": { \"endpoint\": \"organization\", \"endpointPosition\": 1, \"parameter\": \"organization\", \"parameterPosition\": 1 } },"
+  , "    { \"case\": 1, \"rule\": \"rule 2 (bounded-self-update)\", \"authored\": \"Membership.changeOwnRole\", \"position\": 5, \"operation\": \"mithrilSelfUpdateAction\", \"operationType\": \"MithrilSelfUpdateAction\", \"route\": \"/operations/mithril-self-update-action\", \"file\": \"src/mithrilCaseAction.ts\", \"parameters\": [{ \"role\": \"scope\", \"authored\": \"organization\", \"position\": 0, \"argument\": \"scope\" }, { \"role\": \"payload\", \"authored\": \"newRole\", \"position\": 1, \"argument\": \"payload\" }], \"effectSubject\": { \"endpoint\": \"user\", \"endpointPosition\": 0, \"term\": \"Actor\" }, \"effectScopeBinding\": { \"endpoint\": \"organization\", \"endpointPosition\": 1, \"parameter\": \"organization\", \"parameterPosition\": 0 }, \"caseScopeBinding\": { \"endpoint\": \"organization\", \"endpointPosition\": 1, \"parameter\": \"organization\", \"parameterPosition\": 0 } }"
+  ]
+
+manifestObject :: WaspBundle -> Maybe (KeyMap.KeyMap Value)
+manifestObject bundle =
+  case Aeson.decodeStrict (fileOf bundle manifestFile) of
+    Just (Object members) -> Just members
+    _ -> Nothing
+
+textField :: Text -> KeyMap.KeyMap Value -> Maybe Text
+textField name members =
+  case KeyMap.lookup (Key.fromText name) members of
+    Just (String text) -> Just text
+    _ -> Nothing
+
+intField :: Text -> KeyMap.KeyMap Value -> Maybe Int
+intField name members =
+  case KeyMap.lookup (Key.fromText name) members of
+    Just value ->
+      case Aeson.fromJSON value of
+        Aeson.Success n -> Just n
+        Aeson.Error _ -> Nothing
+    Nothing -> Nothing
+
+objectsField :: Text -> KeyMap.KeyMap Value -> Maybe [KeyMap.KeyMap Value]
+objectsField name members =
+  case KeyMap.lookup (Key.fromText name) members of
+    Just (Array items) ->
+      mapM (\item -> case item of Object o -> Just o; _ -> Nothing) (foldr (:) [] items)
+    _ -> Nothing
+
+-- | The code lines of a rendered file (comments and the title line
+-- removed) with the operations type-import line removed too: the
+-- one code line of the rule-1 Action that Profile v1 renders
+-- differently (it imports both operation types).
+codeLinesWithoutTypeImport :: WaspBundle -> FilePath -> [Text]
+codeLinesWithoutTypeImport bundle path =
+  filter (not . ("import type {" `Text.isPrefixOf`)) (codeLines bundle path)
+
+v1GoldenChecks :: CoreDocument Normalized -> WaspBundle -> WaspBundle -> IO [Check]
+v1GoldenChecks selfUpdateDocument v1Bundle baseBundle = do
+  onDisk <- snapshotDirectory v1FixtureRoot
+  generatedTwice <- withScratchDirectory $ \scratch -> do
+    first <- generateWaspApp selfUpdatePath (scratch </> "first")
+    createDirectory (scratch </> "nested")
+    second <- generateWaspApp selfUpdatePath (scratch </> "nested" </> "second")
+    firstFiles <- snapshotDirectory (scratch </> "first")
+    secondFiles <- snapshotDirectory (scratch </> "nested" </> "second")
+    leftovers <- listDirectory scratch
+    pure (first, second, firstFiles, secondFiles, leftovers)
+  let (first, second, firstFiles, secondFiles, leftovers) = generatedTwice
+      manifest = manifestObject v1Bundle
+      operation = textOf v1Bundle operationFile
+      spec = textOf v1Bundle specFile
+      clientPage = textOf v1Bundle "src/MainPage.tsx"
+      v0Operation = textOf baseBundle operationFile
+      count needle haystack = Text.count needle haystack
+  pure
+    [ check
+        "Profile v1: rendering the two-case document twice is byte-identical"
+        (fmap bundleBytes (renderWaspBundle selfUpdateDocument) == Right (bundleBytes v1Bundle))
+    , check
+        "Profile v1: the committed fixture test/fixtures/wasp-acme-self-update is exactly the fresh bundle (inventory and bytes)"
+        (onDisk == bundleBytes v1Bundle)
+    , check
+        "Profile v1: the closed path inventory is exactly the fourteen Profile-v0 paths"
+        ( map managedPath (waspBundleFiles v1Bundle) == expectedInventory
+            && summaryManagedPaths (waspBundleSummary v1Bundle) == expectedInventory
+            && map managedPath (waspBundleFiles v1Bundle) == map managedPath (waspBundleFiles baseBundle)
+        )
+    , check
+        "Profile v1: two generations into different roots produce byte-identical files and leave nothing beside them"
+        ( isGeneratedWith v1Summary first
+            && isGeneratedWith v1Summary second
+            && firstFiles == secondFiles
+            && firstFiles == bundleBytes v1Bundle
+            && sort leftovers == ["first", "nested"]
+        )
+    , check
+        "Profile v1: every managed file is UTF-8 with Unix line endings, no tabs, and one final newline"
+        ( all
+            ( \(_, bytes) ->
+                case Encoding.decodeUtf8' bytes of
+                  Left _ -> False
+                  Right text ->
+                    "\n" `Text.isSuffixOf` text
+                      && not ("\n\n" `Text.isSuffixOf` text)
+                      && not ("\r" `Text.isInfixOf` text)
+                      && not ("\t" `Text.isInfixOf` text)
+            )
+            (bundleBytes v1Bundle)
+        )
+    , check
+        "Profile v1: no managed file carries a temporary path, a build path, or a verification claim"
+        ( all
+            ( \(_, bytes) ->
+                not (any (`ByteString.isInfixOf` bytes) ["/tmp", "dist-newstyle"])
+                  && not ("verif" `Text.isInfixOf` Text.toLower (Encoding.decodeUtf8Lenient bytes))
+            )
+            (bundleBytes v1Bundle)
+        )
+    , check
+        "Profile v1: the explicit identity is carried by the bundle, its summary, its marker, and its manifest"
+        ( waspBundleProfile v1Bundle == WaspProfileV1
+            && summaryProfile (waspBundleSummary v1Bundle) == WaspProfileV1
+            && fileOf v1Bundle markerFile == ownershipMarkerBytesOf WaspProfileV1
+            && fmap (textField "profile") manifest == Just (Just "wasp-confinement-profile-v1")
+            && fmap (textField "formatVersion") manifest == Just (Just "1")
+            && profileNameOf WaspProfileV1 == "wasp-confinement-profile-v1"
+            && profileNameOf WaspProfileV0 == "wasp-confinement-profile-v0"
+        )
+    , check
+        "the two ownership markers are distinct literal byte sequences and are exactly the recognized markers"
+        ( ownershipMarkerBytesOf WaspProfileV0 /= ownershipMarkerBytesOf WaspProfileV1
+            && "# Mithril ownership marker of a Wasp Confinement Profile v1 root.  DO NOT EDIT.\n" `ByteString.isPrefixOf` ownershipMarkerBytesOf WaspProfileV1
+            && "mithril-wasp-bundle wasp-confinement-profile-v1\n" `ByteString.isSuffixOf` ownershipMarkerBytesOf WaspProfileV1
+            && "# Mithril ownership marker of a Wasp Confinement Profile v0 root.  DO NOT EDIT.\n" `ByteString.isPrefixOf` ownershipMarkerBytesOf WaspProfileV0
+            && "mithril-wasp-bundle wasp-confinement-profile-v0\n" `ByteString.isSuffixOf` ownershipMarkerBytesOf WaspProfileV0
+            && recognizedOwnershipMarkers
+              == [(WaspProfileV0, ownershipMarkerBytesOf WaspProfileV0), (WaspProfileV1, ownershipMarkerBytesOf WaspProfileV1)]
+            && fileOf baseBundle markerFile == ownershipMarkerBytesOf WaspProfileV0
+        )
+    , check
+        "Profile v1: the one generated operation file exports exactly the two Actions with their fixed names and types"
+        ( count "export const " operation == 2
+            && "export const mithrilCaseAction: MithrilCaseAction<Args, void> = async (input, context) => {" `Text.isInfixOf` operation
+            && "export const mithrilSelfUpdateAction: MithrilSelfUpdateAction<SelfUpdateArgs, void> = async (input, context) => {" `Text.isInfixOf` operation
+            && "import type { MithrilCaseAction, MithrilSelfUpdateAction } from \"wasp/server/operations\";" `Text.isInfixOf` operation
+            && count "import { HttpError, prisma } from \"wasp/server\";" operation == 1
+        )
+    , check
+        "Profile v1: the rule-1 Action's code lines are exactly Profile v0's, in order, before the rule-2 Action (only the operations type import differs)"
+        ( codeLinesWithoutTypeImport baseBundle operationFile
+            `isPrefixOfList` codeLinesWithoutTypeImport v1Bundle operationFile
+            && length (codeLinesWithoutTypeImport v1Bundle operationFile) > length (codeLinesWithoutTypeImport baseBundle operationFile)
+            && "import type { MithrilCaseAction } from \"wasp/server/operations\";" `elem` codeLines baseBundle operationFile
+        )
+    , check
+        "Profile v1: the rule-2 Action pins the bounded self-update semantics literally"
+        ( all
+            (`Text.isInfixOf` operation)
+            [ "type SelfUpdateArgs = { scope: number; payload: Payload };"
+            , "function parseSelfUpdateArgs(input: unknown): SelfUpdateArgs | null {"
+            , "  if (!isEntityReference(scopeArgument) || !isPayload(payloadArgument)) {"
+            , "  return { scope: scopeArgument, payload: payloadArgument };"
+            , "  const args = parseSelfUpdateArgs(input);"
+            , "          const allowed = payloadRank[args.payload] <= actorRank;"
+            , "          // the actor's own authority tuple, read inside this Serializable transaction."
+            , "          // condition exists."
+            ]
+            -- The actor's own tuple is located, read, and written at
+            -- exactly (actor, scope): once by the rule-1 Action's read,
+            -- and twice (the read and the update) by the rule-2 Action.
+            && count "{ subjectId: actor, scopeId: args.scope }" operation == 3
+            && count "{ subjectId: actor, scopeId: args.scope }" v0Operation == 1
+            -- No caller-supplied subject reaches the rule-2 Action: the
+            -- subject argument is read exactly once, by the rule-1 parser.
+            && count "record[\"subject\"]" operation == 1
+            && count "args.subject" operation == count "args.subject" v0Operation
+            -- No separate membership condition and no target tuple in
+            -- the rule-2 Action: exactly the rule-1 Action's two uses.
+            && count "targetTuple" operation == count "targetTuple" v0Operation
+            && count "IsSome" operation == count "IsSome" v0Operation
+            -- Both Actions share the uniform responses, the Serializable
+            -- transaction, and the bounded retry.
+            && count "throw new HttpError(401, \"authentication required\");" operation == 2
+            && count "throw new HttpError(400, \"invalid arguments\");" operation == 2
+            && count "throw new HttpError(403, \"forbidden\");" operation == 2
+            && count "throw new HttpError(409, \"conflict\");" operation == 2
+            && count "throw new HttpError(500, \"internal error\");" operation == 2
+            && count "{ isolationLevel: \"Serializable\" }," operation == 2
+            && count "if (attempt < serializationAttempts) {" operation == 2
+            && count "const serializationAttempts = 3;" operation == 1
+            && count "const actor: number = context.user.id;" operation == 2
+            && count "if (!context.user) {" operation == 2
+        )
+    , check
+        "Profile v1: the generated Actions use no raw SQL, no Prisma client import, and no dynamic code, and only the operation file imports prisma"
+        ( not (any (`Text.isInfixOf` operation) ["$queryRaw", "$executeRaw", "@prisma/client", "eval(", "Function(", "import(", "require(", "child_process"])
+            && [path | (path, bytes) <- bundleBytes v1Bundle, "wasp/server" `ByteString.isInfixOf` bytes] == [operationFile]
+        )
+    , check
+        "Profile v1: the specification declares exactly two Actions in authored order, one route, auth, and Wasp 0.25.0"
+        ( count "action(" spec == 2
+            && count "route(" spec == 1
+            && "import { mithrilCaseAction, mithrilSelfUpdateAction } from \"./src/mithrilCaseAction\" with { type: \"ref\" };" `Text.isInfixOf` spec
+            && "    action(mithrilCaseAction, { entities: [\"MithrilAuthority\"], auth: true }),\n    action(mithrilSelfUpdateAction, { entities: [\"MithrilAuthority\"], auth: true }),\n" `Text.isInfixOf` spec
+            && "wasp: { version: \"0.25.0\" }" `Text.isInfixOf` spec
+            && "userEntity: \"MithrilSubject\"" `Text.isInfixOf` spec
+            && not (any (`Text.isInfixOf` spec) ["query(", "api(", "crud(", "job(", "apiNamespace(", "setupFn", "middlewareConfigFn", "seeds"])
+        )
+    , check
+        "Profile v1: the manifest parses with format version 1, the explicit profile, and the complete ordered operations array"
+        ( case manifest of
+            Just members ->
+              textField "format" members == Just "mithril-wasp-bundle"
+                && textField "formatVersion" members == Just "1"
+                && textField "profile" members == Just "wasp-confinement-profile-v1"
+                && textField "model" members == Just "Acme"
+                && textField "guarantee" members == Just "NoSelfPrivilegeEscalation"
+                && KeyMap.lookup "managedFiles" members == Just (toJSON (map Text.pack (filter (/= manifestFile) expectedInventory)))
+                && not (any (`KeyMap.member` members) ["caseAction", "parameters", "effectBindings", "caseScopeBinding"])
+                && case objectsField "operations" members of
+                  Just [first', second'] ->
+                    intField "case" first' == Just 0
+                      && textField "rule" first' == Just "rule 1 (change-other)"
+                      && textField "authored" first' == Just "Membership.changeRole"
+                      && intField "position" first' == Just 4
+                      && textField "operation" first' == Just "mithrilCaseAction"
+                      && textField "operationType" first' == Just "MithrilCaseAction"
+                      && textField "route" first' == Just "/operations/mithril-case-action"
+                      && textField "file" first' == Just "src/mithrilCaseAction.ts"
+                      && fmap (map (textField "role")) (objectsField "parameters" first') == Just [Just "subject", Just "scope", Just "payload"]
+                      && intField "case" second' == Just 1
+                      && textField "rule" second' == Just "rule 2 (bounded-self-update)"
+                      && textField "authored" second' == Just "Membership.changeOwnRole"
+                      && intField "position" second' == Just 5
+                      && textField "operation" second' == Just "mithrilSelfUpdateAction"
+                      && textField "operationType" second' == Just "MithrilSelfUpdateAction"
+                      && textField "route" second' == Just "/operations/mithril-self-update-action"
+                      && textField "file" second' == Just "src/mithrilCaseAction.ts"
+                      && fmap (map (textField "role")) (objectsField "parameters" second') == Just [Just "scope", Just "payload"]
+                      && not (KeyMap.member "effectBindings" second')
+                      && (textField "term" =<< objectField "effectSubject" second') == Just "Actor"
+                  _ -> False
+            Nothing -> False
+        )
+    , check
+        "Profile v1: the manifest states both operation mappings literally, in authored order"
+        ( ("  \"operations\": [\n" <> Text.intercalate "\n" v1ManifestOperationLines <> "\n  ],\n")
+            `Text.isInfixOf` textOf v1Bundle manifestFile
+        )
+    , check
+        "Profile v1: the summary exposes the explicit profile and the complete ordered operation list (never a singleton)"
+        ( waspBundleSummary v1Bundle == v1Summary
+            && waspBundleSummary baseBundle == v0Summary
+            && NonEmpty.length (summaryOperations (waspBundleSummary v1Bundle)) == 2
+        )
+    , check
+        "Profile v1: the self-update target names are fixed, distinct from the rule-1 names, and avoid the reserved lists"
+        ( targetSelfUpdateOperation targetNames == "mithrilSelfUpdateAction"
+            && targetSelfUpdateOperationType targetNames == "MithrilSelfUpdateAction"
+            && targetSelfUpdateRoute targetNames == "/operations/mithril-self-update-action"
+            && targetSelfUpdateRoute targetNames == "/operations/" <> camelToKebabCase (targetSelfUpdateOperation targetNames)
+            && targetSelfUpdateOperation targetNames /= targetOperation targetNames
+            && targetSelfUpdateOperationType targetNames /= targetOperationType targetNames
+            && targetSelfUpdateRoute targetNames /= targetRoute targetNames
+            && all (`notElem` forbiddenTargetNames) [targetSelfUpdateOperation targetNames, targetSelfUpdateOperationType targetNames, "SelfUpdateArgs", "parseSelfUpdateArgs"]
+            && length (dedupe v1Identifiers) == length v1Identifiers
+        )
+    , check
+        "Profile v1: the client shell names both Actions and the profile"
+        ( "Wasp Confinement Profile v1 demonstrator: two authenticated Wasp Actions in the authored case order, mithrilCaseAction (POST /operations/mithril-case-action)" `Text.isInfixOf` clientPage
+            && "mithrilSelfUpdateAction (POST /operations/mithril-self-update-action), lowered from the bounded self-update NoSelfPrivilegeEscalation case action \\\"Membership.changeOwnRole\\\"." `Text.isInfixOf` clientPage
+        )
+    , check
+        "Profile v1: the shared files whose bytes do not depend on the profile are byte-identical to Profile v0's"
+        ( all
+            (\path -> fileOf v1Bundle path == fileOf baseBundle path)
+            [".npmrc", ".wasproot", "package.json", "tsconfig.json", "tsconfig.src.json", "tsconfig.wasp.json", "vite.config.ts"]
+            && all
+              (\path -> fileOf v1Bundle path /= fileOf baseBundle path)
+              [".gitignore", markerFile, specFile, manifestFile, schemaFile, "src/MainPage.tsx", operationFile]
+        )
+    ]
+  where
+    objectField name members =
+      case KeyMap.lookup (Key.fromText name) members of
+        Just (Object o) -> Just o
+        _ -> Nothing
+    v1Identifiers =
+      [ targetOperation targetNames, targetOperationType targetNames
+      , targetSelfUpdateOperation targetNames, targetSelfUpdateOperationType targetNames
+      , "Payload", "Args", "SelfUpdateArgs", "HttpError", "prisma", "payloadMembers", "payloadRank"
+      , "floorRank", "absentRank", "serializationAttempts", "isEntityReference", "isPayload"
+      , "parseArgs", "parseSelfUpdateArgs", "isSerializationConflict", "MainPage"
+      ]
+
+isPrefixOfList :: Eq a => [a] -> [a] -> Bool
+isPrefixOfList prefix whole = take (length prefix) whole == prefix
+
+isGeneratedWith :: WaspBundleSummary -> Either WaspFileError WaspFileSuccess -> Bool
+isGeneratedWith summary outcome =
+  case outcome of
+    Right (WaspGenerated completed) -> reportSummary completed == summary
+    _ -> False
+
+--------------------------------------------------------------------
+-- Group 10: the profile dispatcher over the ordered rule tags
+--------------------------------------------------------------------
+
+-- | The one capability sentence every dispatcher diagnostic carries.
+profileCapabilityText :: Text
+profileCapabilityText =
+  "Wasp Profile v0 lowers exactly one Rule-1 case and Wasp Profile v1 exactly the ordered Rule-1, Rule-2 case pair"
+
+rule1Label, rule2Label :: Text
+rule1Label = "rule 1 (change-other)"
+rule2Label = "rule 2 (bounded-self-update)"
+
+casePathAt :: Int -> [Text]
+casePathAt position = ["guarantees", "0", "cases", Text.pack (show position)]
+
+singletonRule2Reason :: [Text] -> UnsupportedReason
+singletonRule2Reason path =
+  UnsupportedReason
+    path
+    (profileCapabilityText <> "; this guarantee selects one case, which matches " <> rule2Label)
+
+mismatchReason :: [Text] -> Int -> Text -> Text -> UnsupportedReason
+mismatchReason path position actual expected =
+  UnsupportedReason
+    path
+    ( profileCapabilityText
+        <> "; case "
+        <> Text.pack (show position)
+        <> " matches "
+        <> actual
+        <> ", but Profile v1 requires "
+        <> expected
+        <> " at position "
+        <> Text.pack (show position)
+    )
+
+countReason :: [Text] -> Int -> UnsupportedReason
+countReason path n =
+  UnsupportedReason
+    path
+    (profileCapabilityText <> "; this guarantee selects " <> Text.pack (show n) <> " cases")
+
+-- | What a refused authored variant must not do, observed through the
+-- real command: no root, staging, or backup beside an absent
+-- destination; an unrelated directory untouched; an owned root of
+-- either profile untouched; and the same refusal from @check@.
+data RefusalEvidence = RefusalEvidence
+  { refusalFresh :: Either WaspFileError WaspFileSuccess
+  , refusalFreshRootExists :: Bool
+  , refusalFreshParentEntries :: [FilePath]
+  , refusalSentinel :: Either WaspFileError WaspFileSuccess
+  , refusalSentinelFiles :: [(FilePath, ByteString)]
+  , refusalOwnedV0 :: Either WaspFileError WaspFileSuccess
+  , refusalOwnedV0Files :: [(FilePath, ByteString)]
+  , refusalOwnedV1 :: Either WaspFileError WaspFileSuccess
+  , refusalOwnedV1Files :: [(FilePath, ByteString)]
+  , refusalCheck :: Either WaspFileError WaspFileSuccess
+  , refusalTrapGenerate :: Either WaspFileError WaspFileSuccess
+  , refusalTrapCheck :: Either WaspFileError WaspFileSuccess
+  , refusalScratchEntries :: [FilePath]
+  }
+
+refusalEvidence :: Value -> IO RefusalEvidence
+refusalEvidence value =
+  withScratchDirectory $ \scratch -> do
+    let variantFile = scratch </> "variant.mir.json"
+        parent = scratch </> "parent"
+        freshRoot = parent </> "app"
+        sentinel = scratch </> "sentinel"
+        ownedV0 = scratch </> "owned-v0"
+        ownedV1 = scratch </> "owned-v1"
+    ByteString.writeFile variantFile (encodeValue value)
+    createDirectory parent
+    fresh <- generateWaspApp variantFile freshRoot
+    freshRootExists <- doesPathExist freshRoot
+    parentEntries <- listDirectory parent
+    createDirectory sentinel
+    writeFile (sentinel </> "keep.txt") "keep\n"
+    sentinelOutcome <- generateWaspApp variantFile sentinel
+    sentinelFiles <- snapshotDirectory sentinel
+    _ <- generateWaspApp nspePath ownedV0
+    ownedV0Outcome <- generateWaspApp variantFile ownedV0
+    ownedV0Files <- snapshotDirectory ownedV0
+    _ <- generateWaspApp selfUpdatePath ownedV1
+    ownedV1Outcome <- generateWaspApp variantFile ownedV1
+    ownedV1Files <- snapshotDirectory ownedV1
+    checked <- checkWaspApp variantFile fixtureRoot
+    trapGenerate <- generateWaspApp variantFile (trapRootIn scratch)
+    trapCheck <- checkWaspApp variantFile (trapRootIn scratch)
+    entries <- listDirectory scratch
+    pure
+      RefusalEvidence
+        { refusalFresh = fresh
+        , refusalFreshRootExists = freshRootExists
+        , refusalFreshParentEntries = parentEntries
+        , refusalSentinel = sentinelOutcome
+        , refusalSentinelFiles = sentinelFiles
+        , refusalOwnedV0 = ownedV0Outcome
+        , refusalOwnedV0Files = ownedV0Files
+        , refusalOwnedV1 = ownedV1Outcome
+        , refusalOwnedV1Files = ownedV1Files
+        , refusalCheck = checked
+        , refusalTrapGenerate = trapGenerate
+        , refusalTrapCheck = trapCheck
+        , refusalScratchEntries = entries
+        }
+
+-- | The destination trap: a root below an ancestor component that
+-- carries an embedded NUL, which no POSIX path can name.  The very
+-- first no-follow metadata read of any destination access — root
+-- resolution's ancestor validation, a read-only inspection, or an
+-- installation — fails deterministically, so a command that touches
+-- the destination in any way returns the exit-1 unusable-root error
+-- ('trapRootError') instead of its verdict.  A refusal that still
+-- returns the exit-3 UNSUPPORTED result against this root therefore
+-- performed zero destination access: not a read-only inspection, and
+-- a fortiori no mutation.  (Comparing a valid sentinel root before
+-- and after would only prove the absence of mutation.)
+trapRootIn :: FilePath -> FilePath
+trapRootIn scratch = scratch </> "mithril\0trap" </> "app"
+
+-- | The error every access to the trap root returns.
+trapRootError :: FilePath -> Either WaspFileError WaspFileSuccess
+trapRootError scratch = Left (WaspRootError (trapRootIn scratch) "its parent directory does not exist")
+
+-- | The trap's positive controls: both commands, for both supported
+-- documents, touch the destination and therefore fail on it — so the
+-- trap is armed, and a refusal that returns UNSUPPORTED against it
+-- demonstrably never reached the destination.
+data TrapControl = TrapControl
+  { trapGenerateV0 :: Either WaspFileError WaspFileSuccess
+  , trapCheckV0 :: Either WaspFileError WaspFileSuccess
+  , trapGenerateV1 :: Either WaspFileError WaspFileSuccess
+  , trapCheckV1 :: Either WaspFileError WaspFileSuccess
+  , trapExpected :: Either WaspFileError WaspFileSuccess
+  , trapScratchEntries :: [FilePath]
+  }
+
+trapControlEvidence :: IO TrapControl
+trapControlEvidence =
+  withScratchDirectory $ \scratch -> do
+    generateV0 <- generateWaspApp nspePath (trapRootIn scratch)
+    checkV0 <- checkWaspApp nspePath (trapRootIn scratch)
+    generateV1 <- generateWaspApp selfUpdatePath (trapRootIn scratch)
+    checkV1 <- checkWaspApp selfUpdatePath (trapRootIn scratch)
+    entries <- listDirectory scratch
+    pure
+      TrapControl
+        { trapGenerateV0 = generateV0
+        , trapCheckV0 = checkV0
+        , trapGenerateV1 = generateV1
+        , trapCheckV1 = checkV1
+        , trapExpected = trapRootError scratch
+        , trapScratchEntries = entries
+        }
+
+profileSelectionChecks :: ByteString -> ByteString -> WaspBundle -> WaspBundle -> IO [Check]
+profileSelectionChecks nspeBytes selfUpdateBytes baseBundle v1Bundle = do
+  refusals <- forM refusalVariants $ \(name, value, expected) -> do
+    evidence <- refusalEvidence value
+    pure (name, value, expected, evidence)
+  trapControl <- trapControlEvidence
+  pure $
+    [ check
+        "destination trap: the supported documents' generate and check both fail on the trap root with the exit-1 unusable-root error (the trap is armed against read-only inspection and mutation alike)"
+        ( trapGenerateV0 trapControl == trapExpected trapControl
+            && trapCheckV0 trapControl == trapExpected trapControl
+            && trapGenerateV1 trapControl == trapExpected trapControl
+            && trapCheckV1 trapControl == trapExpected trapControl
+            && waspFailureExitCode (WaspRootError "app" "its parent directory does not exist") == ExitFailure 1
+            && null (trapScratchEntries trapControl)
+        )
+    , check
+        "profile selection: the singleton rule-1 plan selects Profile v0 with its one change-other case at position 0"
+        ( case pipelineModel nspeBytes >>= rightMaybe . supportPlan of
+            Just plan ->
+              case selectWaspProfile plan of
+                Right (ProfileV0Plan profile) ->
+                  profileShared profile == plan
+                    && casePosition (profileCase profile) == 0
+                    && caseRule (profileCase profile) == ChangeOtherRule
+                    && NonEmpty.length (planCases plan) == 1
+                    && profilePlanProfile (ProfileV0Plan profile) == WaspProfileV0
+                _ -> False
+            Nothing -> False
+        )
+    , check
+        "profile selection: the ordered rule-1, rule-2 plan selects Profile v1 with the change-other case at position 0 and the bounded-self-update case at position 1"
+        ( case pipelineModel selfUpdateBytes >>= rightMaybe . supportPlan of
+            Just plan ->
+              case selectWaspProfile plan of
+                Right (ProfileV1Plan profile) ->
+                  v1Shared profile == plan
+                    && map caseRule (NonEmpty.toList (planCases plan)) == [ChangeOtherRule, BoundedSelfUpdateRule]
+                    && casePosition (v1ChangeOtherCase profile) == 0
+                    && caseRule (v1ChangeOtherCase profile) == ChangeOtherRule
+                    && casePosition (v1SelfUpdateCase profile) == 1
+                    && caseRule (v1SelfUpdateCase profile) == BoundedSelfUpdateRule
+                    && caseMatch (v1ChangeOtherCase profile) == ChangeOtherMatch (v1ChangeOtherFacts profile)
+                    && caseMatch (v1SelfUpdateCase profile) == BoundedSelfUpdateMatch (v1SelfUpdateFacts profile)
+                    && profilePlanProfile (ProfileV1Plan profile) == WaspProfileV1
+                    && bundleBytes (renderBundleFromPlan (ProfileV1Plan profile)) == bundleBytes v1Bundle
+                _ -> False
+            Nothing -> False
+        )
+    , check
+        "profile selection: the public emitter lowers the verified two-case document as Profile v1"
+        ( fmap (fmap waspBundleProfile . renderWaspBundle) (pipelineDocument selfUpdateBytes) == Just (Right WaspProfileV1)
+            && fmap (fmap waspBundleProfile . renderWaspBundle) (pipelineDocument nspeBytes) == Just (Right WaspProfileV0)
+        )
+    , check
+        "profile selection: the dispatcher reads only the ordered rule tags — retagging the rule-2 case of the verified pair refuses at its case path"
+        ( case v1PlanOf =<< pipelineModel selfUpdateBytes of
+            Just profile ->
+              let retagged =
+                    (v1SelfUpdateCase profile) {caseMatch = ChangeOtherMatch (v1ChangeOtherFacts profile)}
+                  plan = (v1Shared profile) {planCases = v1ChangeOtherCase profile :| [retagged]}
+               in selectWaspProfile plan == Left (mismatchReason (casePathAt 1) 1 rule1Label rule2Label :| [])
+            Nothing -> False
+        )
+    , check
+        "profile selection: swapping the two cases of the verified plan (recorded positions kept) refuses at both recorded case paths, sorted by path"
+        ( case v1PlanOf =<< pipelineModel selfUpdateBytes of
+            Just profile ->
+              let plan = (v1Shared profile) {planCases = v1SelfUpdateCase profile :| [v1ChangeOtherCase profile]}
+               in selectWaspProfile plan
+                    == Left
+                      ( mismatchReason (casePathAt 0) 1 rule1Label rule2Label
+                          :| [mismatchReason (casePathAt 1) 0 rule2Label rule1Label]
+                      )
+            Nothing -> False
+        )
+    , check
+        "profile selection: the dispatcher's diagnostics are anchored at exactly the plan's recorded guarantee and case paths"
+        ( ( case pipelineModel (encodeValue threeCaseValue) >>= rightMaybe . supportPlan of
+              Just plan ->
+                selectWaspProfile plan {planGuaranteePath = memberPath rootPath "relocated"}
+                  == Left (countReason ["relocated"] 3 :| [])
+              Nothing -> False
+          )
+            && ( case pipelineModel (encodeValue singletonRule2Value) >>= rightMaybe . supportPlan of
+                   Just plan ->
+                     case planCases plan of
+                       onlyCase :| [] ->
+                         selectWaspProfile plan {planCases = onlyCase {casePath = memberPath rootPath "relocated"} :| []}
+                           == Left (singletonRule2Reason ["relocated"] :| [])
+                       _ -> False
+                   Nothing -> False
+               )
+        )
+    , check
+        "profile selection: the capability sentence and the refusal shapes are pinned literally"
+        ( unsupportedReasonMessage (countReason [] 2)
+            == "Wasp Profile v0 lowers exactly one Rule-1 case and Wasp Profile v1 exactly the ordered Rule-1, Rule-2 case pair; this guarantee selects 2 cases"
+            && unsupportedReasonMessage (singletonRule2Reason [])
+              == "Wasp Profile v0 lowers exactly one Rule-1 case and Wasp Profile v1 exactly the ordered Rule-1, Rule-2 case pair; this guarantee selects one case, which matches rule 2 (bounded-self-update)"
+            && unsupportedReasonMessage (mismatchReason [] 1 rule1Label rule2Label)
+              == "Wasp Profile v0 lowers exactly one Rule-1 case and Wasp Profile v1 exactly the ordered Rule-1, Rule-2 case pair; case 1 matches rule 1 (change-other), but Profile v1 requires rule 2 (bounded-self-update) at position 1"
+        )
+    , check
+        ("profile selection: the refusal matrix covers its pinned " <> show (length refusalVariants) <> " sequences")
+        (length refusalVariants == 6)
+    ]
+      <> concatMap refusalChecks refusals
+  where
+    nspeValue = decodeValue nspeBytes
+    selfUpdateValue = decodeValue selfUpdateBytes
+    overCases mutate = overMember "guarantees" (overIndex 0 (overMember "cases" mutate))
+    singletonRule2Value = overCases (\cs -> toJSON (drop 1 (asList cs))) selfUpdateValue
+    duplicatedRule1Value = overCases (\cs -> toJSON (asList cs <> asList cs)) nspeValue
+    reorderedValue = overCases (\cs -> toJSON (reverse (asList cs))) selfUpdateValue
+    duplicatedRule2Value = overCases (\cs -> toJSON (drop 1 (asList cs) <> drop 1 (asList cs))) selfUpdateValue
+    threeCaseValue = overCases (\cs -> toJSON (asList cs <> drop 1 (asList cs))) selfUpdateValue
+    fourCaseValue = overCases (\cs -> toJSON (asList cs <> asList cs)) selfUpdateValue
+
+    refusalVariants :: [(String, Value, NonEmpty UnsupportedReason)]
+    refusalVariants =
+      [ ("a singleton rule-2 case", singletonRule2Value, singletonRule2Reason (casePathAt 0) :| [])
+      , ("two rule-1 cases", duplicatedRule1Value, mismatchReason (casePathAt 1) 1 rule1Label rule2Label :| [])
+      , ( "the reversed pair (rule 2 then rule 1)"
+        , reorderedValue
+        , mismatchReason (casePathAt 0) 0 rule2Label rule1Label :| [mismatchReason (casePathAt 1) 1 rule1Label rule2Label]
+        )
+      , ("two rule-2 cases", duplicatedRule2Value, mismatchReason (casePathAt 0) 0 rule2Label rule1Label :| [])
+      , ("three cases", threeCaseValue, countReason ["guarantees", "0"] 3 :| [])
+      , ("four cases", fourCaseValue, countReason ["guarantees", "0"] 4 :| [])
+      ]
+
+    refusalChecks (name, value, expected, evidence) =
+      [ check
+          ("profile selection: " <> name <> " is verifier-supported but refused by the dispatcher with its exact reasons, in path order")
+          ( case pipelineModel (encodeValue value) >>= rightMaybe . supportPlan of
+              Just plan -> selectWaspProfile plan == Left expected
+              Nothing -> False
+          )
+      , check
+          ("profile selection: " <> name <> " is refused by the public emitter with the same reasons")
+          (fmap renderWaspBundle (pipelineDocument (encodeValue value)) == Just (Left (WaspRenderingUnsupported expected)))
+      , check
+          ("profile selection: " <> name <> " — generate exits 3 and creates no root, staging, or backup")
+          ( refusalFresh evidence == Right (WaspUnsupported expected)
+              && waspSuccessExitCode (WaspUnsupported expected) == ExitFailure 3
+              && not (refusalFreshRootExists evidence)
+              && null (refusalFreshParentEntries evidence)
+          )
+      , check
+          ("profile selection: " <> name <> " — generate leaves an unrelated existing directory untouched")
+          ( refusalSentinel evidence == Right (WaspUnsupported expected)
+              && refusalSentinelFiles evidence == [("keep.txt", "keep\n")]
+          )
+      , check
+          ("profile selection: " <> name <> " — generate replaces nothing in an owned Profile-v0 root")
+          ( refusalOwnedV0 evidence == Right (WaspUnsupported expected)
+              && refusalOwnedV0Files evidence == bundleBytes baseBundle
+          )
+      , check
+          ("profile selection: " <> name <> " — generate replaces nothing in an owned Profile-v1 root")
+          ( refusalOwnedV1 evidence == Right (WaspUnsupported expected)
+              && refusalOwnedV1Files evidence == bundleBytes v1Bundle
+          )
+      , check
+          ("profile selection: " <> name <> " — check refuses with the same reasons and nothing else was created")
+          ( refusalCheck evidence == Right (WaspUnsupported expected)
+              && sort (refusalScratchEntries evidence) == ["owned-v0", "owned-v1", "parent", "sentinel", "variant.mir.json"]
+          )
+      , check
+          ("profile selection: " <> name <> " — generate and check against the destination trap still return the exit-3 UNSUPPORTED result: zero destination access (no resolution, no read-only inspection, no mutation)")
+          ( refusalTrapGenerate evidence == Right (WaspUnsupported expected)
+              && refusalTrapCheck evidence == Right (WaspUnsupported expected)
+          )
+      ]
+
+-- | The Profile-v1 plan of a model, when the shared gate and the
+-- dispatcher select it.
+v1PlanOf :: N.Model -> Maybe WaspProfileV1Plan
+v1PlanOf model = do
+  plan <- rightMaybe (supportPlan model)
+  case selectWaspProfile plan of
+    Right (ProfileV1Plan profile) -> Just profile
+    _ -> Nothing
+
+--------------------------------------------------------------------
+-- Group 11: the Profile-v1 plan-consumption inventory and materiality
+--------------------------------------------------------------------
+
+-- | Under Profile v1 the case position is rendered (the manifest's
+-- @case@ field, the specification and evidence comments), so it is
+-- consumed by both backends; every other case field keeps its
+-- Profile-v0 classification.
+v1CaseFieldInventory :: [(String, Consumer)]
+v1CaseFieldInventory =
+  [ ("casePosition", ConsumedByBoth)
+  , ("casePath", WaspGateDiagnostic)
+  , ("caseActionId", ConsumedByBoth)
+  , ("caseActionName", ConsumedByBoth)
+  , ("caseScopeParameterId", ConsumedByBoth)
+  , ("caseScopeParameterName", ConsumedByBoth)
+  , ("casePayloadParameterId", ConsumedByBoth)
+  , ("casePayloadParameterName", ConsumedByBoth)
+  , ("caseScopeBinding", WaspOnly)
+  , ("caseMatch", ConsumedByBoth)
+  ]
+
+-- | Under Profile v1 the rule-2 fact is rendered (the evidence
+-- comment's effect line and the manifest's @effectScopeBinding@), so
+-- it is consumed by both backends.
+v1BoundedSelfUpdateFieldInventory :: [(String, Consumer)]
+v1BoundedSelfUpdateFieldInventory =
+  [ ("selfUpdateEffectScopeBinding", ConsumedByBoth)
+  ]
+
+type V1FieldMutation = (String, WaspProfileV1Plan -> WaspProfileV1Plan, [(FilePath, Text)])
+
+onV1Shared :: (NspeSupportPlan -> NspeSupportPlan) -> WaspProfileV1Plan -> WaspProfileV1Plan
+onV1Shared mutate profile = profile {v1Shared = mutate (v1Shared profile)}
+
+onV1ChangeOther :: (NspeCasePlan -> NspeCasePlan) -> WaspProfileV1Plan -> WaspProfileV1Plan
+onV1ChangeOther mutate profile = profile {v1ChangeOtherCase = mutate (v1ChangeOtherCase profile)}
+
+onV1ChangeOtherFacts :: (ChangeOtherFacts -> ChangeOtherFacts) -> WaspProfileV1Plan -> WaspProfileV1Plan
+onV1ChangeOtherFacts mutate profile = profile {v1ChangeOtherFacts = mutate (v1ChangeOtherFacts profile)}
+
+onV1SelfUpdate :: (NspeCasePlan -> NspeCasePlan) -> WaspProfileV1Plan -> WaspProfileV1Plan
+onV1SelfUpdate mutate profile = profile {v1SelfUpdateCase = mutate (v1SelfUpdateCase profile)}
+
+onV1SelfUpdateFacts :: (BoundedSelfUpdateFacts -> BoundedSelfUpdateFacts) -> WaspProfileV1Plan -> WaspProfileV1Plan
+onV1SelfUpdateFacts mutate profile = profile {v1SelfUpdateFacts = mutate (v1SelfUpdateFacts profile)}
+
+v1PlanConsumptionChecks :: N.Model -> WaspBundle -> [Check]
+v1PlanConsumptionChecks selfUpdateModel v1Bundle =
+  case v1PlanOf selfUpdateModel of
+    Nothing -> [check "the two-case fixture yields a Profile-v1 plan (prerequisite)" False]
+    Just basePlan ->
+      [ check
+          ("the Profile-v1 plan-consumption inventory classifies every shared, per-case, rule-1, and rule-2 field (" <> show expectedCounts <> ")")
+          ( map length inventories == expectedCounts
+              && length (dedupe (map fst (concat inventories))) == sum expectedCounts
+              && map fst v1CaseFieldInventory == map fst caseFieldInventory
+              && map fst v1BoundedSelfUpdateFieldInventory == map fst boundedSelfUpdateFieldInventory
+          )
+      , check
+          "under Profile v1 the rule-2 fact and the case position are consumed by both backends, and the only gate-diagnostic field is the recorded path"
+          ( all ((== ConsumedByBoth) . snd) v1BoundedSelfUpdateFieldInventory
+              && lookup "casePosition" v1CaseFieldInventory == Just ConsumedByBoth
+              && [name | (name, WaspGateDiagnostic) <- concat inventories] == ["planGuaranteePath", "casePath"]
+              && null [name | (name, VerifierOnly) <- concat inventories]
+          )
+      , check
+          "every Profile-v1-rendered field has a field-specific mutation for both cases where it applies, and every mutation names an inventoried field"
+          ( let rendered =
+                  [ name
+                  | (name, consumer) <- concat inventories
+                  , consumer `elem` [ConsumedByBoth, WaspOnly]
+                  , name `notElem` gateOrConstantFields
+                  ]
+                mutated = dedupe [name | (name, _, _) <- v1FieldMutations]
+             in rendered `allElem` mutated
+                  && mutated `allElem` map fst (concat inventories)
+                  -- Every per-case field is mutated on the rule-2 case
+                  -- as well as on the rule-1 case.
+                  && all (`elem` mutated) [name | (name, consumer) <- v1CaseFieldInventory, consumer /= WaspGateDiagnostic, name /= "caseMatch"]
+          )
+      , check
+          "Profile v1: retagging the rule-2 case (caseMatch) causes deterministic refusal, never a rendered bundle"
+          ( selectWaspProfile
+              ( (v1Shared basePlan)
+                  { planCases =
+                      v1ChangeOtherCase basePlan
+                        :| [(v1SelfUpdateCase basePlan) {caseMatch = ChangeOtherMatch (v1ChangeOtherFacts basePlan)}]
+                  }
+              )
+              == Left (mismatchReason (casePathAt 1) 1 rule1Label rule2Label :| [])
+          )
+      , check
+          "Profile v1: the single-constructor absence level is rendered as evidence"
+          ( "authority absence level: Bottom" `Text.isInfixOf` textOf v1Bundle operationFile
+              && "\"absence\": { \"level\": \"Bottom\"" `Text.isInfixOf` textOf v1Bundle manifestFile
+          )
+      ]
+        <> map (runV1Mutation basePlan) v1FieldMutations
+  where
+    inventories =
+      [sharedFieldInventory, v1CaseFieldInventory, changeOtherFieldInventory, v1BoundedSelfUpdateFieldInventory]
+    expectedCounts = [21, 10, 3, 1]
+    allElem xs ys = all (`elem` ys) xs
+
+    runV1Mutation basePlan (name, mutate, fragments) =
+      check ("Profile v1 plan consumption: " <> name <> " → " <> concatMap (\(path, fragment) -> path <> ":" <> Text.unpack (Text.take 40 fragment) <> "; ") fragments) $
+        let mutated = renderBundleFromPlan (ProfileV1Plan (mutate basePlan))
+         in not (null fragments)
+              && all
+                ( \(path, fragment) ->
+                    fragment `Text.isInfixOf` textOf mutated path
+                      && not (fragment `Text.isInfixOf` textOf v1Bundle path)
+                )
+                fragments
+              && bundleBytes mutated /= bundleBytes v1Bundle
+              && map managedPath (waspBundleFiles mutated) == expectedInventory
+              && waspBundleProfile mutated == WaspProfileV1
+
+    rename located = located {sourcedValue = "Mutated"}
+    clientFile = "src/MainPage.tsx"
+
+    v1FieldMutations :: [V1FieldMutation]
+    v1FieldMutations =
+      -- The shared facts, rendered by the shared templates both
+      -- profiles use.
+      [ ( "planModelName"
+        , onV1Shared (\p -> p {planModelName = rename (planModelName p)})
+        , [ (manifestFile, "\"model\": \"Mutated\",")
+          , (specFile, "title: \"Mutated\",")
+          , (operationFile, "//   model: \"Mutated\"")
+          ]
+        )
+      , ( "planRelationId"
+        , onV1Shared (\p -> p {planRelationId = RelationId 7})
+        , [ (operationFile, "authority relation: \"Membership\" (relation 7)")
+          , (manifestFile, "\"authorityRelation\": { \"authored\": \"Membership\", \"position\": 7,")
+          ]
+        )
+      , ( "planRelationName"
+        , onV1Shared (\p -> p {planRelationName = rename (planRelationName p)})
+        , [ (operationFile, "authority relation: \"Mutated\" (relation 0)")
+          , (operationFile, "// SetRelation[\"Mutated\"](\"user\" = Actor, \"organization\" = Argument[\"organization\"]) payload Argument[\"newRole\"]: exactly the tuple read above.")
+          , (manifestFile, "\"authorityRelation\": { \"authored\": \"Mutated\", \"position\": 0, \"model\": \"MithrilAuthority\"")
+          ]
+        )
+      , ( "planSubjectEndpointId"
+        , onV1Shared (\p -> p {planSubjectEndpointId = EndpointId (RelationId 0) 5})
+        , [ (operationFile, "authority subject endpoint: \"user\" (endpoint 5 of relation 0)")
+          , (operationFile, "effect: SetRelation[\"Membership\"](endpoint \"user\" (endpoint 5) = Actor,")
+          , (manifestFile, "\"subjectEndpoint\": { \"authored\": \"user\", \"position\": 5, \"field\": \"subject\"")
+          , (manifestFile, "\"effectSubject\": { \"endpoint\": \"user\", \"endpointPosition\": 5, \"term\": \"Actor\" }")
+          ]
+        )
+      , ( "planSubjectEndpointName"
+        , onV1Shared (\p -> p {planSubjectEndpointName = rename (planSubjectEndpointName p)})
+        , [ (operationFile, "authority subject endpoint: \"Mutated\" (endpoint 0 of relation 0)")
+          , (operationFile, "effect: SetRelation[\"Membership\"](endpoint \"Mutated\" (endpoint 0) = Actor,")
+          , (manifestFile, "\"subjectEndpoint\": { \"authored\": \"Mutated\", \"position\": 0, \"field\": \"subject\"")
+          , (manifestFile, "\"effectSubject\": { \"endpoint\": \"Mutated\", \"endpointPosition\": 0, \"term\": \"Actor\" }")
+          , (schemaFile, "subjectId for the subject endpoint \"Mutated\" (endpoint 0)")
+          ]
+        )
+      , ( "planSubjectEntityId"
+        , onV1Shared (\p -> p {planSubjectEntityId = EntityId 5})
+        , [ (operationFile, "entity \"User\" (entity 5)")
+          , (manifestFile, "\"subjectEntity\": { \"authored\": \"User\", \"position\": 5, \"model\": \"MithrilSubject\" }")
+          , (schemaFile, "the subject entity \"User\" (entity 5)")
+          ]
+        )
+      , ( "planSubjectEntityName"
+        , onV1Shared (\p -> p {planSubjectEntityName = rename (planSubjectEntityName p)})
+        , [ (operationFile, "entity \"Mutated\" (entity 0)")
+          , (operationFile, "parameter 0: \"target\" : EntityRef \"Mutated\"")
+          , (operationFile, "// entity MithrilSubject, authored \"Mutated\").")
+          , (manifestFile, "\"subjectEntity\": { \"authored\": \"Mutated\", \"position\": 0, \"model\": \"MithrilSubject\" }")
+          ]
+        )
+      , ( "planScopeEndpointId"
+        , onV1Shared (\p -> p {planScopeEndpointId = EndpointId (RelationId 0) 6})
+        , [ (operationFile, "authority scope endpoint: \"organization\" (endpoint 6 of relation 0)")
+          , (manifestFile, "\"scopeEndpoint\": { \"authored\": \"organization\", \"position\": 6, \"field\": \"scope\"")
+          ]
+        )
+      , ( "planScopeEndpointName"
+        , onV1Shared (\p -> p {planScopeEndpointName = rename (planScopeEndpointName p)})
+        , [ (operationFile, "authority scope endpoint: \"Mutated\" (endpoint 1 of relation 0)")
+          , (operationFile, "// Lookup[\"Membership\"](\"user\" = Actor, \"Mutated\" = Argument[\"organization\"]):")
+          , (manifestFile, "\"scopeEndpoint\": { \"authored\": \"Mutated\", \"position\": 1, \"field\": \"scope\"")
+          ]
+        )
+      , ( "planScopeEntityId"
+        , onV1Shared (\p -> p {planScopeEntityId = EntityId 6})
+        , [ (operationFile, "entity \"Organization\" (entity 6)")
+          , (manifestFile, "\"scopeEntity\": { \"authored\": \"Organization\", \"position\": 6, \"model\": \"MithrilScope\" }")
+          ]
+        )
+      , ( "planScopeEntityName"
+        , onV1Shared (\p -> p {planScopeEntityName = rename (planScopeEntityName p)})
+        , [ (operationFile, "entity \"Mutated\" (entity 1)")
+          , (operationFile, "parameter 1: \"organization\" : EntityRef \"Mutated\"")
+          , (operationFile, "parameter 0: \"organization\" : EntityRef \"Mutated\"")
+          , (operationFile, "// The self-update action's arguments: scope carries \"organization\" : EntityRef \"Mutated\" and")
+          , (manifestFile, "\"scopeEntity\": { \"authored\": \"Mutated\", \"position\": 1, \"model\": \"MithrilScope\" }")
+          ]
+        )
+      , ( "planEnumId"
+        , onV1Shared (\p -> p {planEnumId = EnumId 3})
+        , [ (operationFile, "authority payload order: enum \"MembershipRole\" (enum 3)")
+          , (operationFile, "\"Member\" (value 0 of enum 3)")
+          , (manifestFile, "\"payloadEnum\": { \"authored\": \"MembershipRole\", \"position\": 3, \"enum\": \"MithrilPayload\" }")
+          ]
+        )
+      , ( "planEnumName"
+        , onV1Shared (\p -> p {planEnumName = rename (planEnumName p)})
+        , [ (operationFile, "authority payload order: enum \"Mutated\" (enum 0)")
+          , (operationFile, "parameter 2: \"newRole\" : Enum \"Mutated\"")
+          , (operationFile, "parameter 1: \"newRole\" : Enum \"Mutated\"")
+          , (operationFile, "allow policy: LessOrEqual[order optional \"Mutated\", absence as bottom](Some(Argument[\"newRole\"])")
+          , (manifestFile, "\"payloadEnum\": { \"authored\": \"Mutated\", \"position\": 0, \"enum\": \"MithrilPayload\" }")
+          ]
+        )
+      , ( "planEnumMembers"
+        , onV1Shared (\p -> p {planEnumMembers = onIndex 0 (\m -> m {planMemberId = EnumValueId (EnumId 0) 9}) (planEnumMembers p)})
+        , [ (operationFile, "type Payload = \"Value9\" | \"Value1\";")
+          , (schemaFile, "enum MithrilPayload {\n  Value9\n  Value1\n}")
+          , (manifestFile, "\"members\": [{ \"authored\": \"Member\", \"position\": 9, \"value\": \"Value9\" }")
+          ]
+        )
+      , ( "planEnumMembers"
+        , onV1Shared (\p -> p {planEnumMembers = onIndex 1 (\m -> m {planMemberName = rename (planMemberName m)}) (planEnumMembers p)})
+        , [ (schemaFile, "Value1 = \"Mutated\"")
+          , (manifestFile, "{ \"authored\": \"Mutated\", \"position\": 1, \"value\": \"Value1\" }]")
+          ]
+        )
+      , ( "planEnumMembers"
+        , onV1Shared (\p -> p {planEnumMembers = reverse (planEnumMembers p)})
+        , [ (operationFile, "type Payload = \"Value1\" | \"Value0\";")
+          , (schemaFile, "enum MithrilPayload {\n  Value1\n  Value0\n}")
+          ]
+        )
+      , ( "planRanking"
+        , onV1Shared (\p -> p {planRanking = [r {planRankedRank = planRankedRank r + 5} | r <- planRanking p]})
+        , [ (operationFile, "const payloadRank: Readonly<Record<Payload, number>> = { \"Value0\": 5, \"Value1\": 6 };")
+          , (manifestFile, "\"ranking\": [{ \"rank\": 5, \"authored\": \"Member\", \"position\": 0, \"value\": \"Value0\" }, { \"rank\": 6,")
+          ]
+        )
+      , ( "planRanking"
+        , onV1Shared (\p -> p {planRanking = onIndex 0 (\r -> r {planRankedId = EnumValueId (EnumId 0) 9}) (planRanking p)})
+        , [ (operationFile, "const payloadRank: Readonly<Record<Payload, number>> = { \"Value9\": 0, \"Value1\": 1 };")
+          , (manifestFile, "\"ranking\": [{ \"rank\": 0, \"authored\": \"Member\", \"position\": 9, \"value\": \"Value9\" }")
+          ]
+        )
+      , ( "planRanking"
+        , onV1Shared (\p -> p {planRanking = onIndex 0 (\r -> r {planRankedName = "Mutated"}) (planRanking p)})
+        , [ (operationFile, "materialized authority ranking: rank 0 = \"Mutated\" (value 0 of enum 0)")
+          , (manifestFile, "\"ranking\": [{ \"rank\": 0, \"authored\": \"Mutated\",")
+          ]
+        )
+      , ( "planRanking"
+        , onV1Shared (\p -> p {planRanking = reverse (planRanking p)})
+        , [ (operationFile, "const payloadRank: Readonly<Record<Payload, number>> = { \"Value1\": 1, \"Value0\": 0 };")
+          , (manifestFile, "\"ranking\": [{ \"rank\": 1, \"authored\": \"Admin\", \"position\": 1, \"value\": \"Value1\" }, { \"rank\": 0,")
+          ]
+        )
+      , ( "planRankBottom"
+        , onV1Shared (\p -> p {planRankBottom = (planRankBottom p) {planRankedRank = 4}})
+        , [ (operationFile, "materialized bottom: rank 4 = \"Member\" (value 0 of enum 0)")
+          , (manifestFile, "\"bottom\": { \"rank\": 4, \"authored\": \"Member\"")
+          ]
+        )
+      , ( "planRankBottom"
+        , onV1Shared (\p -> p {planRankBottom = (planRankBottom p) {planRankedName = "Mutated"}})
+        , [ (operationFile, "materialized bottom: rank 0 = \"Mutated\" (value 0 of enum 0)")
+          , (manifestFile, "\"bottom\": { \"rank\": 0, \"authored\": \"Mutated\"")
+          ]
+        )
+      , ( "planRankBottom"
+        , onV1Shared (\p -> p {planRankBottom = (planRankBottom p) {planRankedId = EnumValueId (EnumId 0) 9}})
+        , [ (operationFile, "materialized bottom: rank 0 = \"Member\" (value 9 of enum 0)")
+          , (manifestFile, "\"bottom\": { \"rank\": 0, \"authored\": \"Member\", \"position\": 9, \"value\": \"Value9\" }")
+          ]
+        )
+      , ( "planRankTop"
+        , onV1Shared (\p -> p {planRankTop = (planRankTop p) {planRankedRank = 7}})
+        , [ (operationFile, "const floorRank = 7;")
+          , (operationFile, "privilege floor: rank 7 = \"Admin\" (value 1 of enum 0)")
+          , (manifestFile, "\"floor\": { \"rank\": 7, \"authored\": \"Admin\"")
+          ]
+        )
+      , ( "planRankTop"
+        , onV1Shared (\p -> p {planRankTop = (planRankTop p) {planRankedName = "Mutated"}})
+        , [ (operationFile, "privilege floor: rank 1 = \"Mutated\" (value 1 of enum 0)")
+          , (operationFile, "Some(Enum[\"MembershipRole\".\"Mutated\"])")
+          , (operationFile, "the privilege floor is the rank of Value1 (\"Mutated\")")
+          , (manifestFile, "\"floor\": { \"rank\": 1, \"authored\": \"Mutated\"")
+          ]
+        )
+      , ( "planRankTop"
+        , onV1Shared (\p -> p {planRankTop = (planRankTop p) {planRankedId = EnumValueId (EnumId 0) 9}})
+        , [ (operationFile, "the privilege floor is the rank of Value9 (\"Admin\")")
+          , (manifestFile, "\"floor\": { \"rank\": 1, \"authored\": \"Admin\", \"position\": 9, \"value\": \"Value9\" }")
+          ]
+        )
+      , ( "planAbsentRank"
+        , onV1Shared (\p -> p {planAbsentRank = -3})
+        , [ (operationFile, "const absentRank = -3;")
+          , (operationFile, "absent rank: -3")
+          , (manifestFile, "\"absence\": { \"level\": \"Bottom\", \"rank\": -3 }")
+          ]
+        )
+      , -- The rule-1 case of the pair.
+        ( "casePosition"
+        , onV1ChangeOther (\c -> c {casePosition = 3})
+        , [ (operationFile, "case 3: rule 1 (change-other)")
+          , (operationFile, "(action 4, case 3), lowered as the Wasp Action")
+          , (specFile, "\"Membership.changeRole\" (case 3), and")
+          , (manifestFile, "{ \"case\": 3, \"rule\": \"rule 1 (change-other)\"")
+          ]
+        )
+      , ( "caseActionId"
+        , onV1ChangeOther (\c -> c {caseActionId = ActionId 9})
+        , [ (operationFile, "case action: \"Membership.changeRole\" (action 9)")
+          , (manifestFile, "\"rule\": \"rule 1 (change-other)\", \"authored\": \"Membership.changeRole\", \"position\": 9,")
+          ]
+        )
+      , ( "caseActionName"
+        , onV1ChangeOther (\c -> c {caseActionName = rename (caseActionName c)})
+        , [ (operationFile, "case action: \"Mutated\" (action 4)")
+          , (manifestFile, "\"rule\": \"rule 1 (change-other)\", \"authored\": \"Mutated\", \"position\": 4, \"operation\": \"mithrilCaseAction\"")
+          , (specFile, "\"Mutated\" (case 0), and")
+          , (clientFile, "case action \\\"Mutated\\\", and")
+          ]
+        )
+      , ( "changeOtherSubjectParameterId"
+        , onV1ChangeOtherFacts (\f -> f {changeOtherSubjectParameterId = ParameterId (ActionId 4) 7})
+        , [ (operationFile, "parameter 7: \"target\" : EntityRef \"User\"")
+          , (manifestFile, "{ \"role\": \"subject\", \"authored\": \"target\", \"position\": 7, \"argument\": \"subject\" }")
+          ]
+        )
+      , ( "changeOtherSubjectParameterName"
+        , onV1ChangeOtherFacts (\f -> f {changeOtherSubjectParameterName = rename (changeOtherSubjectParameterName f)})
+        , [ (operationFile, "parameter 0: \"Mutated\" : EntityRef \"User\"")
+          , (operationFile, "subject carries the parameter \"Mutated\",")
+          , (manifestFile, "{ \"role\": \"subject\", \"authored\": \"Mutated\", \"position\": 0, \"argument\": \"subject\" }")
+          ]
+        )
+      , ( "caseScopeParameterId"
+        , onV1ChangeOther (\c -> c {caseScopeParameterId = ParameterId (ActionId 4) 8})
+        , [ (operationFile, "parameter 8: \"organization\" : EntityRef \"Organization\"")
+          , (manifestFile, "{ \"role\": \"scope\", \"authored\": \"organization\", \"position\": 8, \"argument\": \"scope\" }")
+          ]
+        )
+      , ( "caseScopeParameterName"
+        , onV1ChangeOther (\c -> c {caseScopeParameterName = rename (caseScopeParameterName c)})
+        , [ (operationFile, "parameter 1: \"Mutated\" : EntityRef \"Organization\"")
+          , (operationFile, "//   scope carries the parameter \"Mutated\",\n//   payload carries the parameter \"newRole\";")
+          , (manifestFile, "{ \"role\": \"scope\", \"authored\": \"Mutated\", \"position\": 1, \"argument\": \"scope\" }")
+          ]
+        )
+      , ( "casePayloadParameterId"
+        , onV1ChangeOther (\c -> c {casePayloadParameterId = ParameterId (ActionId 4) 9})
+        , [ (operationFile, "parameter 9: \"newRole\" : Enum \"MembershipRole\"")
+          , (manifestFile, "{ \"role\": \"payload\", \"authored\": \"newRole\", \"position\": 9, \"argument\": \"payload\" }")
+          ]
+        )
+      , ( "casePayloadParameterName"
+        , onV1ChangeOther (\c -> c {casePayloadParameterName = rename (casePayloadParameterName c)})
+        , [ (operationFile, "parameter 2: \"Mutated\" : Enum \"MembershipRole\"")
+          , (operationFile, "//   payload carries the parameter \"Mutated\";")
+          , (manifestFile, "{ \"role\": \"payload\", \"authored\": \"Mutated\", \"position\": 2, \"argument\": \"payload\" }")
+          ]
+        )
+      , ( "changeOtherEffectBindings"
+        , onV1ChangeOtherFacts (\f -> f {changeOtherEffectBindings = onIndex 0 (\b -> b {planBindingEndpointId = EndpointId (RelationId 0) 7}) (changeOtherEffectBindings f)})
+        , [ (operationFile, "effect: SetRelation[\"Membership\"](endpoint \"user\" (endpoint 7) = Argument \"target\" (parameter 0)")
+          , (manifestFile, "\"effectBindings\": [{ \"endpoint\": \"user\", \"endpointPosition\": 7, \"parameter\": \"target\", \"parameterPosition\": 0 }")
+          ]
+        )
+      , ( "changeOtherEffectBindings"
+        , onV1ChangeOtherFacts (\f -> f {changeOtherEffectBindings = onIndex 1 (\b -> b {planBindingEndpointName = "Mutated", planBindingParameterName = "Mutated2"}) (changeOtherEffectBindings f)})
+        , [ (operationFile, "endpoint \"Mutated\" (endpoint 1) = Argument \"Mutated2\" (parameter 1)) payload Argument[\"newRole\"]")
+          , (manifestFile, "{ \"endpoint\": \"Mutated\", \"endpointPosition\": 1, \"parameter\": \"Mutated2\", \"parameterPosition\": 1 }]")
+          ]
+        )
+      , ( "caseScopeBinding"
+        , onV1ChangeOther (\c -> c {caseScopeBinding = (caseScopeBinding c) {planBindingEndpointId = EndpointId (RelationId 0) 7}})
+        , [ (operationFile, "case scope binding: endpoint \"organization\" (endpoint 7) = Argument \"organization\" (parameter 1)")
+          , (manifestFile, "\"caseScopeBinding\": { \"endpoint\": \"organization\", \"endpointPosition\": 7, \"parameter\": \"organization\", \"parameterPosition\": 1 }")
+          ]
+        )
+      , -- The rule-2 case of the pair.
+        ( "casePosition"
+        , onV1SelfUpdate (\c -> c {casePosition = 7})
+        , [ (operationFile, "case 7: rule 2 (bounded-self-update)")
+          , (operationFile, "(action 5, case 7), lowered as the Wasp Action")
+          , (specFile, "\"Membership.changeOwnRole\" (case 7).")
+          , (manifestFile, "{ \"case\": 7, \"rule\": \"rule 2 (bounded-self-update)\"")
+          ]
+        )
+      , ( "caseActionId"
+        , onV1SelfUpdate (\c -> c {caseActionId = ActionId 9})
+        , [ (operationFile, "case action: \"Membership.changeOwnRole\" (action 9)")
+          , (operationFile, "\"Membership.changeOwnRole\" (action 9, case 1), lowered as the Wasp Action")
+          , (manifestFile, "\"rule\": \"rule 2 (bounded-self-update)\", \"authored\": \"Membership.changeOwnRole\", \"position\": 9,")
+          ]
+        )
+      , ( "caseActionName"
+        , onV1SelfUpdate (\c -> c {caseActionName = rename (caseActionName c)})
+        , [ (operationFile, "case action: \"Mutated\" (action 5)")
+          , (manifestFile, "\"rule\": \"rule 2 (bounded-self-update)\", \"authored\": \"Mutated\", \"position\": 5, \"operation\": \"mithrilSelfUpdateAction\"")
+          , (specFile, "\"Mutated\" (case 1).")
+          , (clientFile, "bounded self-update NoSelfPrivilegeEscalation case action \\\"Mutated\\\".")
+          ]
+        )
+      , ( "caseScopeParameterId"
+        , onV1SelfUpdate (\c -> c {caseScopeParameterId = ParameterId (ActionId 5) 8})
+        , [ (operationFile, "parameter 8: \"organization\" : EntityRef \"Organization\"")
+          , (manifestFile, "{ \"role\": \"scope\", \"authored\": \"organization\", \"position\": 8, \"argument\": \"scope\" }")
+          ]
+        )
+      , ( "caseScopeParameterName"
+        , onV1SelfUpdate (\c -> c {caseScopeParameterName = rename (caseScopeParameterName c)})
+        , [ (operationFile, "parameter 0: \"Mutated\" : EntityRef \"Organization\"")
+          , (operationFile, "// The self-update action's arguments: scope carries \"Mutated\" : EntityRef \"Organization\" and")
+          , (operationFile, "allow policy: LessOrEqual[order optional \"MembershipRole\", absence as bottom](Some(Argument[\"newRole\"]), Lookup[\"Membership\"](\"user\" = Actor, \"organization\" = Argument[\"Mutated\"]))")
+          , (manifestFile, "{ \"role\": \"scope\", \"authored\": \"Mutated\", \"position\": 0, \"argument\": \"scope\" }")
+          ]
+        )
+      , ( "casePayloadParameterId"
+        , onV1SelfUpdate (\c -> c {casePayloadParameterId = ParameterId (ActionId 5) 9})
+        , [ (operationFile, "parameter 9: \"newRole\" : Enum \"MembershipRole\"")
+          , (manifestFile, "{ \"role\": \"payload\", \"authored\": \"newRole\", \"position\": 9, \"argument\": \"payload\" }")
+          ]
+        )
+      , ( "casePayloadParameterName"
+        , onV1SelfUpdate (\c -> c {casePayloadParameterName = rename (casePayloadParameterName c)})
+        , [ (operationFile, "parameter 1: \"Mutated\" : Enum \"MembershipRole\"")
+          , (operationFile, "// LessOrEqual(Some(Argument[\"Mutated\"]), actor authority): the requested")
+          , (operationFile, "allow policy: LessOrEqual[order optional \"MembershipRole\", absence as bottom](Some(Argument[\"Mutated\"])")
+          , (manifestFile, "{ \"role\": \"payload\", \"authored\": \"Mutated\", \"position\": 1, \"argument\": \"payload\" }")
+          ]
+        )
+      , ( "caseScopeBinding"
+        , onV1SelfUpdate (\c -> c {caseScopeBinding = (caseScopeBinding c) {planBindingEndpointId = EndpointId (RelationId 0) 7}})
+        , [ (operationFile, "case scope binding: endpoint \"organization\" (endpoint 7) = Argument \"organization\" (parameter 0)")
+          , (manifestFile, "\"caseScopeBinding\": { \"endpoint\": \"organization\", \"endpointPosition\": 7, \"parameter\": \"organization\", \"parameterPosition\": 0 }")
+          ]
+        )
+      , ( "caseScopeBinding"
+        , onV1SelfUpdate (\c -> c {caseScopeBinding = (caseScopeBinding c) {planBindingParameterId = ParameterId (ActionId 5) 8}})
+        , [ (operationFile, "case scope binding: endpoint \"organization\" (endpoint 1) = Argument \"organization\" (parameter 8)")
+          , (manifestFile, "\"caseScopeBinding\": { \"endpoint\": \"organization\", \"endpointPosition\": 1, \"parameter\": \"organization\", \"parameterPosition\": 8 }")
+          ]
+        )
+      , ( "caseScopeBinding"
+        , onV1SelfUpdate (\c -> c {caseScopeBinding = (caseScopeBinding c) {planBindingEndpointName = "Mutated", planBindingParameterName = "Mutated2"}})
+        , [ (operationFile, "case scope binding: endpoint \"Mutated\" (endpoint 1) = Argument \"Mutated2\" (parameter 0)")
+          , (manifestFile, "\"caseScopeBinding\": { \"endpoint\": \"Mutated\", \"endpointPosition\": 1, \"parameter\": \"Mutated2\", \"parameterPosition\": 0 }")
+          ]
+        )
+      , ( "selfUpdateEffectScopeBinding"
+        , onV1SelfUpdateFacts (\f -> f {selfUpdateEffectScopeBinding = (selfUpdateEffectScopeBinding f) {planBindingEndpointId = EndpointId (RelationId 0) 7}})
+        , [ (operationFile, "= Actor, endpoint \"organization\" (endpoint 7) = Argument \"organization\" (parameter 0)) payload Argument[\"newRole\"]")
+          , (manifestFile, "\"effectScopeBinding\": { \"endpoint\": \"organization\", \"endpointPosition\": 7, \"parameter\": \"organization\", \"parameterPosition\": 0 }")
+          ]
+        )
+      , ( "selfUpdateEffectScopeBinding"
+        , onV1SelfUpdateFacts (\f -> f {selfUpdateEffectScopeBinding = (selfUpdateEffectScopeBinding f) {planBindingParameterId = ParameterId (ActionId 5) 8}})
+        , [ (operationFile, "= Actor, endpoint \"organization\" (endpoint 1) = Argument \"organization\" (parameter 8)) payload Argument[\"newRole\"]")
+          , (manifestFile, "\"effectScopeBinding\": { \"endpoint\": \"organization\", \"endpointPosition\": 1, \"parameter\": \"organization\", \"parameterPosition\": 8 }")
+          ]
+        )
+      , ( "selfUpdateEffectScopeBinding"
+        , onV1SelfUpdateFacts (\f -> f {selfUpdateEffectScopeBinding = (selfUpdateEffectScopeBinding f) {planBindingEndpointName = "Mutated", planBindingParameterName = "Mutated2"}})
+        , [ (operationFile, "= Actor, endpoint \"Mutated\" (endpoint 1) = Argument \"Mutated2\" (parameter 0)) payload Argument[\"newRole\"]")
+          , (manifestFile, "\"effectScopeBinding\": { \"endpoint\": \"Mutated\", \"endpointPosition\": 1, \"parameter\": \"Mutated2\", \"parameterPosition\": 0 }")
+          ]
+        )
+      ]
+
+--------------------------------------------------------------------
+-- Group 12: renamed models under Profile v1
+--------------------------------------------------------------------
+
+-- | The rename variant extended by a bounded self-update action and
+-- its case, built from the variant's own authored names (the scope
+-- entity, the enum, the relation, and its scope and payload
+-- parameter names) — the in-memory Profile-v1 counterpart of every
+-- committed rename fixture.
+withSelfUpdateCase :: RenameVariant -> Value -> Value
+withSelfUpdateCase variant value =
+  case variantParameters variant of
+    [_, scopeParam, payloadParam] ->
+      let newName = variantAction variant <> "Own"
+          argument name = object ["kind" .= ("Argument" :: Text), "name" .= name]
+          newAction =
+            object
+              [ "name" .= newName
+              , "parameters"
+                  .= [ object ["name" .= scopeParam, "type" .= object ["kind" .= ("EntityRef" :: Text), "entity" .= variantScopeEntity variant]]
+                     , object ["name" .= payloadParam, "type" .= object ["kind" .= ("Enum" :: Text), "enum" .= variantEnum variant]]
+                     ]
+              , "principalMode" .= ("AuthenticatedOnly" :: Text)
+              , "classification" .= ("Mutation" :: Text)
+              , "allow"
+                  .= object
+                    [ "kind" .= ("LessOrEqual" :: Text)
+                    , "left" .= object ["kind" .= ("Some" :: Text), "value" .= argument payloadParam]
+                    , "right"
+                        .= object
+                          [ "kind" .= ("Lookup" :: Text)
+                          , "relation" .= variantRelation variant
+                          , "endpoints" .= [object ["kind" .= ("Actor" :: Text)], argument scopeParam]
+                          ]
+                    ]
+              , "effect"
+                  .= object
+                    [ "kind" .= ("SetRelation" :: Text)
+                    , "relation" .= variantRelation variant
+                    , "endpoints" .= [object ["kind" .= ("Actor" :: Text)], argument scopeParam]
+                    , "payload" .= argument payloadParam
+                    ]
+              , "result" .= object ["kind" .= ("Done" :: Text)]
+              ]
+          newCase = object ["action" .= newName, "scope" .= [argument scopeParam]]
+       in overMember "guarantees" (overIndex 0 (overMember "cases" (\cs -> toJSON (asList cs <> [newCase]))))
+            (overMember "actions" (\as -> toJSON (asList as <> [newAction])) value)
+    _ -> value
+
+v1RenamedModelChecks :: WaspBundle -> IO [Check]
+v1RenamedModelChecks v1Bundle = do
+  variantChecks <- forM renameVariants $ \variant -> do
+    bytes <- ByteString.readFile (renameDirectoryPath </> variantName variant <> ".mir.json")
+    let extended = encodeValue (withSelfUpdateCase variant (decodeValue bytes))
+        newName = variantAction variant <> "Own"
+    pure $ case fmap renderWaspBundle (pipelineDocument extended) of
+      Just (Right bundle) ->
+        let manifest = textOf bundle manifestFile
+            summary = waspBundleSummary bundle
+            (scopeParam, payloadParam) =
+              case variantParameters variant of
+                [_, scopeName, payloadName] -> (scopeName, payloadName)
+                _ -> ("", "")
+         in [ check
+                ("Profile v1 renamed model " <> variantName variant <> ": renders as Profile v1 with the fixed inventory, operations, and routes")
+                ( waspBundleProfile bundle == WaspProfileV1
+                    && map managedPath (waspBundleFiles bundle) == expectedInventory
+                    && summaryProfile summary == WaspProfileV1
+                    && map operationName (NonEmpty.toList (summaryOperations summary)) == ["mithrilCaseAction", "mithrilSelfUpdateAction"]
+                    && map operationRoute (NonEmpty.toList (summaryOperations summary)) == ["/operations/mithril-case-action", "/operations/mithril-self-update-action"]
+                    && map operationCaseAction (NonEmpty.toList (summaryOperations summary)) == [variantAction variant, newName]
+                    && map operationCasePosition (NonEmpty.toList (summaryOperations summary)) == [0, 1]
+                    && summaryModelName summary == variantModel variant
+                )
+            , check
+                ("Profile v1 renamed model " <> variantName variant <> ": the manifest states both authored actions and their parameter mappings")
+                ( all
+                    (`Text.isInfixOf` manifest)
+                    [ "\"formatVersion\": \"1\","
+                    , "\"profile\": \"wasp-confinement-profile-v1\","
+                    , "{ \"case\": 0, \"rule\": \"rule 1 (change-other)\", \"authored\": " <> jsStringLiteral (variantAction variant) <> ", \"position\": 4, \"operation\": \"mithrilCaseAction\""
+                    , "{ \"case\": 1, \"rule\": \"rule 2 (bounded-self-update)\", \"authored\": " <> jsStringLiteral newName <> ", \"position\": 5, \"operation\": \"mithrilSelfUpdateAction\""
+                    , "\"parameters\": [{ \"role\": \"scope\", \"authored\": " <> jsStringLiteral scopeParam <> ", \"position\": 0, \"argument\": \"scope\" }, { \"role\": \"payload\", \"authored\": " <> jsStringLiteral payloadParam <> ", \"position\": 1, \"argument\": \"payload\" }]"
+                    , "\"effectSubject\": { \"endpoint\": " <> jsStringLiteral (variantSubjectEndpoint variant) <> ", \"endpointPosition\": 0, \"term\": \"Actor\" }"
+                    , "\"effectScopeBinding\": { \"endpoint\": " <> jsStringLiteral (variantScopeEndpoint variant) <> ", \"endpointPosition\": 1, \"parameter\": " <> jsStringLiteral scopeParam <> ", \"parameterPosition\": 0 }"
+                    ]
+                )
+            , check
+                ("Profile v1 renamed model " <> variantName variant <> ": authored names never reach code in either operation (comment-stripped files equal the base Profile-v1 bundle's)")
+                ( codeLines bundle schemaFile == codeLines v1Bundle schemaFile
+                    && codeLines bundle specFile == codeLines v1Bundle specFile
+                    && ( if variantCodeDiffers variant
+                           then
+                             filter (not . ("const payloadRank" `Text.isPrefixOf`)) (codeLines bundle operationFile)
+                               == filter (not . ("const payloadRank" `Text.isPrefixOf`)) (codeLines v1Bundle operationFile)
+                               && codeLines bundle operationFile /= codeLines v1Bundle operationFile
+                           else codeLines bundle operationFile == codeLines v1Bundle operationFile
+                       )
+                )
+            ]
+      _ -> [check ("Profile v1 renamed model " <> variantName variant <> ": renders through the public pipeline") False]
+  pure (concat variantChecks)
+
+-- | The hostile-name regression of Profile v1: every authored name of
+-- the shared facts and of both cases replaced by text carrying
+-- comment terminators, line breaks, quotes, backslashes, U+2028, and
+-- ESC; the rendered bundle keeps every line count, every code line,
+-- the manifest's validity, and the inventory.
+v1HostileNameChecks :: N.Model -> WaspBundle -> [Check]
+v1HostileNameChecks selfUpdateModel v1Bundle =
+  [ check
+      "Profile v1: hostile plan names in the shared facts and both cases cannot inject syntax"
+      ( case v1PlanOf selfUpdateModel of
+          Just profile ->
+            let hostile located = located {sourcedValue = "Evil\n*/ } eval(1); // \"\\ \x2028 \ESC"}
+                hostileBinding b = b {planBindingEndpointName = "Ev\nil", planBindingParameterName = "Ev\nil"}
+                hostileCase c =
+                  c
+                    { caseActionName = hostile (caseActionName c)
+                    , caseScopeParameterName = hostile (caseScopeParameterName c)
+                    , casePayloadParameterName = hostile (casePayloadParameterName c)
+                    , caseScopeBinding = hostileBinding (caseScopeBinding c)
+                    }
+                hostilePlan =
+                  onV1SelfUpdateFacts (\f -> f {selfUpdateEffectScopeBinding = hostileBinding (selfUpdateEffectScopeBinding f)})
+                    ( onV1SelfUpdate hostileCase
+                        ( onV1ChangeOtherFacts
+                            ( \f ->
+                                f
+                                  { changeOtherSubjectParameterName = hostile (changeOtherSubjectParameterName f)
+                                  , changeOtherEffectBindings = map hostileBinding (changeOtherEffectBindings f)
+                                  }
+                            )
+                            ( onV1ChangeOther hostileCase
+                                ( onV1Shared
+                                    ( \plan ->
+                                        plan
+                                          { planModelName = hostile (planModelName plan)
+                                          , planRelationName = hostile (planRelationName plan)
+                                          , planSubjectEndpointName = hostile (planSubjectEndpointName plan)
+                                          , planScopeEndpointName = hostile (planScopeEndpointName plan)
+                                          , planSubjectEntityName = hostile (planSubjectEntityName plan)
+                                          , planScopeEntityName = hostile (planScopeEntityName plan)
+                                          , planEnumName = hostile (planEnumName plan)
+                                          , planEnumMembers = [m {planMemberName = hostile (planMemberName m)} | m <- planEnumMembers plan]
+                                          , planRanking = [r {planRankedName = "Ev\nil"} | r <- planRanking plan]
+                                          , planRankBottom = (planRankBottom plan) {planRankedName = "Ev\nil"}
+                                          , planRankTop = (planRankTop plan) {planRankedName = "Ev\nil"}
+                                          }
+                                    )
+                                    profile
+                                )
+                            )
+                        )
+                    )
+                hostileBundle = renderBundleFromPlan (ProfileV1Plan hostilePlan)
+                sameLineCount path = length (Text.lines (textOf hostileBundle path)) == length (Text.lines (textOf v1Bundle path))
+             in all sameLineCount expectedInventory
+                  && codeLines hostileBundle schemaFile == codeLines v1Bundle schemaFile
+                  && codeLines hostileBundle specFile == codeLines v1Bundle specFile
+                  && codeLines hostileBundle operationFile == codeLines v1Bundle operationFile
+                  && (Aeson.decodeStrict (fileOf hostileBundle manifestFile) :: Maybe Value) /= Nothing
+                  && map managedPath (waspBundleFiles hostileBundle) == expectedInventory
+                  && waspBundleProfile hostileBundle == WaspProfileV1
+          Nothing -> False
+      )
+  ]
+
+--------------------------------------------------------------------
+-- Group 13: pure confinement under Profile v1 and across profiles
+--------------------------------------------------------------------
+
+v1MarkerViolation :: ConfinementViolation
+v1MarkerViolation =
+  ConfinementViolation
+    (Text.pack markerFile)
+    "the root carries no byte-exact Mithril ownership marker, so it is not an owned Wasp Confinement Profile v1 root (an unmarked nonempty root is never replaced)"
+
+differsViolation :: FilePath -> ConfinementViolation
+differsViolation path = ConfinementViolation (Text.pack path) "the managed file differs from the regenerated bundle"
+
+-- | The exact violations of a valid Profile-v1 root checked against
+-- the Profile-v0 bundle of the singleton fixture.
+v1RootAgainstV0Violations :: [ConfinementViolation]
+v1RootAgainstV0Violations =
+  [ differsViolation ".gitignore"
+  , differsViolation markerFile
+  , ConfinementViolation (Text.pack markerFile) "the ownership marker is that of a Wasp Confinement Profile v1 root, not of the requested Wasp Confinement Profile v0 (mithril wasp generate transitions an owned root as a whole)"
+  , ConfinementViolation "main.wasp.ts" "the Wasp specification declares an additional Action, which the profile does not permit"
+  , differsViolation "main.wasp.ts"
+  , differsViolation manifestFile
+  , ConfinementViolation "schema.prisma" "the managed Prisma schema differs from the regenerated bundle (schema or database-provider drift)"
+  , differsViolation "src/MainPage.tsx"
+  , ConfinementViolation (Text.pack operationFile) "the generated Action differs from the regenerated bundle (edited generated authorization)"
+  ]
+
+-- | The exact violations of a valid Profile-v0 root checked against
+-- the Profile-v1 bundle of the two-case fixture.
+v0RootAgainstV1Violations :: [ConfinementViolation]
+v0RootAgainstV1Violations =
+  [ differsViolation ".gitignore"
+  , differsViolation markerFile
+  , ConfinementViolation (Text.pack markerFile) "the ownership marker is that of a Wasp Confinement Profile v0 root, not of the requested Wasp Confinement Profile v1 (mithril wasp generate transitions an owned root as a whole)"
+  , ConfinementViolation "main.wasp.ts" "the Wasp specification no longer declares every generated Action"
+  , differsViolation "main.wasp.ts"
+  , differsViolation manifestFile
+  , ConfinementViolation "schema.prisma" "the managed Prisma schema differs from the regenerated bundle (schema or database-provider drift)"
+  , differsViolation "src/MainPage.tsx"
+  , ConfinementViolation (Text.pack operationFile) "the generated Action differs from the regenerated bundle (edited generated authorization)"
+  ]
+
+v1ConfinementChecks :: WaspBundle -> WaspBundle -> [Check]
+v1ConfinementChecks baseBundle v1Bundle =
+  [ check
+      "Profile v1: the exact bundle snapshot is confined and replaceable"
+      ( checkWaspConfinement FullCheck v1Bundle (snapshotOf v1Bundle) == []
+          && checkWaspConfinement OwnershipCheck v1Bundle (snapshotOf v1Bundle) == []
+      )
+  , check
+      "Profile v1: an empty root reports every managed file missing"
+      ( checkWaspConfinement FullCheck v1Bundle []
+          == [ConfinementViolation (Text.pack path) "the managed file is missing" | path <- expectedInventory]
+      )
+  , check
+      "a valid Profile-v1 root is not confined against the Profile-v0 bundle: exactly the differing files, the other profile's marker named, and the additional Action labelled"
+      (checkWaspConfinement FullCheck baseBundle (snapshotOf v1Bundle) == v1RootAgainstV0Violations)
+  , check
+      "a valid Profile-v0 root is not confined against the Profile-v1 bundle: exactly the differing files, the other profile's marker named, and the missing Action labelled"
+      (checkWaspConfinement FullCheck v1Bundle (snapshotOf baseBundle) == v0RootAgainstV1Violations)
+  , check
+      "replacement ownership recognizes the other profile's exact marker in both directions (v0 → v1 and v1 → v0), altered managed files included"
+      ( checkWaspConfinement OwnershipCheck v1Bundle (snapshotOf baseBundle) == []
+          && checkWaspConfinement OwnershipCheck baseBundle (snapshotOf v1Bundle) == []
+          && checkWaspConfinement OwnershipCheck v1Bundle (replaceEntry operationFile (RegularFile "tampered") (snapshotOf baseBundle)) == []
+          && checkWaspConfinement OwnershipCheck baseBundle [RootEntry markerFile (RegularFile (ownershipMarkerBytesOf WaspProfileV1))] == []
+          && checkWaspConfinement OwnershipCheck v1Bundle [RootEntry markerFile (RegularFile (ownershipMarkerBytesOf WaspProfileV0)), RootEntry "src" Directory] == []
+      )
+  , check
+      "replacement ownership recognizes only the two literal markers: an unknown, truncated, extended, or altered marker refuses with the requested profile named"
+      ( let unknownMarker = Encoding.encodeUtf8 (Text.replace "profile-v1" "profile-v2" (Encoding.decodeUtf8 (ownershipMarkerBytesOf WaspProfileV1)))
+            truncated = ByteString.take (ByteString.length (ownershipMarkerBytesOf WaspProfileV1) - 1) (ownershipMarkerBytesOf WaspProfileV1)
+            extended = ownershipMarkerBytesOf WaspProfileV1 <> "\n"
+            lastLineOnly = "mithril-wasp-bundle wasp-confinement-profile-v1\n"
+            refusedByV1 marker = checkWaspConfinement OwnershipCheck v1Bundle (replaceEntry markerFile (RegularFile marker) (snapshotOf v1Bundle)) == [v1MarkerViolation]
+            refusedByV0 marker = checkWaspConfinement OwnershipCheck baseBundle (replaceEntry markerFile (RegularFile marker) (snapshotOf baseBundle)) == [markerViolation]
+         in all refusedByV1 [unknownMarker, truncated, extended, lastLineOnly, ""]
+              && all refusedByV0 [unknownMarker, truncated, extended, lastLineOnly, ""]
+              && checkWaspConfinement OwnershipCheck v1Bundle [RootEntry ".gitignore" (RegularFile (fileOf v1Bundle ".gitignore"))] == [v1MarkerViolation]
+      )
+  , check
+      "Profile v1: unmanaged paths, links, hard links, foreign kinds, and build outputs are refused with the pinned labels in both modes"
+      ( let extras =
+              [ RootEntry "notes.txt" (RegularFile "x")
+              , RootEntry "src/link" SymbolicLink
+              , RootEntry "src/extra.ts" HardLinkedFile
+              , RootEntry "src/device" OtherEntry
+              , RootEntry "node_modules" Directory
+              ]
+            expected =
+              [ ConfinementViolation "node_modules" "installation and build outputs (node_modules, .wasp) are not part of the clean source profile"
+              , ConfinementViolation "notes.txt" "an unexpected file is not part of the closed path inventory"
+              , ConfinementViolation "src/device" "an unsupported filesystem entry (neither a regular file nor a directory) is not allowed inside the confined source root"
+              , ConfinementViolation "src/extra.ts" unmanagedHardLinkMessage
+              , ConfinementViolation "src/extra.ts" "an additional server-capable source file is not part of the closed path inventory"
+              , ConfinementViolation "src/link" "a symbolic link is not allowed inside the confined source root (path escape)"
+              ]
+         in checkWaspConfinement FullCheck v1Bundle (snapshotOf v1Bundle <> extras) == expected
+              && checkWaspConfinement OwnershipCheck v1Bundle (snapshotOf v1Bundle <> extras) == expected
+              && checkWaspConfinement FullCheck v1Bundle (replaceEntry ".npmrc" HardLinkedFile (snapshotOf v1Bundle)) == [ConfinementViolation ".npmrc" managedHardLinkMessage]
+              && checkWaspConfinement OwnershipCheck v1Bundle (replaceEntry markerFile SymbolicLink (snapshotOf v1Bundle))
+                == [ConfinementViolation (Text.pack markerFile) "the managed path is occupied by a symbolic link, not the managed regular file"]
+      )
+  , check
+      "Profile v1: an edited operation file is labelled with its bypasses, and the removal of either Action binding from the specification is labelled"
+      ( checkWaspConfinement
+          FullCheck
+          v1Bundle
+          (replaceEntry operationFile (RegularFile (fileOf v1Bundle operationFile <> "\nexport const leak = () => prisma.$executeRawUnsafe(\"x\");\n")) (snapshotOf v1Bundle))
+          == [ ConfinementViolation (Text.pack operationFile) "the file uses a Prisma raw-query API ($executeRaw or $executeRawUnsafe)"
+             , ConfinementViolation (Text.pack operationFile) "the generated Action differs from the regenerated bundle (edited generated authorization)"
+             ]
+          && specWithout "    action(mithrilSelfUpdateAction, { entities: [\"MithrilAuthority\"], auth: true }),\n"
+            == [ConfinementViolation "main.wasp.ts" "the Wasp specification no longer declares every generated Action", differsViolation "main.wasp.ts"]
+          && specWithout "    action(mithrilCaseAction, { entities: [\"MithrilAuthority\"], auth: true }),\n    action(mithrilSelfUpdateAction, { entities: [\"MithrilAuthority\"], auth: true }),\n"
+            == [ConfinementViolation "main.wasp.ts" "the Wasp specification no longer declares the generated Actions", differsViolation "main.wasp.ts"]
+          && checkWaspConfinement
+            FullCheck
+            v1Bundle
+            (replaceEntry specFile (RegularFile (Encoding.encodeUtf8 (Text.replace "  spec: [\n" "  spec: [\n    action(other),\n" (textOf v1Bundle specFile)))) (snapshotOf v1Bundle))
+            == [ConfinementViolation "main.wasp.ts" "the Wasp specification declares an additional Action, which the profile does not permit", differsViolation "main.wasp.ts"]
+      )
+  , check
+      "Profile v1: an extra specification file is labelled by how many generated Actions it declares"
+      ( let extraSpec body = checkWaspConfinement FullCheck v1Bundle (snapshotOf v1Bundle <> [RootEntry "extra.wasp.ts" (RegularFile body)])
+         in extraSpec "export default [];\n"
+              == [ ConfinementViolation "extra.wasp.ts" "an additional Wasp specification file is not part of the closed path inventory"
+                 , ConfinementViolation "extra.wasp.ts" "the Wasp specification no longer declares the generated Actions"
+                 ]
+              && extraSpec "export default [action(a)];\n"
+                == [ ConfinementViolation "extra.wasp.ts" "an additional Wasp specification file is not part of the closed path inventory"
+                   , ConfinementViolation "extra.wasp.ts" "the Wasp specification no longer declares every generated Action"
+                   ]
+              && extraSpec "export default [action(a), action(b), action(c)];\n"
+                == [ ConfinementViolation "extra.wasp.ts" "an additional Wasp specification file is not part of the closed path inventory"
+                   , ConfinementViolation "extra.wasp.ts" "the Wasp specification declares an additional Action, which the profile does not permit"
+                   ]
+      )
+  ]
+  where
+    specWithout fragment =
+      checkWaspConfinement
+        FullCheck
+        v1Bundle
+        (replaceEntry specFile (RegularFile (Encoding.encodeUtf8 (Text.replace fragment "" (textOf v1Bundle specFile)))) (snapshotOf v1Bundle))
+
+--------------------------------------------------------------------
+-- Group 14: transitions between the profiles through the filesystem
+--------------------------------------------------------------------
+
+transitionChecks :: WaspBundle -> WaspBundle -> IO [Check]
+transitionChecks baseBundle v1Bundle = do
+  let v0Files = bundleBytes baseBundle
+      v1Files = bundleBytes v1Bundle
+
+  pristine <- withScratchDirectory $ \scratch -> do
+    let root = scratch </> "app"
+    outcome <- installBundle noInstallHooks v1Bundle root
+    files <- snapshotDirectory root
+    bits <- directoryPermissionBits root
+    leftovers <- listDirectory scratch
+    pure (outcome == Right () && files == v1Files && bits == Right privateDirectoryMode && leftovers == ["app"])
+
+  upgrade <- withScratchDirectory $ \scratch -> do
+    let root = scratch </> "app"
+    first <- installBundle noInstallHooks baseBundle root
+    before <- snapshotDirectory root
+    second <- installBundle noInstallHooks v1Bundle root
+    after <- snapshotDirectory root
+    bits <- directoryPermissionBits root
+    leftovers <- listDirectory scratch
+    pure (first == Right () && before == v0Files && second == Right () && after == v1Files && bits == Right privateDirectoryMode && leftovers == ["app"])
+
+  downgrade <- withScratchDirectory $ \scratch -> do
+    let root = scratch </> "app"
+    first <- installBundle noInstallHooks v1Bundle root
+    before <- snapshotDirectory root
+    second <- installBundle noInstallHooks baseBundle root
+    after <- snapshotDirectory root
+    bits <- directoryPermissionBits root
+    leftovers <- listDirectory scratch
+    pure (first == Right () && before == v1Files && second == Right () && after == v0Files && bits == Right privateDirectoryMode && leftovers == ["app"])
+
+  roundTrip <- withScratchDirectory $ \scratch -> do
+    let root = scratch </> "app"
+    a <- generateWaspApp nspePath root
+    aFiles <- snapshotDirectory root
+    aCheck <- checkWaspApp nspePath root
+    b <- generateWaspApp selfUpdatePath root
+    bFiles <- snapshotDirectory root
+    bCheck <- checkWaspApp selfUpdatePath root
+    bCross <- checkWaspApp nspePath root
+    c <- generateWaspApp nspePath root
+    cFiles <- snapshotDirectory root
+    cCheck <- checkWaspApp nspePath root
+    cCross <- checkWaspApp selfUpdatePath root
+    leftovers <- listDirectory scratch
+    pure
+      ( isGeneratedWith v0Summary a
+          && aFiles == v0Files
+          && isConfinedWith v0Summary aCheck
+          && isGeneratedWith v1Summary b
+          && bFiles == v1Files
+          && isConfinedWith v1Summary bCheck
+          && bCross == Right (WaspRootNotConfined WaspProfileV0 root (NonEmpty.fromList v1RootAgainstV0Violations))
+          && isGeneratedWith v0Summary c
+          && cFiles == v0Files
+          && isConfinedWith v0Summary cCheck
+          && cCross == Right (WaspRootNotConfined WaspProfileV1 root (NonEmpty.fromList v0RootAgainstV1Violations))
+          && leftovers == ["app"]
+      )
+
+  recovered <- withScratchDirectory $ \scratch -> do
+    let root = scratch </> "app"
+    _ <- installBundle noInstallHooks baseBundle root
+    ByteString.writeFile (root </> operationFile) "tampered\n"
+    removeFile (root </> "vite.config.ts")
+    outcome <- installBundle noInstallHooks v1Bundle root
+    files <- snapshotDirectory root
+    leftovers <- listDirectory scratch
+    pure (outcome == Right () && files == v1Files && leftovers == ["app"])
+
+  unmanaged <- withScratchDirectory $ \scratch -> do
+    let root = scratch </> "app"
+    _ <- installBundle noInstallHooks baseBundle root
+    writeFile (root </> "notes.txt") "keep me\n"
+    before <- snapshotDirectory root
+    outcome <- installBundle noInstallHooks v1Bundle root
+    after <- snapshotDirectory root
+    leftovers <- listDirectory scratch
+    pure
+      ( outcome == Left (InstallNotOwned (ConfinementViolation "notes.txt" "an unexpected file is not part of the closed path inventory" :| []))
+          && before == after
+          && leftovers == ["app"]
+      )
+
+  alteredMarker <- withScratchDirectory $ \scratch -> do
+    let root = scratch </> "app"
+    _ <- installBundle noInstallHooks baseBundle root
+    ByteString.appendFile (root </> markerFile) "\n"
+    before <- snapshotDirectory root
+    outcome <- installBundle noInstallHooks v1Bundle root
+    after <- snapshotDirectory root
+    reverse' <- installBundle noInstallHooks baseBundle root
+    afterReverse <- snapshotDirectory root
+    leftovers <- listDirectory scratch
+    pure
+      ( outcome == Left (InstallNotOwned (v1MarkerViolation :| []))
+          && before == after
+          && reverse' == Left (InstallNotOwned (markerViolation :| []))
+          && afterReverse == before
+          && leftovers == ["app"]
+      )
+
+  linkedRoot <- withScratchDirectory $ \scratch -> do
+    let root = scratch </> "app"
+    _ <- installBundle noInstallHooks baseBundle root
+    createFileLink "/etc/hostname" (root </> "src" </> "escape.ts")
+    before <- snapshotDirectory root
+    outcome <- installBundle noInstallHooks v1Bundle root
+    after <- snapshotDirectory root
+    pure
+      ( outcome == Left (InstallNotOwned (ConfinementViolation "src/escape.ts" "a symbolic link is not allowed inside the confined source root (path escape)" :| []))
+          && before == after
+      )
+
+  failedSwapRestored <- withScratchDirectory $ \scratch -> do
+    let root = scratch </> "app"
+    _ <- installBundle noInstallHooks baseBundle root
+    before <- snapshotDirectory root
+    let hooks = noInstallHooks {hookAfterBackup = \_ -> removeDirectoryRecursive (stagingPathOf root)}
+    outcome <- installBundle hooks v1Bundle root
+    after <- snapshotDirectory root
+    leftovers <- listDirectory scratch
+    pure
+      ( outcome == Left (InstallWorkspaceFailure "installing the staged bundle failed: does not exist; the previous root was restored")
+          && before == after
+          && after == v0Files
+          && leftovers == ["app"]
+      )
+
+  failedSwapUnrestored <- withScratchDirectory $ \scratch -> do
+    let root = scratch </> "app"
+    _ <- installBundle noInstallHooks v1Bundle root
+    let hooks = noInstallHooks {hookAfterBackup = \_ -> writeFile root "intruder"}
+    outcome <- installBundle hooks baseBundle root
+    backupFiles <- snapshotDirectory (backupPathOf root)
+    leftovers <- listDirectory scratch
+    pure
+      ( outcome
+          == Left
+            ( InstallWorkspaceFailure
+                ( Text.pack
+                    ( "installing the staged bundle failed: inappropriate type; restoring the previous root failed: inappropriate type; the previous root remains at "
+                        <> backupPathOf root
+                    )
+                )
+            )
+          && backupFiles == v1Files
+          && sort leftovers == ["app", "app.mithril-wasp-backup"]
+      )
+
+  privateUnderUmask <- withScratchDirectory $ \scratch -> do
+    let root = scratch </> "app"
+    previous <- setFileCreationMask 0
+    (first, second) <-
+      ( do
+          first <- installBundle noInstallHooks baseBundle root
+          second <- installBundle noInstallHooks v1Bundle root
+          pure (first, second)
+        )
+        `finally` setFileCreationMask previous
+    bits <- directoryPermissionBits root
+    files <- snapshotDirectory root
+    pure (first == Right () && second == Right () && bits == Right privateDirectoryMode && files == v1Files)
+
+  occupiedBackup <- withScratchDirectory $ \scratch -> do
+    let root = scratch </> "app"
+    _ <- installBundle noInstallHooks baseBundle root
+    createDirectory (backupPathOf root)
+    before <- snapshotDirectory root
+    outcome <- installBundle noInstallHooks v1Bundle root
+    after <- snapshotDirectory root
+    backupEntries <- listDirectory (backupPathOf root)
+    pure
+      ( outcome
+          == Left
+            ( InstallUnusableRoot
+                ( Text.pack
+                    ( "its backup path "
+                        <> backupPathOf root
+                        <> " already exists (a directory) and is never replaced; move it away first"
+                    )
+                )
+            )
+          && before == after
+          && null backupEntries
+      )
+
+  pure
+    [ check "Profile v1: a pristine generation installs the complete private bundle with nothing beside it" pristine
+    , check "a v0 → v1 transition replaces the owned Profile-v0 root as a whole with exactly the Profile-v1 bundle, private, with no staging or backup left" upgrade
+    , check "a v1 → v0 transition replaces the owned Profile-v1 root as a whole with exactly the Profile-v0 bundle, private, with no staging or backup left" downgrade
+    , check "through the command, v0 → v1 → v0 regenerations each report the selected profile, pass their own full check, fail the other profile's full check exactly, and leave nothing behind" roundTrip
+    , check "a v0 → v1 transition over a tampered and partial owned root recovers the complete Profile-v1 bundle" recovered
+    , check "a v0 → v1 transition is refused without mutation when the owned root holds an unmanaged path" unmanaged
+    , check "a transition is refused without mutation, in both directions, when the marker is altered (the requested profile is named)" alteredMarker
+    , check "a v0 → v1 transition is refused without mutation when the owned root holds a symbolic link" linkedRoot
+    , check "a v0 → v1 transition whose swap fails restores the complete Profile-v0 root and leaves nothing behind" failedSwapRestored
+    , check "a v1 → v0 transition whose swap and rollback both fail leaves the complete Profile-v1 root at the named backup" failedSwapUnrestored
+    , check "under umask 000 a v0 → v1 transition keeps the installed root private (0700)" privateUnderUmask
+    , check "a v0 → v1 transition is refused before any mutation when the backup sibling path is occupied" occupiedBackup
+    ]
+
+isConfinedWith :: WaspBundleSummary -> Either WaspFileError WaspFileSuccess -> Bool
+isConfinedWith summary outcome =
+  case outcome of
+    Right (WaspConfined completed) -> reportSummary completed == summary
+    _ -> False
+
+--------------------------------------------------------------------
+-- Group 15: Profile-v1 command outcomes and report rendering
+--------------------------------------------------------------------
+
+v1CommandChecks :: WaspBundle -> WaspBundle -> IO [Check]
+v1CommandChecks baseBundle v1Bundle = do
+  confined <- checkWaspApp selfUpdatePath v1FixtureRoot
+  crossV0 <- checkWaspApp nspePath v1FixtureRoot
+  crossV1 <- checkWaspApp selfUpdatePath fixtureRoot
+  tampered <- withFixtureCopyOf v1FixtureRoot $ \_ root -> do
+    bytes <- ByteString.readFile (root </> operationFile)
+    ByteString.writeFile
+      (root </> operationFile)
+      (Encoding.encodeUtf8 (Text.replace "const allowed = payloadRank[args.payload] <= actorRank;" "const allowed = true;" (Encoding.decodeUtf8 bytes)))
+    outcome <- checkWaspApp selfUpdatePath root
+    pure (outcome == Right (WaspRootNotConfined WaspProfileV1 root (ConfinementViolation (Text.pack operationFile) "the generated Action differs from the regenerated bundle (edited generated authorization)" :| [])))
+  pure
+    [ check
+        "the committed Profile-v1 fixture passes check with the CONFINED report of the two-case document"
+        ( case confined of
+            Right (WaspConfined report') ->
+              reportCore report' == selfUpdatePath && reportRoot report' == v1FixtureRoot && reportSummary report' == waspBundleSummary v1Bundle
+            _ -> False
+        )
+    , check
+        "the committed Profile-v1 fixture is NOT CONFINED against the singleton document (a Profile-v0 check) with the exact cross-profile violations"
+        (crossV0 == Right (WaspRootNotConfined WaspProfileV0 v1FixtureRoot (NonEmpty.fromList v1RootAgainstV0Violations)))
+    , check
+        "the committed Profile-v0 fixture is NOT CONFINED against the two-case document (a Profile-v1 check) with the exact cross-profile violations"
+        (crossV1 == Right (WaspRootNotConfined WaspProfileV1 fixtureRoot (NonEmpty.fromList v0RootAgainstV1Violations)))
+    , check
+        "an edited rule-2 authorization in a Profile-v1 root fails check with exit 4 and the Profile-v1 label"
+        tampered
+    , check
+        "the Profile-v1 CONFINED report lists both operations in authored order and names the profile explicitly"
+        ( renderWaspSuccess selfUpdatePath (WaspConfined completed)
+            == Text.intercalate "\n" (v1ReportLines "CONFINED")
+        )
+    , check
+        "the Profile-v1 GENERATED report ends with the confinement line"
+        ( renderWaspSuccess selfUpdatePath (WaspGenerated completed)
+            == Text.intercalate "\n" (v1ReportLines "GENERATED" <> ["  confinement: CONFINED"])
+        )
+    , check
+        "the Profile-v0 reports are byte-for-byte unchanged (one case action line, one operation line)"
+        ( renderWaspSuccess nspePath (WaspConfined v0Completed)
+            == Text.intercalate
+              "\n"
+              ( [ "app: CONFINED (Wasp Confinement Profile v0)"
+                , "  core: test/fixtures/acme-nspe.mir.json"
+                , "  verification: VERIFIED by the production verifier before the bundle was rendered"
+                , "  guarantee: NoSelfPrivilegeEscalation"
+                , "  case action: \"Membership.changeRole\""
+                , "  operation: mithrilCaseAction (POST /operations/mithril-case-action)"
+                , "  target: Wasp 0.25.0, PostgreSQL, Prisma runtime supplied by Wasp"
+                , "  managed files: 14"
+                ]
+                  <> ["    " <> Text.pack path | path <- expectedInventory]
+              )
+        )
+    , check
+        "the NOT CONFINED report names the requested profile"
+        ( renderWaspSuccess selfUpdatePath (WaspRootNotConfined WaspProfileV1 "app" (ConfinementViolation "a" "b" :| []))
+            == "app: NOT CONFINED (Wasp Confinement Profile v1)\n  a: b"
+            && renderWaspSuccess nspePath (WaspRootNotConfined WaspProfileV0 "app" (ConfinementViolation "a" "b" :| []))
+              == "app: NOT CONFINED (Wasp Confinement Profile v0)\n  a: b"
+        )
+    , check
+        "the profile labels and names are pinned"
+        ( waspProfileLabel WaspProfileV0 == "Wasp Confinement Profile v0"
+            && waspProfileLabel WaspProfileV1 == "Wasp Confinement Profile v1"
+            && waspProfileName WaspProfileV0 == "wasp-confinement-profile-v0"
+            && waspProfileName WaspProfileV1 == "wasp-confinement-profile-v1"
+        )
+    ]
+  where
+    completed =
+      WaspReport
+        { reportCore = selfUpdatePath
+        , reportRoot = "app"
+        , reportSummary = waspBundleSummary v1Bundle
+        }
+    v0Completed =
+      WaspReport
+        { reportCore = nspePath
+        , reportRoot = "app"
+        , reportSummary = waspBundleSummary baseBundle
+        }
+    v1ReportLines verdict =
+      [ "app: " <> verdict <> " (Wasp Confinement Profile v1)"
+      , "  core: test/fixtures/acme-nspe-self-update.mir.json"
+      , "  verification: VERIFIED by the production verifier before the bundle was rendered"
+      , "  guarantee: NoSelfPrivilegeEscalation"
+      , "  operations: 2"
+      , "  case 0: rule 1 (change-other), action \"Membership.changeRole\""
+      , "    operation: mithrilCaseAction (POST /operations/mithril-case-action)"
+      , "  case 1: rule 2 (bounded-self-update), action \"Membership.changeOwnRole\""
+      , "    operation: mithrilSelfUpdateAction (POST /operations/mithril-self-update-action)"
+      , "  target: Wasp 0.25.0, PostgreSQL, Prisma runtime supplied by Wasp"
+      , "  managed files: 14"
+      ]
+        <> ["    " <> Text.pack path | path <- expectedInventory]
+
+-- | Run an action on a fresh copy of a committed fixture directory.
+withFixtureCopyOf :: FilePath -> (FilePath -> FilePath -> IO a) -> IO a
+withFixtureCopyOf source action =
+  withScratchDirectory $ \scratch -> do
+    let root = scratch </> "app"
+    copyTree source root
+    action scratch root
+
+--------------------------------------------------------------------
+-- Group 16: the frozen compatibility surface
+--------------------------------------------------------------------
+
+-- | A downstream-style classification over exactly the four
+-- pre-Profile-v1 constructors: it compiles only because the
+-- @COMPLETE@ pragma of "Mithril.Command.Wasp" makes the legacy
+-- pattern synonym cover the profile-aware constructor (the test
+-- suite compiles with @-Wincomplete-patterns@ as an error).
+legacyClassify :: WaspFileSuccess -> Int
+legacyClassify outcome =
+  case outcome of
+    WaspUnsupported _ -> 3
+    WaspNotConfined _ _ -> 4
+    WaspGenerated _ -> 0
+    WaspConfined _ -> 0
+
+-- | The legacy construction and matching surface of the frozen
+-- adapter boundary keeps its pinned semantics next to the complete
+-- trusted views (module header, group 16).
+compatibilityChecks :: WaspBundle -> WaspBundle -> [Check]
+compatibilityChecks baseBundle v1Bundle =
+  [ check
+      "compatibility: legacy positional construction builds exactly the renderer's Profile-v0 singleton summary"
+      (legacyPositional == waspBundleSummary baseBundle && legacyPositional == v0Summary)
+  , check
+      "compatibility: legacy record construction builds exactly the renderer's Profile-v0 singleton summary"
+      (legacyRecord == waspBundleSummary baseBundle)
+  , check
+      "compatibility: a legacy-constructed summary is explicitly Profile v0 with its one rule-1 operation at case position 0"
+      ( summaryProfile legacyRecord == WaspProfileV0
+          && summaryOperations legacyRecord == changeOtherOperationSummary :| []
+      )
+  , check
+      "compatibility: the six legacy selectors of the Profile-v0 summary are the former singleton values"
+      ( summaryModelName v0Rendered == "Acme"
+          && summaryGuarantee v0Rendered == "NoSelfPrivilegeEscalation"
+          && summaryCaseAction v0Rendered == "Membership.changeRole"
+          && summaryOperation v0Rendered == "mithrilCaseAction"
+          && summaryRoute v0Rendered == "/operations/mithril-case-action"
+          && summaryManagedPaths v0Rendered == expectedInventory
+      )
+  , check
+      "compatibility: the three legacy selectors of the Profile-v1 summary project operation 0 (the rule-1 operation), never the rule-2 operation"
+      ( summaryCaseAction v1Rendered == "Membership.changeRole"
+          && summaryOperation v1Rendered == "mithrilCaseAction"
+          && summaryRoute v1Rendered == "/operations/mithril-case-action"
+          && summaryModelName v1Rendered == "Acme"
+          && summaryGuarantee v1Rendered == "NoSelfPrivilegeEscalation"
+          && summaryManagedPaths v1Rendered == expectedInventory
+      )
+  , check
+      "compatibility: legacy positional matching of the Profile-v1 summary yields the shared fields and operation 0"
+      ( case v1Rendered of
+          WaspBundleSummary modelName guarantee caseAction operation route paths ->
+            (modelName, guarantee, caseAction, operation, route, paths)
+              == ("Acme", "NoSelfPrivilegeEscalation", "Membership.changeRole", "mithrilCaseAction", "/operations/mithril-case-action", expectedInventory)
+      )
+  , check
+      "compatibility: legacy record matching of the Profile-v1 summary yields operation 0's fields"
+      ( case v1Rendered of
+          WaspBundleSummary {summaryOperation = operation, summaryRoute = route} ->
+            operation == "mithrilCaseAction" && route == "/operations/mithril-case-action"
+      )
+  , check
+      "compatibility: the legacy view hides nothing from the complete view — the rendered Profile-v1 summary keeps its explicit profile and both operations, and is not the legacy singleton"
+      ( summaryProfile v1Rendered == WaspProfileV1
+          && summaryOperations v1Rendered == changeOtherOperationSummary :| [selfUpdateOperationSummary]
+          && v1Rendered == v1Summary
+          && v1Rendered /= legacyPositional
+      )
+  , check
+      "compatibility: the new-view record matching reads the explicit profile and the complete ordered list of both summaries"
+      ( ( case v1Rendered of
+            WaspProfileSummary {summaryProfile = profile, summaryOperations = operations} ->
+              profile == WaspProfileV1 && map operationName (NonEmpty.toList operations) == ["mithrilCaseAction", "mithrilSelfUpdateAction"]
+        )
+          && ( case v0Rendered of
+                 WaspProfileSummary {summaryProfile = profile, summaryOperations = operations} ->
+                   profile == WaspProfileV0 && map operationName (NonEmpty.toList operations) == ["mithrilCaseAction"]
+             )
+      )
+  , check
+      "compatibility: matching and rebuilding through the legacy surface is the identity on the Profile-v0 summary"
+      ( case v0Rendered of
+          WaspBundleSummary modelName guarantee caseAction operation route paths ->
+            WaspBundleSummary modelName guarantee caseAction operation route paths == v0Rendered
+      )
+  , check
+      "compatibility: rebuilding a Profile-v1 summary through the legacy surface yields the Profile-v0 singleton of operation 0 (legacy construction never yields Profile v1)"
+      ( case v1Rendered of
+          WaspBundleSummary modelName guarantee caseAction operation route paths ->
+            WaspBundleSummary modelName guarantee caseAction operation route paths == v0Summary
+      )
+  , check
+      "compatibility: a legacy record update rebuilds through the legacy surface — a Profile-v0 singleton carrying the updated field"
+      ( v1Summary {summaryCaseAction = "Membership.renamed"}
+          == WaspProfileSummary
+            { profileSummaryModelName = "Acme"
+            , profileSummaryGuarantee = "NoSelfPrivilegeEscalation"
+            , summaryProfile = WaspProfileV0
+            , summaryOperations = changeOtherOperationSummary {operationCaseAction = "Membership.renamed"} :| []
+            , profileSummaryManagedPaths = expectedInventory
+            }
+          && v0Summary {summaryRoute = "/operations/other"}
+            == WaspProfileSummary
+              { profileSummaryModelName = "Acme"
+              , profileSummaryGuarantee = "NoSelfPrivilegeEscalation"
+              , summaryProfile = WaspProfileV0
+              , summaryOperations = changeOtherOperationSummary {operationRoute = "/operations/other"} :| []
+              , profileSummaryManagedPaths = expectedInventory
+              }
+      )
+  , check
+      "compatibility: legacy WaspNotConfined construction is the Profile-v0 outcome, with exit 4 and the Profile-v0 report"
+      ( WaspNotConfined "app" (violation :| []) == WaspRootNotConfined WaspProfileV0 "app" (violation :| [])
+          && waspSuccessExitCode (WaspNotConfined "app" (violation :| [])) == ExitFailure 4
+          && renderWaspSuccess nspePath (WaspNotConfined "app" (violation :| []))
+            == "app: NOT CONFINED (Wasp Confinement Profile v0)\n  a: b"
+      )
+  , check
+      "compatibility: legacy WaspNotConfined matching ignores the profile of a Profile-v1 outcome and yields its root and violations"
+      ( case profileOutcome WaspProfileV1 of
+          WaspNotConfined root violations -> root == "app" && violations == violation :| []
+          _ -> False
+      )
+  , check
+      "compatibility: a match over the four pre-Profile-v1 constructors classifies every outcome, the Profile-v1 not-confined outcome included"
+      ( map
+          legacyClassify
+          [ WaspUnsupported (countReason ["guarantees", "0"] 3 :| [])
+          , WaspRootNotConfined WaspProfileV1 "app" (violation :| [])
+          , WaspNotConfined "app" (violation :| [])
+          , WaspGenerated legacyReport
+          , WaspConfined legacyReport
+          ]
+          == [3, 4, 4, 0, 0]
+      )
+  , check
+      "compatibility: the profile-aware constructor still carries and reports the requested profile (the legacy view never changes what the CLI reports)"
+      ( renderWaspSuccess selfUpdatePath (WaspRootNotConfined WaspProfileV1 "app" (violation :| []))
+          == "app: NOT CONFINED (Wasp Confinement Profile v1)\n  a: b"
+          && waspSuccessExitCode (WaspRootNotConfined WaspProfileV1 "app" (violation :| [])) == ExitFailure 4
+      )
+  , check
+      "compatibility: the legacy report record still reads the summary through both views"
+      ( summaryCaseAction (reportSummary legacyReport) == "Membership.changeRole"
+          && summaryProfile (reportSummary legacyReport) == WaspProfileV0
+      )
+  ]
+  where
+    v0Rendered = waspBundleSummary baseBundle
+    v1Rendered = waspBundleSummary v1Bundle
+    legacyPositional =
+      WaspBundleSummary
+        "Acme"
+        "NoSelfPrivilegeEscalation"
+        "Membership.changeRole"
+        "mithrilCaseAction"
+        "/operations/mithril-case-action"
+        expectedInventory
+    legacyRecord =
+      WaspBundleSummary
+        { summaryModelName = "Acme"
+        , summaryGuarantee = "NoSelfPrivilegeEscalation"
+        , summaryCaseAction = "Membership.changeRole"
+        , summaryOperation = "mithrilCaseAction"
+        , summaryRoute = "/operations/mithril-case-action"
+        , summaryManagedPaths = expectedInventory
+        }
+    violation = ConfinementViolation "a" "b"
+    profileOutcome profile = WaspRootNotConfined profile "app" (violation :| [])
+    legacyReport =
+      WaspReport
+        { reportCore = nspePath
+        , reportRoot = "app"
+        , reportSummary = legacyRecord
+        }

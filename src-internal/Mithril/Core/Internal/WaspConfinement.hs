@@ -2,13 +2,14 @@
 
 -- | __Internal module — never expose.__
 --
--- The pure half of the Wasp Confinement Profile v0 checker: given the
--- regenerated bundle ("Mithril.Core.Internal.Wasp") and a snapshot of
--- a source root (every entry, taken without following symbolic links
--- and with hard links classified — "Mithril.Core.Internal.WaspFilesystem"
--- takes it), decide deterministically whether the root is exactly
--- the closed profile, or — before a regeneration — whether the root
--- is one this tool owns and may replace.
+-- The pure half of the Wasp Confinement Profile checker (Profile v0
+-- and Profile v1 alike): given the regenerated bundle
+-- ("Mithril.Core.Internal.Wasp") and a snapshot of a source root
+-- (every entry, taken without following symbolic links and with hard
+-- links classified — "Mithril.Core.Internal.WaspFilesystem" takes
+-- it), decide deterministically whether the root is exactly the
+-- closed profile the bundle instantiates, or — before a regeneration
+-- — whether the root is one this tool owns and may replace.
 --
 -- == The authority
 --
@@ -40,11 +41,24 @@
 -- 'OwnershipCheck' is the rule a regeneration applies to an existing
 -- root before replacing it as a whole: an empty root may be
 -- initialized; a nonempty root may be replaced only if it carries
--- the byte-exact Mithril ownership marker and holds nothing outside
--- the fixed inventory (altered or missing managed files are
--- recoverable and permitted); an unmarked nonempty root, an
--- unmanaged path, a symbolic link, a hard link, or a foreign entry
--- kind refuses the replacement.
+-- one of exactly the two literal Mithril ownership markers — the
+-- Profile-v0 marker or the Profile-v1 marker, byte-exact
+-- ('recognizedOwnershipMarkers'; no marker is parsed and no other
+-- marker is recognized) — and holds nothing outside the fixed
+-- inventory, which both profiles share (altered or missing managed
+-- files are recoverable and permitted).  An owned root of either
+-- profile may therefore be replaced by a regeneration of either
+-- profile: a v0 → v1 or v1 → v0 transition is an ordinary whole-root
+-- replacement.  An unmarked nonempty root, a root carrying an altered
+-- or unknown marker, an unmanaged path, a symbolic link, a hard link,
+-- or a foreign entry kind refuses the replacement.
+--
+-- 'FullCheck' requires the exact marker, inventory, and bytes of the
+-- requested bundle: a valid root of the other profile is not confined
+-- against it (its marker, specification, operation file, client
+-- shell, and manifest differ), and the marker difference is labelled
+-- as the other profile's marker so a reviewer sees the transition by
+-- name.
 --
 -- Diagnostics are deterministic: path-labelled, sorted, and
 -- deduplicated.  Paths are root-relative with forward slashes.
@@ -74,11 +88,16 @@ import qualified Data.Text.Encoding as Encoding
 
 import Mithril.Core.Internal.Wasp
   ( WaspBundle
+  , WaspBundleSummary (..)
   , WaspManagedFile (..)
   , bundleFiles
+  , bundleProfile
+  , bundleSummary
   , operationPath
   , ownershipMarkerPath
   , packagePath
+  , profileLabel
+  , recognizedOwnershipMarkers
   , schemaPath
   )
 
@@ -115,8 +134,9 @@ data RootEntry = RootEntry
 -- final step of @generate@: every managed file must be present,
 -- private, and byte-identical.  'OwnershipCheck' is the replacement
 -- rule of @generate@ over an existing root (module header): an empty
--- snapshot is acceptable, and a nonempty one must carry the exact
--- ownership marker and nothing outside the inventory.
+-- snapshot is acceptable, and a nonempty one must carry one of the
+-- two literal recognized ownership markers and nothing outside the
+-- inventory.
 data ConfinementMode
   = FullCheck
   | OwnershipCheck
@@ -168,11 +188,21 @@ checkConfinement mode bundle entries =
           | otherwise -> []
         Just (RegularFile actual)
           | actual == bytes -> []
-          | mode == OwnershipCheck && path == ownershipMarkerPath -> [violation path markerMessage]
+          | mode == OwnershipCheck && path == ownershipMarkerPath ->
+              -- Replacement ownership recognizes exactly the two
+              -- literal markers (module header): the other profile's
+              -- marker is an owned root in transition, anything else
+              -- is not owned.
+              if any ((== actual) . snd) recognizedOwnershipMarkers
+                then []
+                else [violation path markerMessage]
           | mode == OwnershipCheck -> []
+          | path == ownershipMarkerPath ->
+              violation path (differsMessage path)
+                : otherProfileMarkerFindings path actual
           | otherwise ->
               violation path (differsMessage path)
-                : scanFindings path actual
+                : scanFindings expectedActions path actual
         Just HardLinkedFile ->
           [violation path "the managed path is occupied by a hard-linked regular file (link count above one), not a private managed regular file"]
         Just Directory ->
@@ -181,6 +211,27 @@ checkConfinement mode bundle entries =
           [violation path "the managed path is occupied by a symbolic link, not the managed regular file"]
         Just OtherEntry ->
           [violation path "the managed path is occupied by an unsupported filesystem entry, not the managed regular file"]
+
+    profile = bundleProfile bundle
+    expectedActions = NonEmpty.length (summaryOperations (bundleSummary bundle))
+
+    -- A full check against a root carrying the other profile's exact
+    -- marker: name the transition, so the reviewer sees that the
+    -- root is an owned root of the other profile rather than a
+    -- tampered one (the differing bytes are already rejected).
+    otherProfileMarkerFindings path actual =
+      [ violation
+          path
+          ( "the ownership marker is that of a "
+              <> profileLabel other
+              <> " root, not of the requested "
+              <> profileLabel profile
+              <> " (mithril wasp generate transitions an owned root as a whole)"
+          )
+      | (other, bytes) <- recognizedOwnershipMarkers
+      , other /= profile
+      , bytes == actual
+      ]
 
     unmanagedFindings =
       concat
@@ -200,12 +251,14 @@ checkConfinement mode bundle entries =
           | Set.member path expectedDirectories -> []
           | otherwise -> [violation path (directoryMessage path)]
         RegularFile bytes ->
-          violation path (fileMessage path) : scanFindings path bytes
+          violation path (fileMessage path) : scanFindings expectedActions path bytes
         OtherEntry ->
           [violation path "an unsupported filesystem entry (neither a regular file nor a directory) is not allowed inside the confined source root"]
 
     markerMessage =
-      "the root carries no byte-exact Mithril ownership marker, so it is not an owned Wasp Confinement Profile v0 root (an unmarked nonempty root is never replaced)"
+      "the root carries no byte-exact Mithril ownership marker, so it is not an owned "
+        <> profileLabel profile
+        <> " root (an unmarked nonempty root is never replaced)"
 
     differsMessage path
       | path == packagePath =
@@ -328,10 +381,13 @@ isScriptPath path =
 
 -- | Content findings for one file that is already rejected (an
 -- unmanaged file, or a managed file whose bytes differ): the named
--- bypass channels it carries.  The generated Action's own path is
--- the only file permitted to import @prisma@ from @wasp\/server@.
-scanFindings :: FilePath -> ByteString -> [ConfinementViolation]
-scanFindings path bytes =
+-- bypass channels it carries.  The generated operation file's own
+-- path is the only file permitted to import @prisma@ from
+-- @wasp\/server@.  The first argument is the number of Actions the
+-- requested profile declares (one for Profile v0, two for Profile
+-- v1), so a specification declaring fewer or more is labelled.
+scanFindings :: Int -> FilePath -> ByteString -> [ConfinementViolation]
+scanFindings expectedActions path bytes =
   map (violation path) (specFindings <> packageFindings <> schemaFindings <> scriptFindings)
   where
     text = Encoding.decodeUtf8Lenient bytes
@@ -360,10 +416,14 @@ scanFindings path bytes =
             <> [ "the Wasp specification declares a WebSocket or email-sender path, which the profile does not permit"
                | any (`Text.isInfixOf` text) ["webSocket", "emailSender"]
                ]
-            <> ( case countTokens "action(" text of
-                   0 -> ["the Wasp specification no longer declares the generated Action"]
-                   1 -> []
-                   _ -> ["the Wasp specification declares an additional Action, which the profile does not permit"]
+            <> ( let found = countTokens "action(" text
+                  in case compare found expectedActions of
+                       LT
+                         | expectedActions == 1 -> ["the Wasp specification no longer declares the generated Action"]
+                         | found == 0 -> ["the Wasp specification no longer declares the generated Actions"]
+                         | otherwise -> ["the Wasp specification no longer declares every generated Action"]
+                       EQ -> []
+                       GT -> ["the Wasp specification declares an additional Action, which the profile does not permit"]
                )
 
     packageFindings

@@ -27,12 +27,14 @@ name: Haskell
 # self-promotion mutation stays unsupported rather than a violation
 # verdict, and a checker problem is a tool failure, never a semantic
 # verdict; and 'mithril wasp check CORE_FILE WASP_ROOT' regenerates the
-# closed Wasp Confinement Profile v0 of the singleton rule-1 slice
-# (VERIFIED required; every other verified plan is refused at its gate)
-# and pins the committed fixture
-# test/fixtures/wasp-acme byte-for-byte without touching Wasp, Node, or
-# PostgreSQL (the real Wasp 0.25.0 / PostgreSQL vertical test runs in
-# its own workflow, wasp.yml). Agda 2.8.0 is
+# closed Wasp Confinement Profile v0 of the singleton rule-1 slice and
+# the Wasp Confinement Profile v1 of the ordered rule-1, rule-2 pair
+# (VERIFIED required; every other verified plan is refused by the
+# profile dispatcher) and pins the committed fixtures
+# test/fixtures/wasp-acme and test/fixtures/wasp-acme-self-update
+# byte-for-byte without touching Wasp, Node, or PostgreSQL (the real
+# Wasp 0.25.0 / PostgreSQL vertical test runs in its own workflow,
+# wasp.yml). Agda 2.8.0 is
 # installed here because the verifier's end-to-end checks (in the
 # test suite, the explicit verify steps below, and the wasp check
 # step's verifier gate) invoke the real
@@ -146,12 +148,17 @@ jobs:
             exit 1
           fi
 
-      # The Wasp Confinement Profile v0 of the supported slice (VERIFIED
-      # required by the command): the committed
-      # generated fixture must be exactly the fresh bundle (exit 0); the
-      # commands need no Wasp, Node, or PostgreSQL installation.
-      - name: Check the committed Wasp fixture against a fresh bundle
+      # The Wasp Confinement Profiles of the supported slices (VERIFIED
+      # required by the command): each committed generated fixture must
+      # be exactly the fresh bundle of its document (exit 0) — Profile
+      # v0 for the singleton rule-1 fixture, Profile v1 for the two-case
+      # rule-1/rule-2 fixture; the commands need no Wasp, Node, or
+      # PostgreSQL installation.
+      - name: Check the committed Wasp Profile-v0 fixture against a fresh bundle
         run: cabal run mithril -- wasp check test/fixtures/acme-nspe.mir.json test/fixtures/wasp-acme
+
+      - name: Check the committed Wasp Profile-v1 fixture against a fresh bundle
+        run: cabal run mithril -- wasp check test/fixtures/acme-nspe-self-update.mir.json test/fixtures/wasp-acme-self-update
 
       - name: Run mithril --help
         run: cabal run mithril -- --help

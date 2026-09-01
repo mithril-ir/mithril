@@ -3,8 +3,10 @@
 -- project with the probe package, which depends on mithril-ir as an
 -- ordinary external package — so hidden modules, abstract types, and
 -- nominal roles are enforced exactly as any downstream consumer would
--- experience them.  The control executable must COMPILE, proving the
--- probe environment sound; the twenty-nine attack executables must
+-- experience them.  The two control executables must COMPILE —
+-- probe-control proving the probe environment sound and
+-- probe-compatibility proving the pre-Profile-v1 adapter surface still
+-- compiles downstream; the twenty-nine attack executables must
 -- FAIL to compile, each for its intended boundary reason.  The probes are
 -- deliberately not part of the default project, so ordinary builds
 -- and tests never touch them.
