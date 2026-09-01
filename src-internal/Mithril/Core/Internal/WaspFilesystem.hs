@@ -3,12 +3,17 @@
 
 -- | __Internal module — never expose.__
 --
--- The effectful filesystem half of the Wasp Confinement Profile v0
--- commands: root-path validation, the no-follow snapshot walker, and
--- the complete-root installation of a rendered bundle.  The CLI
--- boundary "Mithril.Command.Wasp" is the only production caller; the
--- test suite reaches the installation seam directly to inject faults
--- between its steps.
+-- The effectful filesystem half of the Wasp Confinement Profile
+-- commands, shared by both profiles — Profile v0 (the exact singleton
+-- rule-1 plan) and Profile v1 (the exact ordered rule-1, rule-2 pair;
+-- every other plan is refused before this module is reached):
+-- root-path validation, the no-follow snapshot walker, and the
+-- complete-root installation of a rendered bundle of either profile,
+-- including the whole-root transitions between them (an owned root of
+-- either profile is replaced as a whole by a regeneration of either
+-- profile).  The CLI boundary "Mithril.Command.Wasp" is the only
+-- production caller; the test suite reaches the installation seam
+-- directly to inject faults between its steps.
 --
 -- == Root paths
 --

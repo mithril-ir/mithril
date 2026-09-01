@@ -1,11 +1,13 @@
-// Test-only concurrency helpers for the Wasp Confinement Profile v0
-// HTTP battery (test/wasp-integration/battery.mjs).  Extracted so the
-// timing constants, the barrier-deadline SQL fragment, and the
-// concurrent-dispatch and transport-error logic can be exercised by a
-// hermetic regression (test/wasp-integration/concurrency.test.mjs)
-// without a running server or database.  Nothing here is part of the
-// confinement claim, and nothing here is added to the generated
-// application.
+// Test-only concurrency helpers of the HTTP battery
+// (test/wasp-integration/battery.mjs) shared by both Wasp Confinement
+// Profiles — Profile v0 (the exact singleton rule-1 plan) and Profile
+// v1 (the exact ordered rule-1, rule-2 pair; every other plan is
+// refused before any generation).  Extracted so the timing constants,
+// the barrier-deadline SQL fragment, and the concurrent-dispatch and
+// transport-error logic can be exercised by a hermetic regression
+// (test/wasp-integration/concurrency.test.mjs) without a running
+// server or database.  Nothing here is part of the confinement claim,
+// and nothing here is added to the generated application.
 //
 // == The barrier deadline vs. Prisma's transaction timeout ==
 //
@@ -14,9 +16,11 @@
 // with { isolationLevel: "Serializable" } and NO explicit timeout, so
 // it inherits Prisma 5.19.1's default interactive-transaction timeout
 // (the runtime's `timeout ?? 5e3`), five seconds.  The concurrency
-// battery installs a BEFORE UPDATE barrier trigger that blocks each
-// update until two transactions have reached it, proving the two real
-// HTTP requests overlap at the database.  If the barrier's own
+// battery installs a BEFORE UPDATE barrier trigger that holds the
+// first-arriving transaction open until it observes its companion (the
+// same-row barrier: blocked on the row; the two-admin barrier: arrived
+// and committed), proving the two real HTTP requests overlap at the
+// database.  If the barrier's own
 // give-up deadline were also five seconds, a round that failed to
 // overlap would sit at the barrier for the whole transaction lifetime
 // and race Prisma's timeout: the loser would return an unrelated
@@ -300,4 +304,141 @@ export function renderTransportFailure(failure) {
   const code = codeText ? ` [${codeText}]` : "";
   const cause = causeText ? ` (${causeText})` : "";
   return `${label}: ${message}${code}${cause}`;
+}
+
+// The complete evidence a genuine, one-shot two-admin barrier round must
+// exhibit, as a PURE predicate over the non-transactional sequence values
+// the battery reads after the round — each an { isCalled, lastValue } pair
+// (test/wasp-integration/battery.mjs's sequenceValue), including
+// waiterCommittedTxid: the EXACT transaction id the held-open waiter itself
+// observed COMMITTED inside the trigger and published on a non-transactional
+// sequence, which must equal the designated committer's published id.  This
+// is the single acceptance
+// rule the real battery applies to a two-admin round, exported so the
+// hermetic regression (test/wasp-integration/concurrency.test.mjs) pins
+// exactly the predicate the battery calls, never a weaker copy.
+//
+// The two-admin barrier forces two DISTINCT-row transactions to overlap
+// and exactly one to commit.  A genuine round has EXACTLY two arrivals at
+// the trigger — arrival 1 the waiter, arrival 2 the designated committer.
+// A retry that re-entered the barrier (arrival >= 3) is therefore NOT a
+// genuine one-shot round and makes ok false, even when the statuses,
+// bodies, final state, pids, and commit evidence are otherwise valid: the
+// designated committer's published evidence must still identify arrival 2,
+// so no later arrival can be accepted as a replacement companion.  Every
+// clause below is required; reasons lists each violated clause so a
+// failing round (or a failing unit case) is self-describing.
+// This predicate is strictly FAIL-CLOSED: it validates the canonical shape
+// of every record BEFORE any semantic comparison, and never coerces.  Each
+// required sequence-state record must be a non-null object carrying a
+// boolean isCalled and a finite, safe-integer lastValue (exactly the
+// representation the reader produces); waiterCommittedTxid must be a called,
+// positive id equal to committerTxid; and the timeout record must be present
+// with isCalled ===
+// false — an ABSENT timeout record is malformed, never silently read as
+// "no timeout".  Malformed or partial evidence (null, arrays, primitives,
+// wrong types, numeric strings, NaN/Infinity, non-positive ids) yields
+// ok:false with a field-identifying reason, and never throws.
+export function evaluateTwoAdminBarrierEvidence(evidence) {
+  // The evidence itself must be a plain, non-null, non-array object.
+  if (evidence === null || typeof evidence !== "object" || Array.isArray(evidence)) {
+    return { ok: false, reasons: ["the barrier evidence is not an object (it is null, an array, or a primitive)"] };
+  }
+  const reasons = [];
+  // A canonical sequence-state record: { isCalled: boolean, lastValue:
+  // finite safe integer }, exactly as the integration reader produces
+  // (test/wasp-integration/battery.mjs's sequenceValue, which normalizes
+  // last_value through Number() and is_called through === "t" at the trusted
+  // collection boundary).  Returns the validated record, or null while
+  // recording a field-identifying reason for any missing/malformed value.
+  // No truthiness, no coercive comparison.
+  const canonicalSeq = (name) => {
+    const value = evidence[name];
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      reasons.push(`${name}: the sequence-state record is missing or not an object`);
+      return null;
+    }
+    if (typeof value.isCalled !== "boolean") {
+      reasons.push(`${name}: isCalled is not a boolean`);
+      return null;
+    }
+    if (typeof value.lastValue !== "number" || !Number.isSafeInteger(value.lastValue)) {
+      reasons.push(`${name}: lastValue is not a finite safe integer`);
+      return null;
+    }
+    return value;
+  };
+  // A REQUIRED record: canonical AND actually called (isCalled === true).
+  const requireCalled = (name) => {
+    const seq = canonicalSeq(name);
+    if (seq === null) return null;
+    if (seq.isCalled !== true) {
+      reasons.push(`${name}: the sequence was never called (isCalled is false)`);
+      return null;
+    }
+    return seq;
+  };
+  const arrivals = requireCalled("arrivals");
+  const committerArrival = requireCalled("committerArrival");
+  const committerTxid = requireCalled("committerTxid");
+  const committerPid = requireCalled("committerPid");
+  const waiterPid = requireCalled("waiterPid");
+  const blockedSeen = requireCalled("blockedSeen");
+  const waiterCommittedTxid = requireCalled("waiterCommittedTxid");
+  // Exactly two arrivals: waiter (arrival 1) + designated committer (arrival
+  // 2), and NO retry re-entered the one-shot barrier.  lastValue is already
+  // a validated safe integer here, so === and >= below are not coercive.
+  if (arrivals !== null && arrivals.lastValue !== 2) {
+    reasons.push(
+      `arrival count is ${arrivals.lastValue}, not exactly 2 — a retry re-entered the one-shot barrier or a request never arrived`,
+    );
+  }
+  // The designated committer's published evidence STILL identifies arrival 2
+  // (no later arrival overwrote it).
+  if (committerArrival !== null && committerArrival.lastValue !== 2) {
+    reasons.push(`the committer evidence identifies arrival ${committerArrival.lastValue}, not arrival 2`);
+  }
+  // Published transaction ids / backend pids are positive integers.
+  const requirePositive = (seq, label) => {
+    if (seq !== null && !(seq.lastValue >= 1)) {
+      reasons.push(`${label} is not a positive identifier (got ${seq.lastValue})`);
+    }
+  };
+  requirePositive(committerTxid, "the committer transaction id");
+  requirePositive(committerPid, "the committer backend pid");
+  requirePositive(waiterPid, "the waiter backend pid");
+  requirePositive(waiterCommittedTxid, "the waiter observed-committed transaction id");
+  // The waiter observed the designated committer commit (at least one tick).
+  if (blockedSeen !== null && !(blockedSeen.lastValue >= 1)) {
+    reasons.push("the waiter never observed the designated committer commit (no blocked-seen tick)");
+  }
+  // The waiter and the committer are two DISTINCT backends.
+  if (waiterPid !== null && committerPid !== null && waiterPid.lastValue === committerPid.lastValue) {
+    reasons.push("the waiter and committer are not two distinct backends");
+  }
+  // The held-open waiter observed the EXACT published committer transaction
+  // COMMITTED and published the id it observed (the battery's barrier trigger,
+  // the 'committed' branch ONLY, arrival 1 ONLY).  That observed-committed id
+  // must be present (requireCalled above — the waiter did observe a commit)
+  // and must EQUAL the designated committer's published id by exact integer
+  // equality: the commit proof is thereby bound to the exact published
+  // transaction and captured at the overlap moment, never re-derived by a
+  // later, weaker post-round pg_xact_status re-query (which once returned
+  // something other than the literal 'committed' for a genuine round; that
+  // raw value was not captured and its micro-cause is unknown).
+  // A never-published value (the waiter never observed a commit) or any
+  // mismatched, stale, or overwritten id fails closed here.
+  if (waiterCommittedTxid !== null && committerTxid !== null && waiterCommittedTxid.lastValue !== committerTxid.lastValue) {
+    reasons.push(
+      `the waiter's observed-committed transaction id (${waiterCommittedTxid.lastValue}) does not equal the designated committer's published transaction id (${committerTxid.lastValue})`,
+    );
+  }
+  // Timeout evidence must be EXPLICIT: a canonical record with isCalled ===
+  // false.  A missing or malformed record is rejected here, never
+  // synthesized into "no timeout".
+  const timeouts = canonicalSeq("timeouts");
+  if (timeouts !== null && timeouts.isCalled !== false) {
+    reasons.push(`a barrier deadline expired (${timeouts.lastValue} timeout(s))`);
+  }
+  return { ok: reasons.length === 0, reasons };
 }

@@ -81,9 +81,11 @@
 --    authority's subject endpoint reference through the pure gate,
 --    the production boundary, an injected runner recording zero
 --    invocations, and the Wasp emitter, while the unmodified
---    documents keep verifying under real Agda and the Profile-v0
---    gate keeps its verdicts; and no failure or report rendering
---    ever contains a violation verdict.
+--    documents keep verifying under real Agda and the Wasp profile
+--    dispatcher keeps its selections (Profile v0 for the singleton
+--    rule-1 document, Profile v1 for the ordered rule-1, rule-2
+--    pair); and no failure or report rendering ever contains a
+--    violation verdict.
 --
 -- 5. /Materiality and forged models./  A pinned-size mutation table
 --    walks every proof-relevant stored normalized evidence family of
@@ -200,14 +202,17 @@ import Mithril.Core.Internal.NspeSupportPlan
   , caseRule
   )
 import Mithril.Core.Internal.Wasp
-  ( WaspProfileV0Plan (..)
+  ( WaspProfile (..)
+  , WaspProfilePlan (..)
+  , WaspProfileV0Plan (..)
   , WaspRenderingRefusal (..)
   , bundleFiles
+  , bundleProfile
   , managedBytes
   , managedPath
-  , profileV0Plan
   , renderBundleFromModel
   , renderBundleFromPlan
+  , selectWaspProfile
   )
 import Mithril.Core.Internal.Verify
   ( GeneratedArtifact (..)
@@ -2102,9 +2107,9 @@ coordinatedParameterPositionDrift =
 -- zero invocations, and through the Wasp emitter as the same
 -- invariant before any lowering.  The unmodified documents keep
 -- verifying under real Agda 2.8.0 with their subject anchored to the
--- carried identity, and the Wasp Profile-v0 gate keeps accepting the
--- singleton rule-1 document and refusing the two-case document for
--- exactly its capability boundary.
+-- carried identity, and the Wasp profile dispatcher keeps selecting
+-- Profile v0 for the singleton rule-1 document and Profile v1 for the
+-- ordered rule-1, rule-2 pair (every other plan stays refused).
 anchoredSubjectChecks :: ByteString -> ByteString -> N.Model -> N.Model -> IO [Check]
 anchoredSubjectChecks nspeBytes selfUpdateBytes baseModel selfUpdateModel =
   case pipelineModel (encodeValue singletonRule2Value) of
@@ -2206,22 +2211,16 @@ anchoredSubjectChecks nspeBytes selfUpdateBytes baseModel selfUpdateModel =
                      "Wasp Profile v0 still accepts S0 as its one change-other case"
                      ( case supportPlan baseModel of
                          Right plan ->
-                           either (const False) ((== ChangeOtherRule) . caseRule . profileCase) (profileV0Plan plan)
-                             && either (const False) (const True) (renderBundleFromModel baseModel)
+                           ( case selectWaspProfile plan of
+                               Right (ProfileV0Plan profile) -> caseRule (profileCase profile) == ChangeOtherRule
+                               _ -> False
+                           )
+                             && fmap bundleProfile (renderBundleFromModel baseModel) == Right WaspProfileV0
                          Left _ -> False
                      )
                  , check
-                     "Wasp still refuses R1 only for its Profile-v0 capability boundary (the multi-case reason at the guarantee, never an invariant)"
-                     ( renderBundleFromModel selfUpdateModel
-                         == Left
-                           ( RenderUnsupported
-                               ( UnsupportedReason
-                                   ["guarantees", "0"]
-                                   "Wasp Profile v0 lowers exactly one Rule-1 case; this guarantee selects 2 cases"
-                                   :| []
-                               )
-                           )
-                     )
+                     "Wasp lowers R1 as Profile v1 (the ordered rule-1, rule-2 pair), never as a singleton and never as an invariant"
+                     (fmap bundleProfile (renderBundleFromModel selfUpdateModel) == Right WaspProfileV1)
                  ]
           )
   where
@@ -2431,11 +2430,11 @@ materialityChecks baseModel goldenText =
                   Right plan ->
                     renderObligationModule plan /= goldenText
                       -- The Wasp emitter consumes the same plan (through
-                      -- its Profile-v0 gate, which the singleton rule-1
-                      -- plan passes): the mutated metadata must change
-                      -- its bundle too.
-                      && case profileV0Plan plan of
-                        Right profile -> Just (waspBytes (renderBundleFromPlan profile)) /= baseWaspBytes
+                      -- its profile dispatcher, which selects Profile v0
+                      -- for the singleton rule-1 plan): the mutated
+                      -- metadata must change its bundle too.
+                      && case selectWaspProfile plan of
+                        Right selected -> Just (waspBytes (renderBundleFromPlan selected)) /= baseWaspBytes
                         Left _ -> False
                   Left _ -> False
               FailsUnsupported reasons ->
@@ -2453,7 +2452,7 @@ materialityChecks baseModel goldenText =
     baseWaspBytes =
       case supportPlan baseModel of
         Right plan ->
-          either (const Nothing) (Just . waspBytes . renderBundleFromPlan) (profileV0Plan plan)
+          either (const Nothing) (Just . waspBytes . renderBundleFromPlan) (selectWaspProfile plan)
         Left _ -> Nothing
 
     waspBytes bundle = [(managedPath file, managedBytes file) | file <- bundleFiles bundle]
@@ -3750,9 +3749,11 @@ overCases mutate = overGuarantee0 (overMember "cases" mutate)
 -- evidence — drifted stored types, ordered evidence, Actor entities,
 -- foreign parameter references, self-identities, and parameter
 -- positions of the second case — halts on its exact invariants.  The
--- Wasp emitter, consuming the same plan through its Profile-v0 gate,
--- refuses every supported variant with the deterministic profile
--- reason and every failing variant with exactly the gate's findings.
+-- Wasp emitter, consuming the same plan through its profile
+-- dispatcher (which selects Profile v1 for the ordered rule-1,
+-- rule-2 pair), renders every supported variant to a Profile-v1
+-- bundle that differs from the base bundle and refuses every failing
+-- variant with exactly the gate's findings.
 selfUpdateMaterialityChecks :: N.Model -> Text -> [Check]
 selfUpdateMaterialityChecks selfUpdateModel goldenText =
   check
@@ -3762,13 +3763,10 @@ selfUpdateMaterialityChecks selfUpdateModel goldenText =
   where
     expectedTableSize = 20
 
-    profileReason =
-      RenderUnsupported
-        ( UnsupportedReason
-            ["guarantees", "0"]
-            "Wasp Profile v0 lowers exactly one Rule-1 case; this guarantee selects 2 cases"
-            :| []
-        )
+    baseV1Bytes =
+      case renderBundleFromModel selfUpdateModel of
+        Right bundle -> Just [(managedPath file, managedBytes file) | file <- bundleFiles bundle]
+        Left _ -> Nothing
 
     runEntry (name, mutate, expected) =
       check ("rule-2 materiality: " <> name) $
@@ -3778,7 +3776,11 @@ selfUpdateMaterialityChecks selfUpdateModel goldenText =
                 case supportPlan mutated of
                   Right plan ->
                     renderObligationModule plan /= goldenText
-                      && renderBundleFromModel mutated == Left profileReason
+                      && case renderBundleFromModel mutated of
+                        Right bundle ->
+                          bundleProfile bundle == WaspProfileV1
+                            && Just [(managedPath file, managedBytes file) | file <- bundleFiles bundle] /= baseV1Bytes
+                        Left _ -> False
                   Left _ -> False
               FailsUnsupported reasons ->
                 supportPlan mutated

@@ -8,8 +8,8 @@
 # cabal.project.probes, so hidden modules (including the private
 # core-internal sublibrary), abstract types, and nominal roles are
 # enforced exactly as any downstream consumer would experience them.
-# All thirty downstream components carry the repository warning set
-# with -Werror; this script verifies that from the generated build
+# All thirty-one downstream components carry the repository warning
+# set with -Werror; this script verifies that from the generated build
 # plan, from probe.cabal, from every downstream probe source (no
 # module-level OPTIONS_GHC pragma may sidestep the command line),
 # and — decisively — from each component's own effective GHC
@@ -25,7 +25,12 @@
 #
 # Each control probe must compile before its attacks run, proving the
 # failures are caused by the intended boundary and not by a broken
-# probe environment.  Every attack probe must FAIL to compile, and
+# probe environment; the downstream compatibility control
+# (probe-compatibility) must compile too, proving that the adapter
+# surface frozen before the Wasp Confinement Profile v1 — the legacy
+# WaspBundleSummary view, its three selectors, and the two-argument
+# WaspNotConfined outcome — still compiles for downstream source next
+# to the Profile-v1 APIs.  Every attack probe must FAIL to compile, and
 # must fail with the message of its intended abstraction/role/
 # coercibility boundary; compiling successfully, or failing with any
 # other message, fails this script.
@@ -97,7 +102,7 @@ fail() {
 
 # --- Downstream warning-policy verification ----------------------
 #
-# All thirty downstream components — the control plus the
+# All thirty-one downstream components — the two controls plus the
 # twenty-nine attacks — must compile under the repository warning set
 # with an EFFECTIVE -Werror.  Four cooperating executable checks, using POSIX awk and
 # grep only (no optional tooling).  Three run once, right after the
@@ -194,7 +199,7 @@ if [ ! -f "$plan" ]; then
   fail "the downstream build plan was not generated at $plan"
 fi
 
-probe_components='probe-control probe-hidden-import probe-constructor-use probe-coerce-parsed probe-coerce-valid probe-coerce-value probe-hidden-resolved probe-hidden-syntax probe-extract-value probe-coerce-typed probe-hidden-typecheck probe-forge-typed probe-coerce-normalized probe-forge-normalized probe-hidden-normalized probe-hidden-normalizer probe-contract-typed probe-hidden-contract probe-verify-typed probe-hidden-verify probe-hidden-agda-kernel probe-hidden-agda-checker probe-wasp-parsed probe-wasp-valid probe-wasp-resolved probe-wasp-typed probe-hidden-nspe-support-plan probe-hidden-wasp probe-hidden-wasp-confinement probe-hidden-wasp-filesystem'
+probe_components='probe-control probe-compatibility probe-hidden-import probe-constructor-use probe-coerce-parsed probe-coerce-valid probe-coerce-value probe-hidden-resolved probe-hidden-syntax probe-extract-value probe-coerce-typed probe-hidden-typecheck probe-forge-typed probe-coerce-normalized probe-forge-normalized probe-hidden-normalized probe-hidden-normalizer probe-contract-typed probe-hidden-contract probe-verify-typed probe-hidden-verify probe-hidden-agda-kernel probe-hidden-agda-checker probe-wasp-parsed probe-wasp-valid probe-wasp-resolved probe-wasp-typed probe-hidden-nspe-support-plan probe-hidden-wasp probe-hidden-wasp-confinement probe-hidden-wasp-filesystem'
 
 if ! awk -v names="$probe_components" '
   { buffer = buffer $0 }
@@ -249,7 +254,7 @@ echo "ok: the downstream plan and probe.cabal give every probe component the wer
 # command-line arguments, so a probe source could weaken the warning
 # policy invisibly to verify_policy.  Every downstream probe source —
 # all *.hs in test/api-probes/probe, the one shared hs-source-dirs of
-# all thirty components — is therefore checked structurally before any
+# all thirty-one components — is therefore checked structurally before any
 # probe is accepted: the pragma's presence is rejected outright, with
 # no attempt to reconstruct GHC's post-pragma warning state.  Only a
 # real pragma opener ("{-#", then the pragma name, case-insensitive,
@@ -283,6 +288,19 @@ if [ "$control_compiled" = no ]; then
   fail "probe-control did not compile; the probe environment is broken, so attack failures would prove nothing"
 fi
 echo "ok: probe-control compiles (legitimate public pipeline)"
+
+# The compatibility control: the pre-Profile-v1 adapter surface must
+# still compile downstream, under the same effective warning policy.
+if build probe-compatibility; then
+  compatibility_compiled=yes
+else
+  compatibility_compiled=no
+fi
+verify_policy probe-compatibility
+if [ "$compatibility_compiled" = no ]; then
+  fail "probe-compatibility did not compile; the adapter surface frozen before Profile v1 (the legacy WaspBundleSummary view, summaryCaseAction/summaryOperation/summaryRoute, the two-argument WaspNotConfined) no longer compiles for downstream source"
+fi
+echo "ok: probe-compatibility compiles (the frozen pre-Profile-v1 adapter surface next to the Profile-v1 APIs)"
 
 # expect NAME PATTERN...: NAME's effective warning policy is verified
 # first; then NAME must fail to build, and every PATTERN (grep -E)

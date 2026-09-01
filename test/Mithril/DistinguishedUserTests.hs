@@ -69,9 +69,10 @@
 -- The downstream regressions over the normalized anchor (coherent
 -- subject redirection, zero checker invocations, no production
 -- checker discovery, Wasp 'RenderInvariant', S0 and the rule-2
--- fixtures still VERIFIED, Wasp Profile v0 accepting S0 and refusing
--- R1 only at its capability gate) stay in
--- "Mithril.CoreVerificationTests" and "Mithril.CoreWaspTests".
+-- fixtures still VERIFIED, the Wasp profile dispatcher lowering S0 as
+-- Profile v0 and R1 as Profile v1 while refusing every other plan)
+-- stay in "Mithril.CoreVerificationTests" and
+-- "Mithril.CoreWaspTests".
 module Mithril.DistinguishedUserTests
   ( tests
   ) where

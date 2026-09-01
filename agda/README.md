@@ -35,9 +35,11 @@ checks below and the Haskell test suite passing. No general verifier or
 general JSON-to-Agda lowering exists — everything outside that one guarantee
 family and its two exact case rules is UNSUPPORTED to the tool, and no
 violation is ever reported by it. The tool's Wasp Confinement Profile v0
-lowers only exactly one rule-1 case, so a document verified with a rule-2
-case or with several cases has no Wasp counterpart and is UNSUPPORTED to
-`mithril wasp generate|check`.
+lowers only exactly one rule-1 case and its Wasp Confinement Profile v1
+only the exact ordered rule-1, rule-2 case pair, so a document verified
+with any other case sequence (a singleton rule-2 case, two rule-1 cases,
+the reversed pair, three or more cases) has no Wasp counterpart and is
+UNSUPPORTED to `mithril wasp generate|check`.
 
 ## Checking
 

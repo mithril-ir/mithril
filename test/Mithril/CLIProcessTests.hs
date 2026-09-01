@@ -24,9 +24,14 @@ module Mithril.CLIProcessTests
   ( tests
   ) where
 
+import Data.Aeson (Value (..), toJSON)
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Bits ((.&.))
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as Char8
+import qualified Data.ByteString.Lazy as LazyByteString
 import Data.List (intercalate, isInfixOf, isPrefixOf, sort)
 import System.Directory
   ( canonicalizePath
@@ -557,13 +562,52 @@ selfUpdatePath = "test/fixtures/acme-nspe-self-update.mir.json"
 dangerousPath :: FilePath
 dangerousPath = "test/fixtures/acme-nspe-dangerous.mir.json"
 
--- | The Profile-v0 gate report of the verified two-case fixture: the
--- document verifies, and the Wasp commands refuse it before any
--- destination access.
-selfUpdateWaspReport :: String
-selfUpdateWaspReport =
-  "test/fixtures/acme-nspe-self-update.mir.json: UNSUPPORTED by the implemented Wasp support rule\n\
-  \  /guarantees/0: Wasp Profile v0 lowers exactly one Rule-1 case; this guarantee selects 2 cases\n"
+-- | The dispatcher's refusal of a singleton rule-2 document (the
+-- two-case fixture with its change-other case removed): the document
+-- verifies, and the Wasp commands refuse it before any destination
+-- access.
+singletonRule2WaspReport :: FilePath -> String
+singletonRule2WaspReport file =
+  file
+    ++ ": UNSUPPORTED by the implemented Wasp support rule\n\
+       \  /guarantees/0/cases/0: Wasp Profile v0 lowers exactly one Rule-1 case and Wasp Profile v1 exactly the ordered Rule-1, Rule-2 case pair; this guarantee selects one case, which matches rule 2 (bounded-self-update)\n"
+
+-- | The two-case fixture with its first case removed: the verified
+-- singleton rule-2 document, which no Wasp profile lowers.
+dropFirstCase :: ByteString.ByteString -> ByteString.ByteString
+dropFirstCase bytes =
+  case Aeson.decodeStrict bytes of
+    Just (Object document) ->
+      LazyByteString.toStrict
+        ( Aeson.encode
+            ( Object
+                ( case KeyMap.lookup (Key.fromString "guarantees") document of
+                    Just guarantees -> KeyMap.insert (Key.fromString "guarantees") (dropCase guarantees) document
+                    Nothing -> document
+                )
+            )
+        )
+    _ -> bytes
+  where
+    dropCase guarantees =
+      case guarantees of
+        Array items ->
+          toJSON
+            [ case item of
+                Object guarantee ->
+                  Object
+                    ( KeyMap.insert
+                        (Key.fromString "cases")
+                        ( case KeyMap.lookup (Key.fromString "cases") guarantee of
+                            Just (Array cases) -> toJSON (drop 1 (foldr (:) [] cases))
+                            other -> maybe Null id other
+                        )
+                        guarantee
+                    )
+                other -> other
+            | item <- foldr (:) [] items
+            ]
+        other -> other
 
 acmePath :: FilePath
 acmePath = "examples/acme/acme.mir.json"
@@ -779,20 +823,32 @@ waspExpectations =
       , cliStderr = ""
       }
   , CliExpectation
-      { -- The verified two-case fixture is outside the Wasp Profile v0
-        -- (exactly one rule-1 case): refused at the capability gate
-        -- with exit 3, with nothing written.
-        cliName = "wasp generate refuses the verified two-case fixture at the Profile-v0 gate with exit 3 and writes nothing"
-      , cliArgs = ["wasp", "generate", selfUpdatePath, "test/fixtures/never-created"]
-      , cliExit = ExitFailure 3
-      , cliStdout = selfUpdateWaspReport
+      { -- The verified two-case fixture selects the Wasp Confinement
+        -- Profile v1: the committed Profile-v1 fixture is exactly the
+        -- fresh bundle, and the report lists both operations in
+        -- authored case order.
+        cliName = "wasp check reports the committed Profile-v1 fixture confined"
+      , cliArgs = ["wasp", "check", selfUpdatePath, waspV1FixtureRoot]
+      , cliExit = ExitSuccess
+      , cliStdout = confinedV1Report waspV1FixtureRoot "CONFINED" <> "\n"
       , cliStderr = ""
       }
   , CliExpectation
-      { cliName = "wasp check refuses the verified two-case fixture at the Profile-v0 gate with exit 3"
+      { -- A valid Profile-v1 root is not the Profile-v0 bundle of the
+        -- singleton document: exactly the differing managed files,
+        -- the other profile's marker named, the additional Action
+        -- labelled.
+        cliName = "wasp check reports the Profile-v1 fixture not confined against the singleton document (a Profile-v0 check)"
+      , cliArgs = ["wasp", "check", nspePath, waspV1FixtureRoot]
+      , cliExit = ExitFailure 4
+      , cliStdout = v1RootAgainstV0Report waspV1FixtureRoot
+      , cliStderr = ""
+      }
+  , CliExpectation
+      { cliName = "wasp check reports the Profile-v0 fixture not confined against the two-case document (a Profile-v1 check)"
       , cliArgs = ["wasp", "check", selfUpdatePath, waspFixtureRoot]
-      , cliExit = ExitFailure 3
-      , cliStdout = selfUpdateWaspReport
+      , cliExit = ExitFailure 4
+      , cliStdout = v0RootAgainstV1Report waspFixtureRoot
       , cliStderr = ""
       }
   , CliExpectation
@@ -866,6 +922,64 @@ waspExpectations =
 waspFixtureRoot :: FilePath
 waspFixtureRoot = "test/fixtures/wasp-acme"
 
+waspV1FixtureRoot :: FilePath
+waspV1FixtureRoot = "test/fixtures/wasp-acme-self-update"
+
+-- | The deterministic report of a confined or generated Profile-v1
+-- root: the verdict line naming the profile, the summary lines with
+-- both operations in authored case order, and the closed path
+-- inventory (the same fourteen paths as Profile v0).
+confinedV1Report :: FilePath -> String -> String
+confinedV1Report root verdict =
+  intercalate
+    "\n"
+    ( [ root ++ ": " ++ verdict ++ " (Wasp Confinement Profile v1)"
+      , "  core: test/fixtures/acme-nspe-self-update.mir.json"
+      , "  verification: VERIFIED by the production verifier before the bundle was rendered"
+      , "  guarantee: NoSelfPrivilegeEscalation"
+      , "  operations: 2"
+      , "  case 0: rule 1 (change-other), action \"Membership.changeRole\""
+      , "    operation: mithrilCaseAction (POST /operations/mithril-case-action)"
+      , "  case 1: rule 2 (bounded-self-update), action \"Membership.changeOwnRole\""
+      , "    operation: mithrilSelfUpdateAction (POST /operations/mithril-self-update-action)"
+      , "  target: Wasp 0.25.0, PostgreSQL, Prisma runtime supplied by Wasp"
+      , "  managed files: 14"
+      ]
+        <> map ("    " ++) waspInventory
+    )
+
+-- | The exact NOT CONFINED report of a valid Profile-v1 root checked
+-- against the singleton document's Profile-v0 bundle.
+v1RootAgainstV0Report :: FilePath -> String
+v1RootAgainstV0Report root =
+  root
+    ++ ": NOT CONFINED (Wasp Confinement Profile v0)\n\
+       \  .gitignore: the managed file differs from the regenerated bundle\n\
+       \  .mithril-wasp-profile: the managed file differs from the regenerated bundle\n\
+       \  .mithril-wasp-profile: the ownership marker is that of a Wasp Confinement Profile v1 root, not of the requested Wasp Confinement Profile v0 (mithril wasp generate transitions an owned root as a whole)\n\
+       \  main.wasp.ts: the Wasp specification declares an additional Action, which the profile does not permit\n\
+       \  main.wasp.ts: the managed file differs from the regenerated bundle\n\
+       \  mithril.manifest.json: the managed file differs from the regenerated bundle\n\
+       \  schema.prisma: the managed Prisma schema differs from the regenerated bundle (schema or database-provider drift)\n\
+       \  src/MainPage.tsx: the managed file differs from the regenerated bundle\n\
+       \  src/mithrilCaseAction.ts: the generated Action differs from the regenerated bundle (edited generated authorization)\n"
+
+-- | The exact NOT CONFINED report of a valid Profile-v0 root checked
+-- against the two-case document's Profile-v1 bundle.
+v0RootAgainstV1Report :: FilePath -> String
+v0RootAgainstV1Report root =
+  root
+    ++ ": NOT CONFINED (Wasp Confinement Profile v1)\n\
+       \  .gitignore: the managed file differs from the regenerated bundle\n\
+       \  .mithril-wasp-profile: the managed file differs from the regenerated bundle\n\
+       \  .mithril-wasp-profile: the ownership marker is that of a Wasp Confinement Profile v0 root, not of the requested Wasp Confinement Profile v1 (mithril wasp generate transitions an owned root as a whole)\n\
+       \  main.wasp.ts: the Wasp specification no longer declares every generated Action\n\
+       \  main.wasp.ts: the managed file differs from the regenerated bundle\n\
+       \  mithril.manifest.json: the managed file differs from the regenerated bundle\n\
+       \  schema.prisma: the managed Prisma schema differs from the regenerated bundle (schema or database-provider drift)\n\
+       \  src/MainPage.tsx: the managed file differs from the regenerated bundle\n\
+       \  src/mithrilCaseAction.ts: the generated Action differs from the regenerated bundle (edited generated authorization)\n"
+
 -- | The deterministic report of a confined or generated root: the
 -- verdict line, the summary lines, and the closed path inventory.
 confinedReport :: FilePath -> String -> String
@@ -917,7 +1031,20 @@ waspInventory =
 -- generation under @umask 000@ still installs a root with the private
 -- permission bits 0700 (byte-identical and confined), and — with a
 -- fake @agda@ ahead on PATH — a verifier tool failure exits 2 and
--- neither creates a root nor replaces an existing one.
+-- neither creates a root nor replaces an existing one.  The
+-- Profile-v1 path: the two-case fixture generates into a fresh child
+-- root (exit 0, the GENERATED Profile-v1 report, byte-identical to
+-- the committed Profile-v1 fixture), transitions the owned
+-- Profile-v0 root to Profile v1 and back as a whole (each byte-
+-- identical to its fixture, each passing its own check), and the
+-- verified singleton rule-2 document — the two-case fixture with its
+-- change-other case removed — is refused with exit 3 before any
+-- destination access: an unrelated directory stays untouched, and a
+-- destination trap (a root below an overlong ancestor component,
+-- which every no-follow metadata read fails with @ENAMETOOLONG@ —
+-- both commands on the supported document exit 1 on it) still
+-- receives the exit-3 refusal, so not even a read-only inspection
+-- reached the destination.
 waspProcessChecks :: IO [Check]
 waspProcessChecks = do
   temporaryBase <- canonicalizePath =<< getTemporaryDirectory
@@ -954,17 +1081,42 @@ waspProcessChecks = do
   let selfUpdateParent = scratch </> "self-update-parent"
       selfUpdateChild = selfUpdateParent </> "child"
       sentinel = scratch </> "sentinel"
+      singletonRule2 = scratch </> "singleton-rule2.mir.json"
+      singletonParent = scratch </> "singleton-parent"
   createDirectory selfUpdateParent
   selfUpdateFresh <- invokeMithril ["wasp", "generate", selfUpdatePath, selfUpdateChild]
-  selfUpdateChildExists <- doesPathExist selfUpdateChild
+  selfUpdateChildBytes <- mapM (\path -> ByteString.readFile (selfUpdateChild </> path)) waspInventory
   selfUpdateParentEntries <- listDirectory selfUpdateParent
-  createDirectory sentinel
-  writeFile (sentinel </> "keep.txt") "keep\n"
-  selfUpdateSentinel <- invokeMithril ["wasp", "generate", selfUpdatePath, sentinel]
-  sentinelEntries <- listDirectory sentinel
-  sentinelContent <- readFile (sentinel </> "keep.txt")
+  v1FixtureBytes <- mapM (\path -> ByteString.readFile (waspV1FixtureRoot </> path)) waspInventory
+  selfUpdateChecked <- invokeMithril ["wasp", "check", selfUpdatePath, selfUpdateChild]
+  selfUpdateChildBits <- permissionBitsOf selfUpdateChild
   selfUpdateExisting <- invokeMithril ["wasp", "generate", selfUpdatePath, root]
   afterSelfUpdateExisting <- mapM (\path -> ByteString.readFile (root </> path)) waspInventory
+  afterUpgradeCheck <- invokeMithril ["wasp", "check", selfUpdatePath, root]
+  afterUpgradeCross <- invokeMithril ["wasp", "check", nspePath, root]
+  downgraded <- invokeMithril ["wasp", "generate", nspePath, root]
+  afterDowngrade <- mapM (\path -> ByteString.readFile (root </> path)) waspInventory
+  afterDowngradeCheck <- invokeMithril ["wasp", "check", nspePath, root]
+  selfUpdateBytes <- ByteString.readFile selfUpdatePath
+  ByteString.writeFile singletonRule2 (dropFirstCase selfUpdateBytes)
+  singletonVerified <- invokeMithril ["verify", singletonRule2]
+  createDirectory singletonParent
+  singletonFresh <- invokeMithril ["wasp", "generate", singletonRule2, singletonParent </> "child"]
+  singletonParentEntries <- listDirectory singletonParent
+  createDirectory sentinel
+  writeFile (sentinel </> "keep.txt") "keep\n"
+  singletonSentinel <- invokeMithril ["wasp", "generate", singletonRule2, sentinel]
+  sentinelEntries <- listDirectory sentinel
+  sentinelContent <- readFile (sentinel </> "keep.txt")
+  singletonExisting <- invokeMithril ["wasp", "generate", singletonRule2, root]
+  afterSingletonExisting <- mapM (\path -> ByteString.readFile (root </> path)) waspInventory
+  singletonCheck <- invokeMithril ["wasp", "check", singletonRule2, waspV1FixtureRoot]
+  let trapRoot = scratch </> replicate 300 'x' </> "app"
+      trapDiagnostic = trapRoot ++ ": unusable Wasp root\n  its parent directory does not exist\n"
+  trapGenerateSupported <- invokeMithril ["wasp", "generate", nspePath, trapRoot]
+  trapCheckSupported <- invokeMithril ["wasp", "check", nspePath, trapRoot]
+  trapGenerateSingleton <- invokeMithril ["wasp", "generate", singletonRule2, trapRoot]
+  trapCheckSingleton <- invokeMithril ["wasp", "check", singletonRule2, trapRoot]
   let backupSibling = root ++ ".mithril-wasp-backup"
   createDirectory backupSibling
   occupiedBackup <- invokeMithril ["wasp", "generate", nspePath, root]
@@ -1058,21 +1210,53 @@ waspProcessChecks = do
             && not relativeTrailingExists
         )
     , check
-        "the verified two-case fixture is refused at the Profile-v0 gate with exit 3 before its child destination is created"
-        ( selfUpdateFresh == (ExitFailure 3, selfUpdateWaspReport, "")
-            && not selfUpdateChildExists
-            && null selfUpdateParentEntries
+        "wasp generate lowers the verified two-case fixture as Profile v1 into a fresh child root: exit 0, the GENERATED Profile-v1 report, byte-identical to the committed Profile-v1 fixture, private"
+        ( selfUpdateFresh == (ExitSuccess, confinedV1Report selfUpdateChild "GENERATED" <> "\n  confinement: CONFINED\n", "")
+            && selfUpdateChildBytes == v1FixtureBytes
+            && selfUpdateParentEntries == ["child"]
+            && selfUpdateChecked == (ExitSuccess, confinedV1Report selfUpdateChild "CONFINED" <> "\n", "")
+            && selfUpdateChildBits == 0o700
         )
     , check
-        "the Profile-v0 refusal leaves an unrelated existing destination byte-identical"
-        ( selfUpdateSentinel == (ExitFailure 3, selfUpdateWaspReport, "")
+        "a v0 → v1 transition through the process replaces the owned Profile-v0 root as a whole: the Profile-v1 report, the Profile-v1 bytes, its own check passes, the Profile-v0 check names every cross-profile difference"
+        ( selfUpdateExisting == (ExitSuccess, confinedV1Report root "GENERATED" <> "\n  confinement: CONFINED\n", "")
+            && afterSelfUpdateExisting == v1FixtureBytes
+            && afterUpgradeCheck == (ExitSuccess, confinedV1Report root "CONFINED" <> "\n", "")
+            && afterUpgradeCross == (ExitFailure 4, v1RootAgainstV0Report root, "")
+        )
+    , check
+        "a v1 → v0 transition through the process restores the Profile-v0 bytes and report"
+        ( downgraded == (ExitSuccess, confinedReport root "GENERATED" <> "\n  confinement: CONFINED\n", "")
+            && afterDowngrade == fixtureBytes
+            && afterDowngradeCheck == (ExitSuccess, confinedReport root "CONFINED" <> "\n", "")
+        )
+    , check
+        "the singleton rule-2 document verifies (exit 0) but is refused by the dispatcher with exit 3 before its child destination is created"
+        ( (\(status, _, err) -> status == ExitSuccess && err == "") singletonVerified
+            && singletonFresh == (ExitFailure 3, singletonRule2WaspReport singletonRule2, "")
+            && null singletonParentEntries
+        )
+    , check
+        "the dispatcher's refusal leaves an unrelated existing destination byte-identical"
+        ( singletonSentinel == (ExitFailure 3, singletonRule2WaspReport singletonRule2, "")
             && sentinelEntries == ["keep.txt"]
             && sentinelContent == "keep\n"
         )
     , check
-        "the Profile-v0 refusal replaces nothing in an existing owned root"
-        ( selfUpdateExisting == (ExitFailure 3, selfUpdateWaspReport, "")
-            && afterSelfUpdateExisting == fixtureBytes
+        "the dispatcher's refusal replaces nothing in an existing owned root and refuses check with the same reason"
+        ( singletonExisting == (ExitFailure 3, singletonRule2WaspReport singletonRule2, "")
+            && afterSingletonExisting == fixtureBytes
+            && singletonCheck == (ExitFailure 3, singletonRule2WaspReport singletonRule2, "")
+        )
+    , check
+        "the destination trap is armed: generate and check of the supported document both fail on it with exit 1 and the unusable-root diagnostic (read-only inspection and mutation alike)"
+        ( trapGenerateSupported == (ExitFailure 1, "", trapDiagnostic)
+            && trapCheckSupported == (ExitFailure 1, "", trapDiagnostic)
+        )
+    , check
+        "the dispatcher's refusal against the destination trap still exits 3 with the exact UNSUPPORTED report — zero destination access, not even a read-only inspection"
+        ( trapGenerateSingleton == (ExitFailure 3, singletonRule2WaspReport singletonRule2, "")
+            && trapCheckSingleton == (ExitFailure 3, singletonRule2WaspReport singletonRule2, "")
         )
     , check
         "an occupied backup sibling path refuses generation with exit 1 and touches neither the root nor the entry"
@@ -1120,7 +1304,7 @@ waspProcessChecks = do
                  \ exactly Agda 2.8.0\n  reported: Agda version 2.7.0\n"
                )
             && afterVerifierFailure == fixtureBytes
-            && sort scratchEntries == ["app", "fake-agda", "occupied", "self-update-parent", "sentinel", "umask-app"]
+            && sort scratchEntries == ["app", "fake-agda", "occupied", "self-update-parent", "sentinel", "singleton-parent", "singleton-rule2.mir.json", "umask-app"]
         )
     ]
   where

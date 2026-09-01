@@ -33,17 +33,41 @@
 #      identity that cannot be established sends nothing and fails
 #      closed;
 #   7. the local-cluster branch stops the cluster it started and
-#      removes the working directory;
+#      removes the working directory; a second provisioning (the
+#      Profile-v1 database) reuses the one cluster and creates a second
+#      database, and in administrative-URL mode a second provisioning
+#      creates and drops a second owned database, never the
+#      administrative one;
 #   8. a TMPDIR reached through a symbolic link: mktemp succeeds, the
 #      working directory is the physical path, mithril wasp generate
-#      succeeds below it, and cleanup removes exactly the physical
-#      working directory, leaving the link and its target untouched;
+#      succeeds below it for both profiles — the Profile-v0 fixture,
+#      the Profile-v1 fixture (reported as Profile v1, byte-identical
+#      to the committed Profile-v1 fixture), and a v0 → v1 → v0
+#      transition on one root — and cleanup removes exactly the
+#      physical working directory, leaving the link and its target
+#      untouched;
 #   9. the concurrency helpers of the HTTP battery
 #      (test/wasp-integration/concurrency.test.mjs, node only): the
 #      barrier deadline stays strictly and substantially below Prisma's
 #      transaction timeout, a client transport rejection is a pinned
 #      failure naming the request, and two concurrent requests use two
-#      independent sockets.
+#      independent sockets;
+#  10. the battery's manifest reading (MITHRIL_WASP_BATTERY_PLAN=1,
+#      node only, no server and no database): against the committed
+#      Profile-v0 and Profile-v1 fixture manifests it selects the
+#      profile explicitly, forwards exactly the fixed routes and
+#      argument names of every operation, and plans exactly the
+#      scenario groups of that profile;
+#  11. the battery's serial-outcome oracle
+#      (test/wasp-integration/oracle.test.mjs, node only): the explicit
+#      two-admin, same-operation, and cross-operation outcome tables
+#      are pinned literally (two rows each — an isolated pair resolves
+#      serially, so no table admits a 409), every permitted row is
+#      accepted, and the mutants — every 409-containing status pair in
+#      every scenario, a denied demotion by the top-ranked actor paired
+#      with a successful equal write and a final top value, 200/200 with
+#      a final top value, two-admin write skew, wrong bodies, and
+#      inconsistent final states — are rejected.
 #
 # Test-only tooling outside the confinement claim.
 
@@ -53,6 +77,9 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
 lib=$script_dir/lib.sh
 core_file=$repo_root/test/fixtures/acme-nspe.mir.json
+v1_core_file=$repo_root/test/fixtures/acme-nspe-self-update.mir.json
+fixture_root=$repo_root/test/fixtures/wasp-acme
+v1_fixture_root=$repo_root/test/fixtures/wasp-acme-self-update
 
 sandbox=$(mktemp -d) || exit 1
 trap 'status=$?; rm -rf "$sandbox"; exit "$status"' EXIT
@@ -208,6 +235,21 @@ owned=$(sed -n 's/^owned=//p' "$sandbox/admin-ok.out")
 assert_contains "the DROP targeted exactly the owned database" "$log" "drop database \"$owned\" with (force)"
 assert_contains "DATABASE_URL names the owned database" "$sandbox/admin-ok.out" "url=postgresql://u@h/$owned"
 
+echo "== 3b. a second owned database (the Profile-v1 root's) in administrative-URL mode =="
+run_scenario admin-two 'MITHRIL_PG_ADMIN_URL=postgresql://u@h/postgres; export MITHRIL_PG_ADMIN_URL; mithril_provision_database || fail "provisioning failed"; first_url=$DATABASE_URL; first_owned=$owned_database; mithril_provision_database v1 || fail "provisioning the second database failed"; echo "first=$first_owned"; echo "second=$owned_database"; echo "owned=$owned_databases"; echo "url1=$first_url"; echo "url2=$DATABASE_URL"'
+assert_status "the two-database run terminates with exit 0" "$scenario_status" 0
+assert_count "exactly two CREATE DATABASE statements were issued" "$log" "create database" 2
+assert_count "exactly two DROP DATABASE statements were issued at cleanup" "$log" "drop database" 2
+assert_missing "the administrative database was never dropped" "$log" 'drop database "postgres"'
+first_owned=$(sed -n 's/^first=//p' "$sandbox/admin-two.out")
+second_owned=$(sed -n 's/^second=//p' "$sandbox/admin-two.out")
+if [ -n "$first_owned" ] && [ -n "$second_owned" ] && [ "$first_owned" != "$second_owned" ]; then ok "the two owned databases have distinct names"; else bad "the two owned databases have distinct names ($first_owned, $second_owned)"; fi
+assert_contains "both owned databases are recorded" "$sandbox/admin-two.out" "^owned=$first_owned $second_owned$"
+assert_contains "the first DROP targeted the first owned database" "$log" "drop database \"$first_owned\" with (force)"
+assert_contains "the second DROP targeted the second owned database" "$log" "drop database \"$second_owned\" with (force)"
+assert_contains "the second DATABASE_URL names the second owned database" "$sandbox/admin-two.out" "url2=postgresql://u@h/$second_owned"
+assert_contains "the first DATABASE_URL named the first owned database" "$sandbox/admin-two.out" "url1=postgresql://u@h/$first_owned"
+
 echo "== 4. database drop failure =="
 run_scenario drop-fail 'MITHRIL_PG_ADMIN_URL=postgresql://u@h/postgres; export MITHRIL_PG_ADMIN_URL; STUB_PSQL_MODE=drop-fail; export STUB_PSQL_MODE; mithril_provision_database || fail "provisioning failed"'
 assert_status "a drop failure turns the successful run into exit 1" "$scenario_status" 1
@@ -298,6 +340,18 @@ assert_missing "no DROP DATABASE is issued in local-cluster mode" "$log" "drop d
 workdir=$(sed -n 's/^workdir=//p' "$sandbox/local-ok.out")
 if [ -e "$workdir" ]; then bad "the working directory was not removed"; else ok "the working directory was removed"; fi
 
+echo "== 7b. local initdb: the second database (the Profile-v1 root's) reuses the one private cluster =="
+run_scenario local-two 'unset MITHRIL_PG_ADMIN_URL; mithril_provision_database || fail "provisioning failed"; echo "url1=$DATABASE_URL"; mithril_provision_database v1 || fail "provisioning the second database failed"; echo "url2=$DATABASE_URL"; echo "cluster=$cluster_started"'
+assert_status "the two-database local-cluster run terminates with exit 0" "$scenario_status" 0
+assert_count "initdb initialized the private cluster exactly once" "$log" "initdb -D" 1
+assert_count "pg_ctl started the private cluster exactly once" "$log" "pg_ctl -D .* start" 1
+assert_contains "the first isolated database was created" "$log" "create database mithril_wasp;"
+assert_contains "the second isolated database was created in the same cluster" "$log" "create database mithril_wasp_v1;"
+assert_count "pg_ctl stopped the private cluster exactly once at cleanup" "$log" "pg_ctl -D .* -m fast -w stop" 1
+assert_missing "no DROP DATABASE is issued in local-cluster mode" "$log" "drop database"
+assert_contains "the first DATABASE_URL names the first database" "$sandbox/local-two.out" "^url1=postgresql://mithril@127.0.0.1:54999/mithril_wasp$"
+assert_contains "the second DATABASE_URL names the second database" "$sandbox/local-two.out" "^url2=postgresql://mithril@127.0.0.1:54999/mithril_wasp_v1$"
+
 echo "== 8. symlinked TMPDIR =="
 mithril=${MITHRIL_BIN:-}
 if [ -z "$mithril" ]; then
@@ -312,7 +366,7 @@ mkdir "$real_tmp"
 physical_tmp=$(CDPATH='' cd -- "$real_tmp" && pwd -P)
 printf 'sentinel\n' >"$real_tmp/sentinel"
 ln -s "$real_tmp" "$sandbox/link-tmp"
-run_scenario symlinked-tmpdir 'TMPDIR=$sandbox/link-tmp; export TMPDIR; mithril_create_work_directory || fail "creating the working directory failed"; echo "work=$work"; "$mithril" wasp generate "$core_file" "$work/app" >"$work/generate.log" 2>&1 || { cat "$work/generate.log"; fail "wasp generate below the working directory failed"; }; head -n 1 "$work/generate.log"; [ -f "$work/app/.mithril-wasp-profile" ] || fail "the generated root carries no ownership marker"; "$mithril" wasp check "$core_file" "$work/app" >/dev/null || fail "the generated root is not confined"; echo "generated=$work/app"'
+run_scenario symlinked-tmpdir 'TMPDIR=$sandbox/link-tmp; export TMPDIR; mithril_create_work_directory || fail "creating the working directory failed"; echo "work=$work"; "$mithril" wasp generate "$core_file" "$work/app" >"$work/generate.log" 2>&1 || { cat "$work/generate.log"; fail "wasp generate below the working directory failed"; }; head -n 1 "$work/generate.log"; [ -f "$work/app/.mithril-wasp-profile" ] || fail "the generated root carries no ownership marker"; "$mithril" wasp check "$core_file" "$work/app" >/dev/null || fail "the generated root is not confined"; echo "generated=$work/app"; "$mithril" wasp generate "$v1_core_file" "$work/app-v1" >"$work/generate-v1.log" 2>&1 || { cat "$work/generate-v1.log"; fail "wasp generate of the two-case fixture below the working directory failed"; }; head -n 1 "$work/generate-v1.log"; grep -c "^    operation: " "$work/generate-v1.log"; diff -r "$v1_fixture_root" "$work/app-v1" >/dev/null || fail "the generated Profile-v1 root differs from the committed Profile-v1 fixture"; "$mithril" wasp check "$v1_core_file" "$work/app-v1" >/dev/null || fail "the generated Profile-v1 root is not confined"; echo "generated-v1=$work/app-v1"; "$mithril" wasp generate "$v1_core_file" "$work/app" >"$work/transition-up.log" 2>&1 || { cat "$work/transition-up.log"; fail "the v0 -> v1 transition failed"; }; head -n 1 "$work/transition-up.log"; diff -r "$v1_fixture_root" "$work/app" >/dev/null || fail "the v0 -> v1 transition did not install the Profile-v1 fixture"; "$mithril" wasp generate "$core_file" "$work/app" >"$work/transition-down.log" 2>&1 || { cat "$work/transition-down.log"; fail "the v1 -> v0 transition failed"; }; head -n 1 "$work/transition-down.log"; diff -r "$fixture_root" "$work/app" >/dev/null || fail "the v1 -> v0 transition did not restore the Profile-v0 fixture"; [ ! -e "$work/app.mithril-wasp-staging" ] || fail "a staging sibling was left behind"; [ ! -e "$work/app.mithril-wasp-backup" ] || fail "a backup sibling was left behind"; echo "transitions=ok"'
 assert_status "generation under a symlinked TMPDIR terminates with exit 0" "$scenario_status" 0
 workdir=$(sed -n 's/^work=//p' "$sandbox/symlinked-tmpdir.out")
 case $workdir in
@@ -325,6 +379,11 @@ case $workdir in
 esac
 assert_contains "mithril wasp generate reported the generated root below the physical path" "$sandbox/symlinked-tmpdir.out" "^$workdir/app: GENERATED (Wasp Confinement Profile v0)$"
 assert_contains "the generated root was confined" "$sandbox/symlinked-tmpdir.out" "^generated=$workdir/app$"
+assert_contains "the two-case fixture generated as Profile v1 below the physical path" "$sandbox/symlinked-tmpdir.out" "^$workdir/app-v1: GENERATED (Wasp Confinement Profile v1)$"
+assert_contains "the Profile-v1 report listed two operation lines" "$sandbox/symlinked-tmpdir.out" "^2$"
+assert_contains "the generated Profile-v1 root was byte-identical to its fixture and confined" "$sandbox/symlinked-tmpdir.out" "^generated-v1=$workdir/app-v1$"
+assert_count "the v0 -> v1 -> v0 transitions each reported their profile" "$sandbox/symlinked-tmpdir.out" "^$workdir/app: GENERATED (Wasp Confinement Profile v[01])$" 3
+assert_contains "the transitions restored the fixtures byte-for-byte and left no staging or backup" "$sandbox/symlinked-tmpdir.out" "^transitions=ok$"
 if [ -e "$workdir" ]; then bad "cleanup removed the physical working directory"; else ok "cleanup removed the physical working directory"; fi
 if [ -L "$sandbox/link-tmp" ] && [ "$(readlink "$sandbox/link-tmp")" = "$real_tmp" ]; then ok "the TMPDIR symbolic link is untouched"; else bad "the TMPDIR symbolic link is untouched"; fi
 if [ "$(ls -A "$real_tmp")" = sentinel ] && [ "$(cat "$real_tmp/sentinel")" = sentinel ]; then ok "the link target holds only its sentinel after cleanup"; else bad "the link target holds only its sentinel after cleanup"; ls -la "$real_tmp" >&2; fi
@@ -342,6 +401,48 @@ assert_contains "a transport rejection is reported as a pinned failure naming th
 assert_contains "two concurrent requests use two independent sockets" "$regression_out" "two distinct client sockets"
 assert_contains "the regression reports all its checks passed" "$regression_out" "All concurrency-helper regression checks passed."
 if grep -q "^FAIL:" "$regression_out"; then bad "the concurrency-helper regression reported a FAIL line"; cat "$regression_out" >&2; else ok "the concurrency-helper regression reported no FAIL line"; fi
+
+echo "== 10. the battery's manifest reading (plan mode, node only) =="
+plan_v0=$sandbox/battery-plan-v0.out
+plan_v1=$sandbox/battery-plan-v1.out
+if MITHRIL_WASP_BATTERY_PLAN=1 MITHRIL_WASP_MANIFEST="$fixture_root/mithril.manifest.json" node "$repo_root/test/wasp-integration/battery.mjs" >"$plan_v0" 2>&1; then plan_v0_status=0; else plan_v0_status=$?; fi
+assert_status "the battery reads the Profile-v0 manifest in plan mode without a server or database" "$plan_v0_status" 0
+assert_contains "the Profile-v0 plan selects the profile explicitly" "$plan_v0" "^profile: wasp-confinement-profile-v0 (formatVersion 0; Profile v0)$"
+assert_contains "the Profile-v0 plan forwards the rule-1 route and argument names" "$plan_v0" "^operation 0: mithrilCaseAction (rule 1 (change-other), case 0, authored \"Membership.changeRole\") at POST /operations/mithril-case-action; arguments subject, scope, payload$"
+assert_missing "the Profile-v0 plan has no second operation" "$plan_v0" "^operation 1:"
+assert_missing "the Profile-v0 plan runs no rule-2 scenario" "$plan_v0" "rule-2"
+assert_count "the Profile-v0 plan lists exactly the rule-1 scenario group" "$plan_v0" "^scenarios: " 1
+if MITHRIL_WASP_BATTERY_PLAN=1 MITHRIL_WASP_MANIFEST="$v1_fixture_root/mithril.manifest.json" node "$repo_root/test/wasp-integration/battery.mjs" >"$plan_v1" 2>&1; then plan_v1_status=0; else plan_v1_status=$?; fi
+assert_status "the battery reads the Profile-v1 manifest in plan mode without a server or database" "$plan_v1_status" 0
+assert_contains "the Profile-v1 plan selects the profile explicitly" "$plan_v1" "^profile: wasp-confinement-profile-v1 (formatVersion 1; Profile v1)$"
+assert_contains "the Profile-v1 plan forwards the rule-1 route and argument names unchanged" "$plan_v1" "^operation 0: mithrilCaseAction (rule 1 (change-other), case 0, authored \"Membership.changeRole\") at POST /operations/mithril-case-action; arguments subject, scope, payload$"
+assert_contains "the Profile-v1 plan forwards the rule-2 route and its two argument names, with no subject argument" "$plan_v1" "^operation 1: mithrilSelfUpdateAction (rule 2 (bounded-self-update), case 1, authored \"Membership.changeOwnRole\") at POST /operations/mithril-self-update-action; arguments scope, payload; no subject argument$"
+assert_contains "the Profile-v1 plan runs the rule-2, cross-operation, and decoy-waiter scenario groups" "$plan_v1" "^scenarios: rule-2 401/400/403/200, rule-2 P2034 retry and 409, rule-2 500, rule-2 same-operation barrier concurrency, rule-1/rule-2 cross-operation barrier concurrency, same-row barrier decoy-waiter regression$"
+assert_count "the Profile-v1 plan lists exactly two scenario groups" "$plan_v1" "^scenarios: " 2
+
+echo "== 11. the battery's serial-outcome oracle (node only) =="
+oracle_out=$sandbox/oracle.test.out
+if node "$repo_root/test/wasp-integration/oracle.test.mjs" >"$oracle_out" 2>&1; then
+  oracle_status=0
+else
+  oracle_status=$?
+fi
+assert_status "the serial-outcome oracle regression terminates with exit 0" "$oracle_status" 0
+assert_contains "the same-operation table is pinned literally (two rows, no 409)" "$oracle_out" "^ok: the same-operation table is exactly the two literal rows"
+assert_contains "the cross-operation table is pinned literally (two rows, no 409)" "$oracle_out" "^ok: the cross-operation table is exactly the two literal rows"
+assert_contains "the two-admin table is pinned literally (two rows, no 409)" "$oracle_out" "^ok: the two-admin table is exactly the two literal rows"
+assert_contains "no barrier-scenario table admits any 409-containing row" "$oracle_out" "^ok: no barrier-scenario table admits any 409-containing row"
+assert_contains "the reviewer's same-operation counterexample (demote 403, keep 200, final top) is rejected" "$oracle_out" "^ok: same-operation demote = 403, keep = 200, final actor rank top (the reviewer's counterexample): rejected$"
+assert_contains "the reviewer's cross-operation counterexample (rule 1 403, rule 2 200, final top) is rejected" "$oracle_out" "^ok: cross-operation rule 1 = 403, rule 2 = 200, final peer rank top (the reviewer's counterexample): rejected$"
+assert_contains "cross-operation 200/200 with a final top value is rejected" "$oracle_out" "^ok: cross-operation 200/200 with the peer still at the top value: rejected$"
+assert_contains "a barrier-scenario 409 status pair is rejected (two-admin 409/200)" "$oracle_out" "^ok: two-admin 409/200: rejected$"
+assert_contains "a barrier-scenario 409/409 is rejected (both aborted — impossible for an isolated pair)" "$oracle_out" "^ok: same-operation 409/409 (both aborted — impossible for an isolated pair): rejected$"
+assert_contains "the two-admin write-skew 200/200 is rejected" "$oracle_out" "^ok: two-admin 200/200 with both actors demoted (write skew): rejected$"
+assert_contains "a permitted status pair with a wrong body is rejected" "$oracle_out" "^ok: same-operation 200/403 whose 200 carries the 403 body: rejected$"
+assert_contains "a permitted status pair with an inconsistent final state is rejected" "$oracle_out" "^ok: same-operation 200/403 with the actor still at the top value: rejected$"
+assert_count "every permitted row of the three tables is accepted as a positive case (six rows)" "$oracle_out" "^ok: .*: accepted as row " 6
+assert_contains "the oracle regression reports all its checks passed" "$oracle_out" "All serial-outcome oracle regression checks passed."
+if grep -q "^FAIL:" "$oracle_out"; then bad "the serial-outcome oracle regression reported a FAIL line"; cat "$oracle_out" >&2; else ok "the serial-outcome oracle regression reported no FAIL line"; fi
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures harness self-test(s) failed" >&2
