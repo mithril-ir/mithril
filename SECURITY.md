@@ -6,18 +6,57 @@ Please report suspected vulnerabilities **privately** by email to:
 
 **metacirculardispatches@gmail.com**
 
-Please do **not** disclose vulnerabilities in public issues, discussions, or pull requests before a fix or a coordinated disclosure has been agreed. Include enough detail to reproduce the problem; we will acknowledge reports as quickly as we can, but as an experimental volunteer project we cannot promise fixed response times.
+Please do **not** disclose vulnerabilities in public issues, discussions,
+or pull requests before a fix or a coordinated disclosure has been agreed.
+Include enough detail to reproduce the problem; we will acknowledge
+reports as quickly as we can, but as an experimental volunteer project we
+cannot promise fixed response times.
 
 ## Project status
 
-Mithril is **experimental and incomplete**. There is currently no released software, no complete or general verifier, and no general production or target code generator — what is implemented is the deterministic Haskell frontend through the typed normalized Core, deterministic technical-contract rendering, one narrow, structurally gated NoSelfPrivilegeEscalation proof-artifact generator whose output is checked by Agda 2.8.0 — it supports one selected NoSelfPrivilegeEscalation guarantee whose non-empty case collection is independently classified, case by case, as exact rule-1 (change-other) and/or exact rule-2 (bounded self-update) cases — and one confined Wasp target adapter with exactly two profiles (`mithril wasp generate|check`: closed, checked Wasp 0.25.0/PostgreSQL application profiles whose managed inputs are regenerated from the same typed normalized Core the verifier consumed and compared byte-for-byte — the Wasp Confinement Profile v0 lowers only exactly one verified rule-1 case, and the Wasp Confinement Profile v1 lowers only the exact ordered rule-1, rule-2 case pair as two Actions over the same fourteen managed paths; arbitrary multi-case lowering is not implemented, so a document the verifier reports VERIFIED with any other case sequence — a singleton rule-2 case, two rule-1 cases, the reversed pair, three or more cases — is still UNSUPPORTED to the Wasp commands: VERIFIED-but-Wasp-UNSUPPORTED remains a valid outcome). Two checked formal artifacts exist. First, an experimental, hand-transcribed, fixed-schema Agda proof slice ([`agda/README.md`](agda/README.md)): the Acme example's `Membership.changeRole` action satisfies one selected NoSelfPrivilegeEscalation case, with checked negative evidence that an unsafe self-promotion variant violates the same proposition. Second, the host tool's first connected verifier slice: `mithril verify` connects one structurally gated NoSelfPrivilegeEscalation guarantee family — one selected guarantee, every case of which must match exactly one of the two exact case rules — from normalized Core through a generated Agda module with one proof group per case, checked by Agda 2.8.0. Everything else remains unconnected and unverified: the canonical `examples/acme/acme.mir.json` is reported UNSUPPORTED and, like the complete Acme model, remains unverified; TenantIsolation and AuthenticatedMutation remain unverified; no other action or guarantee family is proved; there is no semantic diff and no general JSON-to-Agda backend; the Wasp slices are closed demonstrators, not a general Wasp backend, a whole-product generator, a complete verifier, or a runtime sandbox — no semantic-preservation theorem between the Core semantics and the generated TypeScript exists (a rendered bundle is trusted correspondence evidence, not a proof), so Wasp, Node, Prisma, PostgreSQL, the templates, and the lowering are trusted, and the confinement claim is deliberately narrow: the checker establishes a valid clean source snapshot at the time of checking or generation (hard-linked inputs rejected), while malicious concurrent same-user mutation after the final check, malicious changes to the checker or CI, dependency compromise, external processes holding database credentials, and any tampering after the Wasp build are outside the claim unless separately prevented; the pure Wasp renderer attests supported-shape lowering only, and VERIFIED provenance is stated only by the CLI generation path after the production verifier reported it; and none of these slices provides production-security assurance. Nothing in this repository should be relied on to secure a production system.
+Mithril is **experimental and incomplete**. There is no released software,
+no complete or general verifier, and no general target code generator.
+Nothing in this repository should be relied on to secure a production
+system.
 
-## Scope of future verification claims
+What is implemented — the deterministic frontend, the contract renderer,
+one narrow NSPE verifier slice (two structural proof rules, checked by
+Agda 2.8.0), and two confined Wasp demonstrator profiles — is documented
+exactly, with its trusted components and non-claims, in
+[docs/current-scope.md](docs/current-scope.md). In particular:
 
-Mithril's implemented verification functionality is deliberately narrow — today it covers one structurally gated NoSelfPrivilegeEscalation guarantee family (one selected guarantee whose cases are each an exact rule-1 or exact rule-2 case), connected from normalized Core through generated Agda checked by Agda 2.8.0, and its only executable counterparts are the two confined Wasp profiles — Profile v0 for exactly the singleton rule-1 form of that obligation and Profile v1 for exactly the ordered rule-1, rule-2 pair; a verified document with any other case sequence has no Wasp counterpart and is UNSUPPORTED to both profiles — whose confinement claim is exactly: the source snapshot the checker walked at the time of checking or generation is the regenerated closed path inventory with byte-identical, privately linked managed files and nothing else — and as that functionality grows, its claims will stay deliberately narrow:
+- A `VERIFIED` outcome covers exactly the selected cases of the one
+  selected obligation of a supported document under the documented
+  trusted components — the Haskell tool, the embedded Agda kernel, the
+  support rules, and the Agda 2.8.0 toolchain — and nothing else.
+- The verified **model slice** is distinct from the generated and runtime
+  **implementation**: no semantic-preservation theorem proves
+  Core-to-Agda or Core-to-Wasp correspondence, so Wasp, Node, Prisma,
+  PostgreSQL, the templates, and the lowering remain trusted, and a
+  generated bundle is trusted correspondence evidence, not a proof.
+- The Wasp confinement claim covers a valid clean source snapshot at the
+  time of checking or generation; mutation after the check, tampering
+  after the Wasp build, dependency compromise, and processes holding the
+  database credentials are outside it.
+- `UNSUPPORTED` is a support decision, never a safety or violation
+  verdict, and no `VIOLATED` result exists.
 
-- Verification claims will apply **only to explicitly documented properties** (such as the target properties listed in the README), never to "security" in general.
-- Every claim will be conditional on **explicitly documented trusted-computing-base assumptions** — at minimum the correctness of the verifier, the code generator, the target framework, and the runtime beneath them, plus the fidelity of the human's stated intent.
-- Anything outside those documented properties and assumptions — including the LLM translation step from natural language to Mithril Core — is out of scope for verification claims and remains the user's responsibility.
+## Scope of verification claims
 
-A verified system can still be insecure in ways the verified properties do not cover. Reports that demonstrate a gap between our documented claims and actual behavior are exactly what this policy is for.
+Mithril's verification claims are deliberately narrow today and will stay
+deliberately narrow as functionality grows:
+
+- Verification claims apply **only to explicitly documented properties**,
+  never to "security" in general.
+- Every claim is conditional on **explicitly documented
+  trusted-computing-base assumptions** — at minimum the correctness of
+  the verifier, the code generator, the target framework, and the runtime
+  beneath them, plus the fidelity of the human's stated intent.
+- Anything outside those documented properties and assumptions —
+  including the untrusted LLM translation step from natural language to
+  Mithril Core — is out of scope for verification claims and remains the
+  user's responsibility.
+
+A verified system can still be insecure in ways the verified properties
+do not cover. Reports that demonstrate a gap between our documented
+claims and actual behavior are exactly what this policy is for.

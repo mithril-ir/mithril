@@ -138,6 +138,14 @@ category:           Development
 build-type:         Simple
 tested-with:        GHC == 9.12.4
 extra-doc-files:    README.md
+                    AGENTS.md
+                    CODE_OF_CONDUCT.md
+                    CONTRIBUTING.md
+                    SECURITY.md
+                    agda/README.md
+                    docs/compiler-architecture.md
+                    docs/current-scope.md
+                    docs/how-mithril-works.md
 
 -- core/schema.json is the canonical Core v0 grammar; it is embedded
 -- into the library at compile time (Mithril.Core.Internal.BundledSchema),
