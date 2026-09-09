@@ -35,7 +35,7 @@ tools will be documented here if and when they are chosen.
 | `core/schema.json` | Normative Core v0 JSON grammar (structural authority only). |
 | `examples/acme/` | Handwritten human-facing example model. |
 | `src/`, `src-internal/`, `app/` | The Haskell host tool (`src-internal/` is the package-private sublibrary). |
-| `agda/Mithril/` | The Agda kernel spike; five modules are the embedded trusted kernel. |
+| `agda/Mithril/` | The Agda modules: the five embedded fixed-schema kernel modules, the `Spike` and `Acme` experiments outside that kernel, and the `Everything` entry point. |
 | `test/` | Test suite, fixtures and goldens, API-boundary probes, Wasp integration harness. |
 | `docs/` | Explanatory, scope, and architecture documentation. |
 
@@ -97,11 +97,11 @@ and builds each freshly generated root in private working directories — so
 the repository. Run it when a change affects the generated bundles, the
 emitter, or the harness itself; documentation-only changes do not need it.
 
-### The Agda spike checks
+### The Agda checks
 
-Changes under `agda/` must keep both spike checks passing, each run from
-deleted `.agdai` interfaces (see [`agda/README.md`](agda/README.md) for the
-spike's boundary):
+Changes under `agda/` must keep both Agda checks passing, each run from
+deleted `.agdai` interfaces (see [`agda/README.md`](agda/README.md) for
+what each module is and where the kernel's boundary lies):
 
 ```
 find . -type f -name '*.agdai' -delete
@@ -111,10 +111,11 @@ find . -type f -name '*.agdai' -delete
 agda --safe --no-libraries --ignore-interfaces -i agda agda/Mithril/Everything.agda
 ```
 
-Five spike modules (`Base`, `Core`, `Policy`, `Effect`, `Guarantee`) are
-also the trusted kernel the host tool embeds for `mithril verify`; changing
-them changes the verifier's trusted computing base and must keep both the
-spike checks and the Haskell test suite passing.
+Five of the modules (`Base`, `Core`, `Policy`, `Effect`, `Guarantee`) are
+the embedded fixed-schema kernel the host tool trusts for `mithril verify`;
+`Spike` and `Acme` are experiments outside it. Changing a kernel module
+changes the verifier's trusted computing base and must keep both the Agda
+checks and the Haskell test suite passing.
 
 ## When to discuss first
 

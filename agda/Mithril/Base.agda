@@ -1,8 +1,8 @@
 {-# OPTIONS --safe #-}
 
--- Mithril Agda spike: minimal prelude.
+-- Mithril embedded fixed-schema Agda kernel: minimal prelude.
 --
--- The spike is restricted to Agda builtins (no external library), so the
+-- The kernel is restricted to Agda builtins (no external library), so the
 -- handful of standard facts it needs — negation, sums, products, ordering
 -- on Nat, decidable equality — are defined here.
 

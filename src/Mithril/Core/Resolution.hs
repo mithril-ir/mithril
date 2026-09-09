@@ -2,7 +2,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | The second deterministic frontend boundary for Mithril Core v0:
+-- | The name-resolution boundary of the Mithril Core v0 frontend:
 -- complete name resolution, producing the explicit internal resolved
 -- representation.
 --
@@ -65,17 +65,11 @@
 -- source that is known /not/ to denote an entity reference is a
 -- resolution failure; nothing else about types is checked.
 --
--- Everything else remains for the later stages: general term typing,
--- operator operand compatibility, equality and ordered-comparison
--- compatibility, enum-order completeness and permutation validity,
--- whether a @payloadOrder@ enum is ordered or agrees with the
--- authority relation, relation endpoint arity and endpoint type
--- compatibility at lookup and effect sites, effect value typing,
--- @CreateEntity@ initializer completeness and value typing, result
--- typing, and guarantee well-typedness all belong to the next stage,
--- the static typechecker ("Mithril.Core.Typing"), with normalization
--- ("Mithril.Core.Normalization") after it, while policy evaluation
--- and guarantee truth remain unimplemented beyond the frontend.  A
+-- Everything else about types — general term typing, operand
+-- compatibility, enum-order validity, relation and effect
+-- compatibility, result typing, and guarantee well-typedness —
+-- belongs to the static typechecker ("Mithril.Core.Typing"), with
+-- normalization ("Mithril.Core.Normalization") after it.  A
 -- structurally valid document can therefore resolve successfully and
 -- still fail the typechecker.  A @'CoreDocument' 'Resolved'@ is an
 -- attestation about names only — /not/ typed normalized Core, and no

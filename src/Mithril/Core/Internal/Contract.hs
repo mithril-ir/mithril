@@ -7,9 +7,9 @@
 -- explicit typed normalized representation
 -- ("Mithril.Core.Internal.Normalized") of a normalized document into
 -- the deterministic, line-oriented, human-readable security contract.
--- It is the first consumer of typed normalized Core, and it consumes
--- only that representation — never raw JSON, never the resolved or
--- typed models, and never a rebuilt judgment of an earlier stage:
+-- It consumes only that representation — never raw JSON, never the
+-- resolved or typed models, and never a rebuilt judgment of an
+-- earlier stage:
 --
 -- * every reference is followed through its resolved
 --   namespace-specific identifier to the referenced declaration, whose

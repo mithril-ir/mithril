@@ -215,6 +215,9 @@ Deliberate, documented gaps — not desired contracts:
   arbitrary untrusted, unbounded input.
 - The Wasp confinement check is path-based, not descriptor-relative; the
   time-of-check caveats above apply.
+- The Wasp filesystem confinement boundary has been exercised on Linux
+  only. Other POSIX platforms are outside the current confinement
+  claim.
 - Packaging and distribution (prebuilt binaries, containers) are
   undecided.
 - No lint or formatting command has been selected for the Haskell code.

@@ -76,10 +76,10 @@
 -- case's actor-free terms are checked in its named action's parameter
 -- environment: the @tenant@ term must be an entity reference of
 -- exactly the tenant endpoint's entity, and the @protected@ term must
--- have type @Bool@ — the recorded parameters of the (future,
--- unverified) obligation that an allowed, protected request's
--- principal holds the @(subject = principal, tenant = tenant)@ tuple
--- of the access relation.  A case may name an @AnyPrincipal@ action:
+-- have type @Bool@ — the recorded parameters of the unverified
+-- obligation that an allowed, protected request's principal holds
+-- the @(subject = principal, tenant = tenant)@ tuple of the access
+-- relation.  A case may name an @AnyPrincipal@ action:
 -- whether its anonymous allow branch violates the obligation is a
 -- verifier question, not a typing one.  A
 -- @NoSelfPrivilegeEscalation@ authority must be well-formed for the

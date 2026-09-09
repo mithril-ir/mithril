@@ -42,9 +42,8 @@
 -- authored, resolution establishes names, and every deeper judgment
 -- belongs to the later stages — static typing to
 -- "Mithril.Core.Internal.Typecheck" and normalization to
--- "Mithril.Core.Internal.Normalize" (both over the resolved model,
--- never over this symbolic syntax), everything beyond the frontend
--- to stages that do not exist yet.
+-- "Mithril.Core.Internal.Normalize", both over the resolved model,
+-- never over this symbolic syntax.
 module Mithril.Core.Internal.Syntax
   ( -- * Actor availability
     ActorAvailability (..)

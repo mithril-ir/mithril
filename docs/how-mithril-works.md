@@ -39,7 +39,7 @@ deterministic compiler path.
 | `core/schema.json` | The normative JSON Schema (draft 2020-12) for the external shape of a Core v0 document. |
 | `examples/acme/` | The handwritten canonical Acme example model (human-facing authored example). |
 | `src/`, `src-internal/`, `app/` | The Haskell host tool: CLI, frontend, contract renderer, verifier, Wasp emitter. `src-internal/` is a package-private sublibrary holding the internal representations. |
-| `agda/Mithril/` | The handwritten Agda kernel spike; five of its modules are the trusted kernel embedded into the tool (see [`agda/README.md`](../agda/README.md)). |
+| `agda/Mithril/` | The handwritten embedded Agda kernel; five of its modules are the trusted kernel embedded into the tool (see [`agda/README.md`](../agda/README.md)). |
 | `test/fixtures/` | Authored regression inputs and committed golden outputs (contracts, generated Agda modules, generated Wasp trees). |
 | `test/api-probes/` | Compile-fail probes that pin the public API boundary. |
 | `test/wasp-integration/` | The separate real Wasp/PostgreSQL integration harness. |

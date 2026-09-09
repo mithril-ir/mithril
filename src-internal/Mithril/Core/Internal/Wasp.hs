@@ -83,8 +83,7 @@
 -- model, and it never re-derives a rule:
 --
 -- * @[rule 1]@ — exactly one change-other case — selects Profile v0
---   ('WaspProfileV0Plan'), whose bytes, marker, manifest, and
---   inventory are exactly what they were before Profile v1 existed;
+--   ('WaspProfileV0Plan');
 -- * @[rule 1, rule 2]@ — exactly two cases, the change-other case at
 --   position 0 and the bounded-self-update case at position 1, in
 --   authored order — selects Profile v1 ('WaspProfileV1Plan');
@@ -106,10 +105,8 @@
 -- The bundle depends only on the plan — never on file paths, time,
 -- or environment — every file uses Unix line endings, no tabs, and
 -- exactly one final newline.  The same normalized document always
--- renders to the same bytes; the committed fixtures under
--- @test\/fixtures\/wasp-acme@ (Profile v0) and
--- @test\/fixtures\/wasp-acme-self-update@ (Profile v1) are pinned
--- byte-for-byte against fresh bundles.
+-- renders to the same bytes, and the golden fixture of each profile
+-- is pinned byte-for-byte against a fresh bundle.
 --
 -- == Provenance
 --
@@ -120,15 +117,13 @@
 -- before generation is stated only by the generating command's
 -- report ("Mithril.Command.Wasp", which requires it).
 --
--- == What this is not
+-- == Scope
 --
--- Not a general Wasp backend, not a whole-product generator, not a
--- policy evaluator, and not a runtime sandbox.  No semantic
--- preservation theorem between the Core semantics and the generated
--- TypeScript exists: Wasp, Node, Prisma, PostgreSQL, the templates
--- below, and this lowering are trusted components.  Arbitrary
--- multi-case lowering is not implemented: Profile v1 lowers exactly
--- the ordered rule-1, rule-2 pair and nothing wider.
+-- Arbitrary multi-case lowering is not implemented: Profile v1 lowers
+-- exactly the ordered rule-1, rule-2 pair and nothing wider.  The
+-- templates below and this lowering are trusted components; see
+-- @docs\/current-scope.md@ for the supported slice, result meanings,
+-- trusted components, and explicit non-claims.
 module Mithril.Core.Internal.Wasp
   ( -- * The bundle
     WaspBundle
@@ -265,14 +260,13 @@ data WaspBundle = WaspBundle
 -- The one constructor, 'WaspProfileSummary', is the complete trusted
 -- representation: the renderer builds every summary through it, and
 -- matching on it — or reading 'summaryProfile' and
--- 'summaryOperations' — never hides an operation.  The construction
--- and matching surface that existed before Profile v1, the record
+-- 'summaryOperations' — never hides an operation.  The record form
 -- @WaspBundleSummary { summaryModelName, summaryGuarantee,
 -- summaryCaseAction, summaryOperation, summaryRoute,
--- summaryManagedPaths }@, is kept as the bidirectional pattern
--- synonym 'WaspBundleSummary': a /first-operation compatibility
--- view/ that neither erases nor infers away the profile and the
--- operation list of a rendered summary.
+-- summaryManagedPaths }@ is the bidirectional pattern synonym
+-- 'WaspBundleSummary': a /first-operation compatibility view/ that
+-- neither erases nor infers away the profile and the operation list
+-- of a rendered summary.
 data WaspBundleSummary = WaspProfileSummary
   { profileSummaryModelName :: Text
   , profileSummaryGuarantee :: Text
@@ -282,18 +276,18 @@ data WaspBundleSummary = WaspProfileSummary
   }
   deriving (Eq, Show)
 
--- | The first-operation compatibility view of a summary: the record
--- surface that existed before Profile v1, total over every summary.
+-- | The first-operation compatibility view of a summary: a record
+-- surface total over every summary.
 --
 -- Matching (positionally, by record syntax, or through the selectors
 -- 'summaryModelName', 'summaryGuarantee', 'summaryCaseAction',
 -- 'summaryOperation', 'summaryRoute', and 'summaryManagedPaths')
 -- reads the model name, the guarantee, and the managed paths of the
 -- summary and, from operation 0, the authored case action, the fixed
--- operation identifier, and the fixed route: for Profile v0 exactly
--- the former singleton summary; for Profile v1 the rule-1 operation,
--- while 'summaryOperations' remains the authoritative complete list
--- and the CLI keeps reporting every operation.  Constructing
+-- operation identifier, and the fixed route: for Profile v0 the one
+-- operation; for Profile v1 the rule-1 operation, while
+-- 'summaryOperations' remains the authoritative complete list and
+-- the CLI reports every operation.  Constructing
 -- (positionally, by record syntax, or by record update through these
 -- fields) builds the Profile-v0 singleton summary whose one rule-1
 -- operation, at case position 0, carries the given case action,

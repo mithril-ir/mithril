@@ -1,5 +1,5 @@
--- | The first Mithril Core v0 verifier boundary: one connected,
--- deliberately narrow proof slice over typed normalized Core.
+-- | The Mithril Core v0 verifier boundary: one deliberately narrow
+-- proof slice over typed normalized Core.
 --
 -- > normalized opaque document
 -- >   -> pure deterministic support gate
@@ -10,28 +10,23 @@
 -- 'verifyCoreDocument' accepts exactly a
 -- @'Mithril.Core.Validation.CoreDocument' 'Normalized'@ — the stage
 -- indexes make a merely typed (or earlier) document unacceptable —
--- and decides, first and purely, whether the document lies inside the
--- one implemented support rule: a document selecting exactly one
--- guarantee, a @NoSelfPrivilegeEscalation@ guarantee whose non-empty
--- case collection consists entirely of cases each matching exactly
--- one of the two supported proof rules — rule 1, /change-other/ (the
--- already-mechanized sound proof rule of the Agda spike's safe
--- @Membership.changeRole@ slice: three parameters subject, scope,
--- payload; the write at the subject parameter; the exact
--- floor\/guard\/membership conjunction), or rule 2, /bounded
--- self-update/ (two parameters scope, payload; the write at the
--- actor's own tuple; the exact single comparison bounding the
--- requested payload by the actor's authority) — with a shared
--- authority, payload ordering, and case scope shape (the internal
--- support gate states the exact rules).  Every authored case is
--- classified independently in authored order and tagged with its
--- rule; one case outside both rules makes the whole obligation
--- unsupported.  The gate inspects stored identities and evidence
--- structurally: it never compares raw JSON bytes, recognizes file
--- names, hashes the model, repeats parsing, resolution, or type
--- inference, or evaluates policy, and it deliberately rejects
--- semantically equivalent but differently authored shapes as
--- unsupported.
+-- and decides, first and purely, whether the document lies inside
+-- the supported slice: exactly one selected
+-- @NoSelfPrivilegeEscalation@ guarantee whose non-empty case
+-- collection consists entirely of cases each matching exactly one of
+-- the two supported proof rules, rule 1 (/change-other/) or rule 2
+-- (/bounded self-update/).  The shared support gate
+-- ("Mithril.Core.Internal.NspeSupportPlan") states the exact rules;
+-- see @docs\/current-scope.md@ for the supported slice, result
+-- meanings, trusted components, and explicit non-claims.  Every
+-- authored case is classified independently in authored order and
+-- tagged with its rule; one case outside both rules makes the whole
+-- obligation unsupported.  The gate inspects stored identities and
+-- evidence structurally: it never compares raw JSON bytes,
+-- recognizes file names, hashes the model, repeats parsing,
+-- resolution, or type inference, or evaluates policy, and it
+-- deliberately rejects semantically equivalent but differently
+-- authored shapes as unsupported.
 --
 -- For a supported document the boundary deterministically generates
 -- one Agda obligation module from the normalized evidence — one
@@ -41,11 +36,11 @@
 -- materializes the module together with the compile-time-embedded
 -- trusted kernel modules into a fresh isolated workspace, and has
 -- exactly Agda 2.8.0 check it with @--safe --no-libraries
--- --ignore-interfaces@ — the generated module carries a checked
+-- --ignore-interfaces@.  The generated module carries a checked
 -- theorem manifest per case, so the checker's acceptance itself
 -- proves that every required theorem of every case exists at exactly
--- its required type (no source text is ever searched for theorem
--- names).
+-- its required type; no source text is ever searched for theorem
+-- names.
 --
 -- == Result semantics
 --
@@ -56,32 +51,29 @@
 --   case with its position, rule, action, and checked theorem
 --   inventory ('VerifiedCase').
 -- * 'VerificationUnsupported': the normalized document lies outside
---   the implemented support rule.  Decided by the pure gate before
---   any checker runs, with non-empty, deterministic, sorted,
---   deduplicated reasons.  A document selecting no guarantees is
---   unsupported, never vacuously verified.
--- * @VIOLATED@ is reserved for a future independently checked
---   concrete witness and cannot be produced by this boundary: it has
---   no representation in the vocabulary.  In particular, an Agda
---   refusal after the gate accepted the document is a tool failure,
---   never a semantic verdict.
+--   the supported slice.  Decided by the pure gate before any checker
+--   runs, with non-empty, deterministic, sorted, deduplicated
+--   reasons.  A document selecting no guarantees is unsupported,
+--   never vacuously verified.
+-- * No @VIOLATED@ outcome exists: it has no representation in this
+--   vocabulary.  In particular, an Agda refusal after the gate
+--   accepted the document is a tool failure, never a semantic
+--   verdict.
 -- * 'VerificationFailure' (the 'Left' side) means the verification
 --   mechanism itself could not be trusted to complete: a forged or
 --   drifted normalized model, a structured generated artifact missing
---   a required theorem block, a missing or unlaunchable checker, a checker version
---   other than exactly 2.8.0, a workspace failure, a nonzero checker
---   exit after gate acceptance, or checker termination by a signal.
---   These exit with status 2 at the tool boundary.
+--   a required theorem block, a missing or unlaunchable checker, a
+--   checker version other than exactly 2.8.0, a workspace failure, a
+--   nonzero checker exit after gate acceptance, or checker
+--   termination by a signal.  These exit with status 2 at the tool
+--   boundary.
 --
--- What a successful verification does and does not establish: it
--- checks exactly the selected cases of the one selected obligation of
--- the checked document against the trusted Agda kernel semantics.
--- The Haskell frontend and generator, the embedded kernel modules,
--- the Agda toolchain, and the support rules themselves remain trusted
--- components; no other action, unselected authority writer, guarantee
--- family, document, or semantic-preservation property is verified,
--- and the canonical Acme example — which selects three guarantees —
--- remains unsupported and unverified.
+-- A successful verification establishes exactly that the selected
+-- cases of the one selected obligation of the checked document were
+-- checked against the trusted Agda kernel semantics.  Nothing else
+-- about the document is verified, and the Haskell frontend and
+-- generator, the embedded kernel modules, the Agda toolchain, and
+-- the support rules themselves remain trusted components.
 module Mithril.Core.Verification
   ( -- * Pipeline stage
     Normalized
@@ -125,9 +117,9 @@ import Mithril.Core.Internal.Verify
   , verifyModelWith
   )
 
--- | Verify a normalized document against the one implemented support
--- rule (the module header states the pipeline, the rule, and the
--- exact result semantics).
+-- | Verify a normalized document against the supported slice (the
+-- module header states the pipeline and the exact result semantics;
+-- "Mithril.Core.Internal.NspeSupportPlan" states the rules).
 --
 -- Only a @'CoreDocument' 'Normalized'@ is accepted; the typed
 -- normalized model is consumed as trusted normalized information, so
