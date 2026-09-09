@@ -1,13 +1,14 @@
 {-# OPTIONS --safe #-}
 
--- Mithril Agda spike: principals, typed policy terms and total evaluation.
+-- Mithril embedded fixed-schema Agda kernel: principals, typed policy terms
+-- and total evaluation.
 --
 -- GENERIC IN SHAPE: terms are indexed by an authentication level, a typed
 -- argument context and a result type; evaluation is total by construction
 -- (no partiality, no relation unwrap).  SPECIALIZED: the attribute
 -- projection, relation lookup and relation presence forms are fixed to the
--- spike's schema (Project.organization, Membership) instead of ranging over
--- declared attributes/relations.
+-- kernel's fixed schema (Project.organization, Membership) instead of
+-- ranging over declared attributes/relations.
 --
 -- Evaluation is total even for requests naming nonexistent ("ghost")
 -- references; such evaluations are semantically meaningless and are never

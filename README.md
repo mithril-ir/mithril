@@ -209,7 +209,7 @@ in the scope ledger.
 | [docs/how-mithril-works.md](docs/how-mithril-works.md) | Accessible technical explanation of every piece. |
 | [docs/current-scope.md](docs/current-scope.md) | The exact current scope: supported slice, exit codes, trusted components, non-claims, versions. |
 | [docs/compiler-architecture.md](docs/compiler-architecture.md) | Authoritative compiler pipeline and artifact-ownership specification. |
-| [agda/README.md](agda/README.md) | The Agda kernel spike and its checks. |
+| [agda/README.md](agda/README.md) | The Agda kernel and its checks. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor workflow and canonical commands. |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting and claim scoping. |
 | [AGENTS.md](AGENTS.md) | Operational rules for coding agents. |

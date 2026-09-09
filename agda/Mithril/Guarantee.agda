@@ -1,9 +1,9 @@
 {-# OPTIONS --safe #-}
 
--- Mithril Agda spike: the fixed-schema NoSelfPrivilegeEscalation
+-- Mithril embedded fixed-schema Agda kernel: the NoSelfPrivilegeEscalation
 -- proposition.
 --
--- This module states, over the spike's FIXED schema, what the JSON
+-- This module states, over the kernel's FIXED schema, what the JSON
 -- guarantee object
 --
 --   { kind: NoSelfPrivilegeEscalation,
@@ -15,15 +15,16 @@
 -- scope organization, ordered with absence as bottom
 -- (nothing < Member < Admin), must not increase from pre- to post-state.
 --
--- SPECIALIZED FOR THE SPIKE: the authority relation (Membership), subject
--- kind (User), scope kind (Organization) and payload order (Role) are the
--- fixed-schema ones; a full kernel would draw them from the guarantee's
--- authority declaration.  No JSON is consumed here.  `Mithril.Acme`
--- instantiates this proposition for one hand-transcribed action; the host
--- tool's `mithril verify` slice additionally instantiates it through a
--- generated module checked by Agda 2.8.0, for exactly one structurally
--- gated NoSelfPrivilegeEscalation obligation shape of normalized Core —
--- no complete verifier exists, and every other document, action, and
+-- SPECIALIZED TO THE FIXED SCHEMA: the authority relation (Membership),
+-- subject kind (User), scope kind (Organization) and payload order (Role)
+-- are the fixed-schema ones; a full kernel would draw them from the
+-- guarantee's authority declaration.  No JSON is consumed here.  The
+-- experiment `Mithril.Acme`, outside the embedded kernel, instantiates this
+-- proposition for one hand-transcribed action; `mithril verify`
+-- instantiates it through a generated module checked by Agda 2.8.0, for
+-- exactly one structurally gated NoSelfPrivilegeEscalation obligation
+-- family of normalized Core whose cases each match one of two exact rules
+-- — no complete verifier exists, and every other document, action, and
 -- guarantee family remains unverified.
 
 module Mithril.Guarantee where
@@ -34,7 +35,7 @@ open import Mithril.Core
 -- Small propositional helpers -------------------------------------------------
 --
 -- Generic facts about `Mithril.Base`/`Mithril.Core` functions needed by
--- the guarantee slice, kept here to leave the kernel modules untouched.
+-- the guarantee slice, kept here rather than in those two modules.
 -- Their Bool/Nat arguments are EXPLICIT on purpose: callers instantiate
 -- them with stuck evaluation results that unification could not infer
 -- through the non-injective `_&&_`.

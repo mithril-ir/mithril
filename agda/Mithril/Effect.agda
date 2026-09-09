@@ -1,28 +1,16 @@
 {-# OPTIONS --safe #-}
 
--- Mithril Agda spike: effects, results, actions and the authorized
--- execution boundary.
+-- Mithril embedded fixed-schema Agda kernel: effects, results, actions and
+-- the authorized execution boundary.
 --
--- The key representation choices under test:
---
---  * The result descriptor of a mutation is FORCED by its effect
---    constructor (`MutEffect a Γ d` is indexed by the descriptor), so
---    CreateEntity is the only effect that can answer `created`, and a
---    mutation cannot return an arbitrary unrelated entity.
---  * Read actions have no effect slot at all: they are NoChange by
---    construction and answer `observed` with their designated observation.
---  * CreateEntity does not carry a reference.  The candidate reference and
---    its freshness proof arrive only at execution time, through the
---    `Allocator`; they are not part of the request, the action arguments
---    or the policy environment.
---  * AUTHORIZATION IS A CAPABILITY (`Capability s c γ act`) indexed by the
---    exact pre-state, caller, argument environment and COMPLETE action.
---    It packages pre-state well-formedness and request validity together
---    with policy success; a policy equation alone is never authorization.
---  * The ONLY public transition is `execute`, which consumes a capability.
---    The raw effect interpreter is private to this module: it carries no
---    authorization and cannot be invoked as an authorized transition from
---    outside.
+-- This module owns the result descriptors, the one-effect mutation
+-- language indexed by the descriptor it produces, actions, the
+-- `Capability` authorization evidence, the only public transition
+-- `execute`, and the theorems about authorized executions.  Authorization
+-- is a capability indexed by the exact pre-state, caller, arguments and
+-- COMPLETE action; a policy equation alone is never authorization, and the
+-- raw effect interpreter stays private to this module.  The representation
+-- choices these definitions fix are itemized in `agda/README.md`.
 
 module Mithril.Effect where
 

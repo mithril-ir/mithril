@@ -73,10 +73,10 @@ in code comments.
    proof.
 9. **Do not invent commands or capabilities.** No lint or formatting
    command exists or has been selected. The canonical build/test commands
-   are listed in [CONTRIBUTING.md](CONTRIBUTING.md); the Agda spike's only
-   real checks are in [`agda/README.md`](agda/README.md). If a task seems
-   to need a command that does not exist, report that instead of
-   fabricating one.
+   are listed in [CONTRIBUTING.md](CONTRIBUTING.md); the only real checks
+   for `agda/` (embedded kernel modules and experiments alike) are in
+   [`agda/README.md`](agda/README.md). If a task seems to need a command
+   that does not exist, report that instead of fabricating one.
 10. **Preserve public API compatibility.** The public library surface and
     its stage discipline are pinned by the compile-fail probes
     (`test/api-probes/`); changing what external code can construct, import,
@@ -130,8 +130,9 @@ in code comments.
   never revert, overwrite, or "clean up" work that is not yours.
 - **Validate proportionately.** For Haskell/tool changes, run the
   canonical commands in [CONTRIBUTING.md](CONTRIBUTING.md); for changes
-  under `agda/`, run the spike checks in `agda/README.md`; the real
-  Wasp/PostgreSQL battery is required only when it is affected
+  under `agda/`, run the Agda checks in `agda/README.md` (a change to one
+  of the five embedded kernel modules also needs the Haskell test suite);
+  the real Wasp/PostgreSQL battery is required only when it is affected
   (generated-bundle or harness changes), not for documentation-only work.
   Verify that goldens and fixtures are unchanged unless the task changes
   them through the generator.

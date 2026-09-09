@@ -1,20 +1,20 @@
 {-# OPTIONS --safe #-}
 
--- Mithril Agda spike: core vocabulary and state.
+-- Mithril embedded fixed-schema Agda kernel: core vocabulary and state.
 --
--- SPECIALIZED FOR THE SPIKE: the entity kinds (User, Organization, Project),
--- the single attribute (Project.organization), the single relation
--- (Membership : User × Organization ⇀ Role) and the single enum (Role) are
--- fixed here rather than being drawn from a generic schema.  A full kernel
--- would parameterize state, lookup and update over a declared schema; the
--- *shapes* below (counter-based entity domains, total closed-world lookup
--- into Maybe, point-update upsert, freshness as the exact next index) are
--- the part this spike is testing and are intended to generalize.
+-- SPECIALIZED TO THE FIXED SCHEMA: the entity kinds (User, Organization,
+-- Project), the single attribute (Project.organization), the single
+-- relation (Membership : User × Organization ⇀ Role) and the single enum
+-- (Role) are fixed here rather than being drawn from a generic schema.  A
+-- full kernel would parameterize state, lookup and update over a declared
+-- schema; the *shapes* below (counter-based entity domains, total
+-- closed-world lookup into Maybe, point-update upsert, freshness as the
+-- exact next index) are the parts intended to generalize.
 --
 -- IMPORTANT: everything in this module is UNAUTHORIZED state semantics —
 -- total combinators on states and the conditional lemmas about them.
 -- Nothing here consumes authorization evidence.  The only authorized
--- transition of the spike is `Mithril.Effect.execute`, which requires a
+-- transition of the kernel is `Mithril.Effect.execute`, which requires a
 -- `Capability`.
 
 module Mithril.Core where
@@ -48,7 +48,7 @@ eqNat (suc m) (suc n) = eqNat m n
 eqRef : ∀ {k} → EntityRef k → EntityRef k → Bool
 eqRef r₁ r₂ = eqNat (ix r₁) (ix r₂)
 
--- The spike's representative finite ordered enum: Membership payloads.
+-- The fixed schema's finite ordered enum: Membership payloads.
 -- Order: memberR < adminR.
 
 data Role : Set where
@@ -299,7 +299,7 @@ alloc-preserves-exists s k i {k′} r ex = ≤-trans ex (alloc-count-mono s k i 
 
 -- Well-formedness ------------------------------------------------------------
 
--- The spike's state invariant.  `proj-ok` constrains only the meaningful
+-- The kernel's state invariant.  `proj-ok` constrains only the meaningful
 -- region of the total attribute function (indices below the counter);
 -- `mem-user-ok`/`mem-org-ok` are the GLOBAL endpoint condition on the
 -- relation: any tuple present at any index pair refers to existing
