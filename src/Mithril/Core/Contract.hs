@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | The deterministic Core v0 security-contract renderer: the first
--- consumer of typed normalized Core.
+-- | The deterministic Core v0 security-contract renderer over typed
+-- normalized Core.
 --
 -- > normalized opaque document
 -- >   -> deterministic contract rendering      ('renderCoreContract')

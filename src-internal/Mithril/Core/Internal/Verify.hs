@@ -28,9 +28,9 @@
 -- from one global list.  Two layouts exist:
 --
 -- * the /compatibility layout/ for exactly a singleton rule-1 plan:
---   the original flat module, byte-for-byte unchanged, with the
---   theorems in the inner module @GeneratedTheorems@ and the manifest
---   entries at top level;
+--   the flat module — theorems in the inner module
+--   @GeneratedTheorems@, manifest entries at top level — whose bytes
+--   the singleton golden fixture pins;
 -- * the /general layout/ for every other plan (a singleton rule-2
 --   plan, or several cases): the shared ranking at top level, then
 --   one inner module @Case\<i\>@ per case in authored order — @i@ the
@@ -65,9 +65,8 @@
 -- failure, a nonzero check after the gate accepted, a structured
 -- generated-artifact inventory missing a required theorem block) are
 -- 'VerificationFailure's — tool failures, never semantic verdicts.
--- Nothing here can ever report a violation: @VIOLATED@ is reserved
--- for a future independently checked concrete witness and has no
--- representation in this vocabulary.
+-- Nothing here can ever report a violation: no @VIOLATED@ outcome
+-- exists, and it has no representation in this vocabulary.
 module Mithril.Core.Internal.Verify
   ( -- * Public result vocabulary (re-exported by Mithril.Core.Verification)
     VerificationResult (..)
@@ -153,9 +152,8 @@ import Mithril.Core.Internal.Syntax (AbsenceLevel (..))
 --------------------------------------------------------------------
 
 -- | The two semantic outcomes of the verifier boundary.  There is
--- deliberately no violation outcome: @VIOLATED@ is reserved for a
--- future independently checked concrete witness, and this milestone
--- can never emit it — an Agda refusal after the gate accepted is a
+-- deliberately no violation outcome: no @VIOLATED@ result exists in
+-- this vocabulary — an Agda refusal after the gate accepted is a
 -- tool failure ('CheckerRejected'), not a security verdict.
 data VerificationResult
   = -- | Every selected case of the document's one selected obligation
@@ -553,10 +551,9 @@ renderObligationModule = artifactModuleText . generatedObligationArtifact
 -- The compatibility layout: exactly a singleton rule-1 plan
 --------------------------------------------------------------------
 
--- | The original flat module of the singleton change-other
--- obligation, byte-for-byte as before the multi-case milestone: the
--- theorems in the inner module @GeneratedTheorems@, the manifest
--- entries at top level.
+-- | The flat module of the singleton change-other obligation, whose
+-- bytes the singleton golden fixture pins: the theorems in the inner
+-- module @GeneratedTheorems@, the manifest entries at top level.
 compatibilityArtifact
   :: NspeSupportPlan -> NspeCasePlan -> ChangeOtherFacts -> GeneratedArtifact
 compatibilityArtifact plan onlyCase facts =

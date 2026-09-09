@@ -1,8 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | The fourth deterministic frontend boundary for Mithril Core v0:
--- normalization of a well-typed document into the explicit typed
--- normalized Core representation.
+-- | The normalization boundary of the Mithril Core v0 frontend:
+-- deterministic normalization of a well-typed document into the
+-- explicit typed normalized Core representation.
 --
 -- > typed opaque document
 -- >   -> deterministic normalization        ('normalizeCoreDocument')
@@ -11,17 +11,12 @@
 -- 'normalizeCoreDocument' consumes exactly the typed document
 -- produced by "Mithril.Core.Typing" — the stage index makes a merely
 -- resolved (or earlier) document unacceptable — and constructs the
--- typed normalized Core: the explicit internal representation the
--- contract renderer ("Mithril.Core.Contract", its first implemented
--- consumer), the Agda backend (implemented so far as the
--- single-obligation verifier slice behind "Mithril.Core.Verification",
--- its second consumer), and the target adapters (implemented so far
--- as the Wasp Confinement Profiles v0 and v1 behind
--- "Mithril.Core.Wasp" — the exact singleton rule-1 plan and the exact
--- ordered rule-1, rule-2 pair of the same verified obligation, the
--- first target adapter consuming normalized Core; further adapter
--- formats remain open) are required to share.  Relative to the typed document's resolved
--- model, normalization
+-- typed normalized Core: the one explicit internal representation
+-- that the contract renderer ("Mithril.Core.Contract"), the verifier
+-- slice ("Mithril.Core.Verification"), and the Wasp emitter
+-- ("Mithril.Core.Wasp") share, so that no backend re-interprets the
+-- authored JSON.  Relative to the typed document's resolved model,
+-- normalization
 --
 -- * stamps every term with the static type the typechecker
 --   determined for it, so no later backend reruns type inference;

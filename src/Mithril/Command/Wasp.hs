@@ -4,32 +4,30 @@
 -- | The CLI boundary of @mithril wasp generate CORE_FILE WASP_ROOT@
 -- and @mithril wasp check CORE_FILE WASP_ROOT@.
 --
--- Both commands run the complete existing validation\/normalization
--- pipeline over CORE_FILE — exactly
--- 'Mithril.Command.Validate.validateCoreFile', so every input failure
--- keeps the validate boundary's diagnostic bytes and exit
--- classification — then require the production verifier
--- ('Mithril.Core.Verification.verifyCoreDocument') to report the
--- document VERIFIED, and then render the closed Wasp bundle
+-- Both commands run the complete validation\/normalization pipeline
+-- over CORE_FILE — exactly 'Mithril.Command.Validate.validateCoreFile',
+-- so every input failure keeps the validate boundary's diagnostic
+-- bytes and exit classification — then require the production
+-- verifier ('Mithril.Core.Verification.verifyCoreDocument') to report
+-- the document VERIFIED, and then render the closed Wasp bundle
 -- ('Mithril.Core.Wasp.renderWaspBundle') of the same normalized
--- document: the Wasp Confinement Profile v0 for a singleton rule-1
--- plan, the Wasp Confinement Profile v1 for the exact ordered rule-1,
--- rule-2 pair, and a deterministic UNSUPPORTED refusal (exit 3) for
--- every other verified plan — decided before any destination is
--- resolved, inspected, staged, backed up, or written.  Rendering
--- itself attests only that the shared support gate accepted the
--- document; the VERIFIED provenance a successful report states is
--- established here, by the verifier having returned VERIFIED before
--- anything was rendered — a document the verifier reports
--- unsupported, or a verifier tool failure, never writes or replaces a
--- Wasp root.  The report names the selected profile explicitly and
--- lists every lowered operation in authored case order; the
--- Profile-v0 report is byte-for-byte what it was before Profile v1
--- existed.  The outcome type keeps the construction and matching
--- surface it had before Profile v1 — the two-argument
--- @WaspNotConfined root violations@ — as a pattern synonym next to
--- the profile-aware constructor 'WaspRootNotConfined' the commands
--- produce and the reports read.
+-- document.  The profile dispatch is fail-closed and is decided
+-- before any destination is resolved, inspected, staged, backed up,
+-- or written: Profile v0 for a singleton rule-1 plan, Profile v1 for
+-- the exact ordered rule-1, rule-2 pair, and a deterministic
+-- UNSUPPORTED refusal (exit 3) for every other verified plan.
+--
+-- Rendering itself attests only that the shared support gate
+-- accepted the document; the VERIFIED provenance a successful report
+-- states is established here, by the verifier having returned
+-- VERIFIED before anything was rendered.  A document the verifier
+-- reports unsupported, or a verifier tool failure, never writes or
+-- replaces a Wasp root.  The report names the selected profile
+-- explicitly and lists every lowered operation in authored case
+-- order.  Next to the profile-aware constructor 'WaspRootNotConfined'
+-- the commands produce and the reports read, the outcome type offers
+-- the two-argument compatibility view @WaspNotConfined root
+-- violations@ as a pattern synonym.
 --
 -- * @generate@ renders the complete bundle before touching the
 --   filesystem, validates WASP_ROOT lexically (no empty, dot, or
@@ -40,19 +38,17 @@
 --   the bundle as a complete directory: an absent or empty
 --   destination is initialized; a nonempty destination is replaced
 --   as a whole only when it carries one of the two byte-exact Mithril
---   ownership markers (Profile v0 or Profile v1 — so an owned root of
---   either profile transitions to the requested one as a whole) and
---   nothing outside the fixed inventory (altered or missing managed
---   files are recovered by the replacement); an unmarked nonempty
---   root or any unmanaged path refuses the command without
---   mutation.  The new bundle is written to a sibling staging
---   directory created private (permission bits @0700@ regardless of
---   the umask, so the installed root is private too), checked there,
---   and swapped into place by whole-directory renames with rollback
---   ("Mithril.Core.Internal.WaspFilesystem" states the exact
---   sequence, including the second backup-absence check right before
---   the rename); the command finishes with exactly the confinement
---   check of @check@.
+--   ownership markers (so an owned root of either profile transitions
+--   to the requested one as a whole) and nothing outside the fixed
+--   inventory (altered or missing managed files are recovered by the
+--   replacement); an unmarked nonempty root or any unmanaged path
+--   refuses the command without mutation.  The new bundle is written
+--   to a sibling staging directory created private (permission bits
+--   @0700@ regardless of the umask, so the installed root is private
+--   too), checked there, and swapped into place by whole-directory
+--   renames with rollback ("Mithril.Core.Internal.WaspFilesystem"
+--   states the exact sequence); the command finishes with exactly
+--   the confinement check of @check@.
 -- * @check@ performs no writes: it walks the complete source root
 --   without following symbolic links, rejects hard links, compares
 --   every managed file byte-for-byte with the regenerated bundle,
@@ -196,14 +192,13 @@ data WaspFileSuccess
   deriving (Eq, Show)
 
 -- | The two-argument construction and matching surface of the
--- not-confined outcome, exactly as it existed before Profile v1:
--- matching @WaspNotConfined root violations@ ignores the requested
--- profile (which 'WaspRootNotConfined' carries and the report
--- names), and constructing through it yields the Profile-v0 outcome
--- — the only profile that existed then.  Together with the other
--- three constructors it covers every outcome (the @COMPLETE@ pragma
--- below), so a downstream match over the pre-Profile-v1
--- constructors stays exhaustive.
+-- not-confined outcome, a compatibility view: matching
+-- @WaspNotConfined root violations@ ignores the requested profile
+-- (which 'WaspRootNotConfined' carries and the report names), and
+-- constructing through it yields the Profile-v0 outcome.  Together
+-- with the other three constructors it covers every outcome (the
+-- @COMPLETE@ pragma below), so a downstream match over these four
+-- stays exhaustive.
 pattern WaspNotConfined :: FilePath -> NonEmpty ConfinementViolation -> WaspFileSuccess
 pattern WaspNotConfined root violations <- WaspRootNotConfined _ root violations
   where
@@ -299,14 +294,13 @@ report coreFile root bundle =
 
 -- | Render a completed outcome for stdout (no trailing newline).
 --
--- The Profile-v0 report (one case action, one operation line) is
--- byte-for-byte the report that existed before Profile v1; the
--- Profile-v1 report lists the operation count and then every lowered
--- case in authored order with its position, rule, authored action,
--- and fixed operation and route — the second operation is never
--- hidden and the bundle is never presented as a singleton.  The
--- rendering dispatches on the summary's explicit profile identity,
--- never on the operation count.
+-- The Profile-v0 report names one case action and one operation
+-- line; the Profile-v1 report lists the operation count and then
+-- every lowered case in authored order with its position, rule,
+-- authored action, and fixed operation and route — the second
+-- operation is never hidden and the bundle is never presented as a
+-- singleton.  The rendering dispatches on the summary's explicit
+-- profile identity, never on the operation count.
 renderWaspSuccess :: FilePath -> WaspFileSuccess -> Text
 renderWaspSuccess coreFile success =
   case success of

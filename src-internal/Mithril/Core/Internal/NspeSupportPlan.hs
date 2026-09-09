@@ -7,16 +7,18 @@
 -- The one shared NoSelfPrivilegeEscalation support-plan facility: the
 -- deterministic support gate over the typed normalized representation
 -- and the resolved plan it extracts.  It is the single statement of
--- the supported-shape classification, consumed by both implemented
--- backends of typed normalized Core — the Agda verifier slice
+-- the supported-shape classification, consumed by both backends of
+-- typed normalized Core — the Agda verifier slice
 -- ("Mithril.Core.Internal.Verify", behind "Mithril.Core.Verification")
 -- and the Wasp emitter ("Mithril.Core.Internal.Wasp", behind
 -- "Mithril.Core.Wasp").  Neither consumer restates any part of the
 -- classification: the verifier transcribes the plan into the trusted
--- Agda kernel, the emitter lowers exactly the one case shape its
--- profile covers from the same tagged plan, and a document outside the
--- rule is unsupported to both for exactly the same deterministic
--- reasons.
+-- Agda kernel, the emitter lowers exactly the case shapes its profile
+-- covers from the same tagged plan, and a document outside the rule
+-- is unsupported to both for exactly the same deterministic reasons.
+-- The plan is a typed value: an internal support witness
+-- constructed by the handwritten Haskell support gate (not generated
+-- code), and not a proof — it attests support only.
 --
 -- == The support rule
 --
@@ -42,9 +44,7 @@
 -- dropped, reordered, or deduplicated — and tagged with the rule it
 -- matched ('NspeCasePlan', 'NspeCaseMatch'):
 --
--- /Rule 1, change-other/ (the already-mechanized sound proof rule of
--- the Agda spike's @Mithril.Acme@ slice, the safe
--- @Membership.changeRole@ shape):
+-- /Rule 1, change-other/:
 --
 -- * the case action is @AuthenticatedOnly@ and declares exactly three
 --   parameters in order: subject (@EntityRef@ of the subject
@@ -92,6 +92,8 @@
 -- deliberately rejects semantically equivalent but differently
 -- authored shapes as unsupported.
 --
+-- == Identity preflight and the semantic anchor
+--
 -- Every stored identity the gate consumes first passes the one
 -- canonical identity preflight ('canonicalDeclaration',
 -- 'canonicalChildren'): a reference resolves through its canonical
@@ -122,21 +124,10 @@
 -- endpoint reference — never as an unsupported shape and never as a
 -- verified document.
 --
--- Soundness of the rules (the verifier's concern, stated once here so
--- the emitter inherits exactly the same premise): the generated Agda
--- module transcribes exactly these shapes into the trusted
--- fixed-schema kernel.  For rule 1 it re-proves, with the kernel's
--- checked frame lemma, that policy success forces the authenticated
--- actor's index apart from the subject parameter's, so the authorized
--- @SetRelation@ write cannot touch the actor's own authority tuple in
--- the selected scope; the middle guard conjunct @Not(Equal(Actor,
--- subject parameter))@ is the proof-relevant fact.  For rule 2 it
--- re-proves, with the kernel's checked point lemma, that the write
--- installs exactly the requested payload at the actor's own tuple
--- while policy success is exactly the bound of that payload by the
--- actor's pre-state authority.  Every other pinned piece keeps the
--- transcription exact.  The gate itself proves nothing, and a plan
--- attests support only.
+-- Soundness of the rules is the verifier's concern:
+-- "Mithril.Core.Internal.Verify" states what the generated module
+-- re-proves for each rule against the trusted fixed-schema kernel.
+-- The gate itself proves nothing, and a plan attests support only.
 --
 -- == The one ranking authority
 --
@@ -738,9 +729,8 @@ endpointList (Two a b) = [a, b]
 
 -- | Decide, purely and deterministically, whether the normalized
 -- model is exactly the supported obligation shape, and extract the
--- generation plan if so.  The module header states the rules and
--- their soundness; the gate consumes stored identities and evidence
--- only.
+-- generation plan if so.  The module header states the rules; the
+-- gate consumes stored identities and evidence only.
 supportPlan :: Normalized.Model -> Either PlanRefusal NspeSupportPlan
 supportPlan model =
   case selectObligation model `gateThen` uncurry3 (obligationPlan model) of

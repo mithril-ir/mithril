@@ -5,25 +5,13 @@
 -- handles, choosing the exit status — belong to the executable's
 -- @Main@ module.
 --
--- The tool understands the self-describing invocations plus five
--- real commands: @validate FILE@, JSON parsing plus structural Core
--- v0 validation plus complete name resolution plus complete static
--- typing plus deterministic normalization, @contract FILE@, the same
--- complete pipeline followed by deterministic rendering of the
--- normalized document as the human-readable security contract, and
--- @verify FILE@, the same complete pipeline followed by the first
--- connected verifier slice: a deterministic support gate and, for
--- exactly one supported obligation family — one selected
--- NoSelfPrivilegeEscalation guarantee whose non-empty case collection
--- is classified case by case as exact rule-1 (change-other) and\/or
--- exact rule-2 (bounded self-update) cases — generated Agda with one
--- proof group per case, checked by exactly Agda 2.8.0, and @wasp
--- generate CORE_FILE WASP_ROOT@ and @wasp check CORE_FILE WASP_ROOT@,
--- the Wasp Confinement Profiles: Profile v0 lowers only exactly one
--- rule-1 case of a verified document and Profile v1 only the exact
--- ordered rule-1, rule-2 case pair; every other verified plan is
--- refused as unsupported by the profile dispatcher.  No other
--- compiler stage exists.
+-- The tool understands the self-describing invocations plus the five
+-- commands of 'Command': @validate FILE@, @contract FILE@,
+-- @verify FILE@, @wasp generate CORE_FILE WASP_ROOT@, and
+-- @wasp check CORE_FILE WASP_ROOT@.  What each command establishes is
+-- stated by its command module; see @docs\/current-scope.md@ for the
+-- supported slice, result meanings, trusted components, and explicit
+-- non-claims.
 module Mithril.CLI
   ( Command (..)
   , parseCommand

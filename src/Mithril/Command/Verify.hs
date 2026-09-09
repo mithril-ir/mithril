@@ -2,21 +2,21 @@
 
 -- | The effectful file boundary of @mithril verify FILE@.
 --
--- The command runs the complete existing validation\/normalization
--- pipeline over FILE — exactly
--- 'Mithril.Command.Validate.validateCoreFile', so every input failure
--- keeps the validate boundary's diagnostic bytes and exit
--- classification — and, on success, hands the normalized document to
--- the verifier boundary ('Mithril.Core.Verification.verifyCoreDocument').
+-- The command runs the complete validation\/normalization pipeline
+-- over FILE — exactly 'Mithril.Command.Validate.validateCoreFile', so
+-- every input failure keeps the validate boundary's diagnostic bytes
+-- and exit classification — and, on success, hands the normalized
+-- document to the verifier boundary
+-- ('Mithril.Core.Verification.verifyCoreDocument').
 --
 -- Outcome contract at the tool boundary:
 --
 -- * a supported, checked document exits 0 with the deterministic
 --   verification report on stdout and nothing on stderr — the
---   original singleton rule-1 report, byte-for-byte, when the one
---   selected obligation has exactly one change-other case, and
---   otherwise the per-case report naming every case's zero-based
---   authored position, rule, action, and checked theorems;
+--   singleton report when the one selected obligation has exactly
+--   one change-other case, otherwise the per-case report naming
+--   every case's zero-based authored position, rule, action, and
+--   checked theorems;
 -- * an unsupported document exits 3 with the deterministic
 --   unsupported report — sorted, deduplicated reasons — on stdout
 --   and nothing on stderr;
@@ -28,7 +28,7 @@
 --   workspace failure — exits 2 with a precise escaped diagnostic on
 --   stderr and no false semantic verdict.  A checker refusal after
 --   the support gate accepted the document is a tool failure, never
---   @VIOLATED@, which this milestone can never emit.
+--   @VIOLATED@: no such outcome exists at this boundary.
 --
 -- Reports contain no timestamps, temporary paths, working-directory
 -- details, internal numeric identifiers, or uncontrolled checker
@@ -118,13 +118,13 @@ verifyCoreFile file = do
 -- and no checker output.
 --
 -- A verified obligation with exactly one change-other case renders
--- the original singleton report unchanged.  Every other verified
--- obligation renders the per-case report: the case count, then for
--- every case in authored order its zero-based position, its rule, its
--- action, and its checked theorem names, then the checker line and a
--- scope line stating that exactly the selected cases of the one
--- selected NoSelfPrivilegeEscalation obligation are verified and
--- nothing else — no other guarantee, action, or authority writer.
+-- the singleton report.  Every other verified obligation renders the
+-- per-case report: the case count, then for every case in authored
+-- order its zero-based position, its rule, its action, and its
+-- checked theorem names, then the checker line and a scope line
+-- stating that exactly the selected cases of the one selected
+-- NoSelfPrivilegeEscalation obligation are verified and nothing else
+-- — no other guarantee, action, or authority writer.
 renderVerifySuccess :: FilePath -> VerifyFileSuccess -> Text
 renderVerifySuccess file success =
   case success of

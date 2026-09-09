@@ -43,7 +43,7 @@
 -- @CreateEntity@ initializer map, whose authored member order the
 -- JSON parser does not preserve; the decoder lists it in ascending
 -- key order).  Declaration names remain in the model as 'Sourced'
--- metadata for future diagnostics and human-readable output, but
+-- metadata for diagnostics and human-readable output, but
 -- resolved linkage and equality go through the identifiers; no
 -- resolved reference field holds a name for later stages to look up
 -- again.

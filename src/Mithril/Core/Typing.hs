@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | The third deterministic frontend boundary for Mithril Core v0:
+-- | The static-typing boundary of the Mithril Core v0 frontend:
 -- complete static typing over the explicit resolved representation.
 --
 -- > resolved opaque document
@@ -34,38 +34,34 @@
 -- * /@CreateEntity@ initializers/: complete over the target entity's
 --   attributes, with every initializer term of its attribute's
 --   declared type;
--- * /guarantee well-typedness/: @TenantIsolation@ structural access
---   relations that are binary with two distinct designated endpoints
---   (which therefore cover the relation) and a subject endpoint of
---   the distinguished @User@ entity's type — the relation's payload
---   is Unit or an enum exactly as any relation may declare, and
---   defines no action-specific floor: presence of a
---   @(subject, tenant)@ tuple is the baseline tenant access of the
---   (still unverified) obligation, while role floors remain in
---   action allow policies — with each case's actor-free terms typed
---   in its action's environment (a tenant term of exactly the tenant
---   endpoint's entity reference type and a @Bool@ @protected@ term;
---   a case may name an @AnyPrincipal@ action — whether an anonymous
---   allow branch violates the obligation is a future verifier
---   question, not a type error), and
---   @NoSelfPrivilegeEscalation@ authorities whose subject endpoint
---   references the distinguished @User@ entity, whose subject and
---   scope endpoints are distinct and cover the relation, whose
---   relation payload is exactly the declared-order @payloadOrder@
---   enum, and whose cases carry scope terms corresponding
---   one-to-one, at the right entity types, with the authority's
---   scope endpoints.
+-- * /guarantee well-typedness/: a @TenantIsolation@ access relation
+--   must be binary with two distinct endpoints and a subject endpoint
+--   at the distinguished @User@ entity, and each case's actor-free
+--   terms (the tenant term at exactly the tenant endpoint's entity
+--   type, the @Bool@ @protected@ term) are typed in its action's
+--   environment.  A @NoSelfPrivilegeEscalation@ authority must have
+--   a @User@ subject endpoint; when it names a scope endpoint, that
+--   endpoint must be distinct from the subject and together they
+--   must cover the relation's endpoints, so an arity-two authority
+--   relation requires one scope endpoint.  Its payload must be
+--   exactly the declared-order @payloadOrder@ enum, and each case
+--   must carry scope terms corresponding one-to-one with the
+--   authority's scope endpoints, at their respective entity types.
+--   An authority over a unary relation with no scope endpoint is
+--   well-typed: the later verifier support gate, not the
+--   typechecker, requires the supported binary shape.  Whether a
+--   case's policy violates the obligation is a verifier question,
+--   not a type error (@Mithril.Core.Internal.Typecheck@ states each
+--   rule exactly).
 --
 -- A @'Mithril.Core.Validation.CoreDocument' 'Typed'@ attests exactly
 -- this judgment and nothing more.  It is /not/ typed normalized
 -- Core: no normalization, no policy evaluation, no guarantee
 -- verification, no proof generation or checking, and no code
 -- generation happened, and no semantic or security property is
--- established.  The next frontend stage, deterministic
--- normalization, lives in "Mithril.Core.Normalization" and consumes
--- the typed document this module produces.  Selecting a guarantee
--- remains selecting a proof obligation; a well-typed document's
--- guarantees are still unverified.
+-- established.  Selecting a guarantee remains selecting a proof
+-- obligation; a well-typed document's guarantees are still
+-- unverified.
 --
 -- == Failure classification
 --

@@ -8,18 +8,15 @@
 -- of a @'Mithril.Core.Validation.CoreDocument' 'Normalized'@, produced
 -- only by the normalizer ("Mithril.Core.Internal.Normalize", behind
 -- "Mithril.Core.Normalization") from a well-typed document, and the
--- one intended input of the contract renderer (its first implemented
--- consumer, "Mithril.Core.Internal.Contract" behind
--- "Mithril.Core.Contract"), the Agda backend (implemented so far as
--- the single-obligation verifier slice,
--- "Mithril.Core.Internal.Verify" behind "Mithril.Core.Verification"),
--- and the future
--- target emitters.  It is a distinct model from the resolved
--- representation ("Mithril.Core.Internal.Resolved") — not the resolved
--- 'Mithril.Core.Internal.Resolved.Model' under another stage tag —
--- although it deliberately shares the resolved leaf vocabulary:
--- namespace-specific identifiers, 'Ref' reference sites, source
--- paths, the declared attribute, parameter, and payload type
+-- one intended input of every backend — the contract renderer
+-- ("Mithril.Core.Internal.Contract"), the verifier slice
+-- ("Mithril.Core.Internal.Verify"), and the Wasp emitter
+-- ("Mithril.Core.Internal.Wasp").  It is a distinct model from the
+-- resolved representation ("Mithril.Core.Internal.Resolved") — not
+-- the resolved 'Mithril.Core.Internal.Resolved.Model' under another
+-- stage tag — although it deliberately shares the resolved leaf
+-- vocabulary: namespace-specific identifiers, 'Ref' reference sites,
+-- source paths, the declared attribute, parameter, and payload type
 -- families, and the actor-availability index.
 --
 -- == What normalization adds to the resolved model
