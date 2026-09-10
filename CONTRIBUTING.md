@@ -13,8 +13,8 @@ pipeline specification is
 [docs/compiler-architecture.md](docs/compiler-architecture.md).
 
 The most valuable contributions right now are design discussion, review of
-the documented scope and non-guarantees, and prior-art references — not
-product code.
+the documented scope and non-guarantees, and prior-art references, rather
+than product code.
 
 ## Prerequisites
 
@@ -41,7 +41,7 @@ tools will be documented here if and when they are chosen.
 
 `examples/` holds authored examples; `test/fixtures/` holds authored
 regression inputs plus committed golden outputs. Golden outputs are never
-edited by hand — fix the generator or the authored input and regenerate.
+edited by hand; fix the generator or the authored input and regenerate.
 Local experiments belong in `/tmp`, a Git-ignored path, or a separate
 clone.
 
@@ -70,7 +70,7 @@ sh test/api-probes/test-run-api-probes.sh
 
 CI runs all of them on every push and pull request; none needs Wasp, Node,
 or PostgreSQL. Expected results: the first two `verify` commands exit 0
-(`VERIFIED`); the third and fourth deliberately exit 3 (`UNSUPPORTED` — the
+(`VERIFIED`); the third and fourth deliberately exit 3 (`UNSUPPORTED`: the
 dangerous self-promotion mutation and the canonical Acme document lie
 outside the support rule, and `UNSUPPORTED` is never a violation verdict);
 the two `wasp check` commands report the committed golden fixtures
@@ -92,7 +92,7 @@ sh test/wasp-integration/run-wasp-integration.sh
 It needs the Wasp 0.25.0 CLI, Node.js 24, and PostgreSQL 16 (server
 binaries for a private cluster, or `MITHRIL_PG_ADMIN_URL`), has its own
 pinned CI workflow (`.github/workflows/wasp.yml`), and installs, compiles,
-and builds each freshly generated root in private working directories — so
+and builds each freshly generated root in private working directories, so
 `node_modules`, `.wasp`, `package-lock.json`, and migrations never enter
 the repository. Run it when a change affects the generated bundles, the
 emitter, or the harness itself; documentation-only changes do not need it.
@@ -119,8 +119,8 @@ checks and the Haskell test suite passing.
 
 ## When to discuss first
 
-Major architectural changes — the design of Mithril Core, the verification
-approach, the code-generation strategy — should be **discussed in an issue
+Major architectural changes (the design of Mithril Core, the verification
+approach, and the code-generation strategy) should be **discussed in an issue
 before any implementation work begins**. A pull request landing a large
 unsolicited design is likely to be closed in favor of a discussion,
 however good the code is. Small fixes (typos, broken links,
@@ -144,10 +144,10 @@ doubt, say less. See [SECURITY.md](SECURITY.md) and
 
 ## Generated and golden artifacts
 
-Derived artifacts — the golden contracts, the generated Agda modules
+Derived artifacts include the golden contracts, the generated Agda modules
 (`test/fixtures/nspe.generated.agda`,
 `test/fixtures/nspe-self-update.generated.agda`), and the generated Wasp
-trees (`test/fixtures/wasp-acme`, `test/fixtures/wasp-acme-self-update`) —
+trees (`test/fixtures/wasp-acme`, `test/fixtures/wasp-acme-self-update`). They
 are regenerated only through the tool and reviewed, never hand-edited. If
 a generated file looks wrong, fix the generator or the authored input.
 
@@ -162,7 +162,7 @@ a generated file looks wrong, fix the generator or the authored input.
 - Run the canonical checks relevant to your change before submitting, and
   say in the PR what you ran.
 - Keep goldens and fixtures byte-identical unless your change regenerates
-  them through the tool — and then say so explicitly.
+  them through the tool; then say so explicitly.
 
 ## Code of conduct
 

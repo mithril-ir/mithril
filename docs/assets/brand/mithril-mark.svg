@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="144" height="96" viewBox="0 0 9 6" role="img" aria-label="mithril">
+  <g shape-rendering="crispEdges">
+    <path fill="#b9a6e1" d="M6 0h2v1h-2zM3 1h5v1h-5zM0 2h6v1h-6zM0 3h4v1h-4zM0 4h2v1h-2z"></path>
+    <path fill="#cbe4d8" d="M6 2h2v1h-2zM4 3h2v1h-2zM2 4h2v1h-2z"></path>
+    <path fill="#d8b4c9" d="M8 1h1v1h-1zM8 2h1v1h-1zM6 3h3v1h-3zM4 4h5v1h-5zM0 5h7v1h-7z"></path>
+  </g>
+</svg>

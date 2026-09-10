@@ -3,7 +3,7 @@
 The `agda/` tree holds three kinds of Agda module. The checking commands
 below type-check all of them together, but their standing differs:
 
-- **The embedded fixed-schema kernel** — the five handwritten modules
+- **The embedded fixed-schema kernel:** the five handwritten modules
   `Mithril.Base`, `Mithril.Core`, `Mithril.Policy`, `Mithril.Effect`, and
   `Mithril.Guarantee`. `mithril verify FILE` embeds exactly these at
   compile time as its trusted kernel, so changing any of them changes the
@@ -14,14 +14,14 @@ below type-check all of them together, but their standing differs:
   the supported NoSelfPrivilegeEscalation slice. They are **not** a
   general-purpose kernel, and **not** the Mithril Core language, parser,
   JSON representation, verifier, or an application implementation.
-- **The generated document-specific module** — for a supported document,
+- **The generated document-specific module:** for a supported document,
   `mithril verify` generates one obligation module against the embedded
   kernel and checks it in a fresh isolated workspace. It is never written
   under `agda/`; its bytes are pinned by the goldens
   [`test/fixtures/nspe.generated.agda`](../test/fixtures/nspe.generated.agda)
   and
   [`test/fixtures/nspe-self-update.generated.agda`](../test/fixtures/nspe-self-update.generated.agda).
-- **Experiments and examples outside the verifier kernel** —
+- **Experiments and examples outside the verifier kernel:**
   `Mithril.Spike`, a representative Acme-style example carrying the
   regression evidence for the capability boundary, and `Mithril.Acme`, the
   hand-transcribed `Membership.changeRole` slice (see
@@ -35,22 +35,22 @@ NoSelfPrivilegeEscalation), the Agda tree carries exactly one: the
 fixed-schema NoSelfPrivilegeEscalation proposition of `Mithril.Guarantee`,
 instantiated by hand in `Mithril.Acme` for the Acme example's
 `Membership.changeRole` action and, through the generated module, by
-`mithril verify` for the supported document shapes. Everything else — the
-other two property families, the rest of the Acme model, and the canonical
-JSON document itself — remains unverified.
+`mithril verify` for the supported document shapes. The other two property
+families, the rest of the Acme model, and the canonical JSON document itself
+remain unverified.
 
-The tool's connection is deliberately narrow. For one supported normalized
-guarantee family — the fixed NoSelfPrivilegeEscalation family of this
+The tool's connection is deliberately narrow. The supported normalized
+guarantee family is the fixed NoSelfPrivilegeEscalation family of this
 kernel: one selected guarantee whose non-empty case collection is
 classified case by case as exact rule-1 change-other cases (structurally
 corresponding to the safe `changeRole` proof rule below) and/or exact
 rule-2 bounded-self-update cases (an authenticated principal writing its
-own authority tuple to a payload bounded by its pre-state authority) —
-`mithril verify` generates an obligation module with one proof group per
-case against the five kernel modules and checks it with exactly Agda 2.8.0
+own authority tuple to a payload bounded by its pre-state authority).
+For that family, `mithril verify` generates an obligation module with one
+proof group per case against the five kernel modules and checks it with exactly Agda 2.8.0
 in safe mode inside an isolated workspace; the generated module re-proves
 the matching rule for every selected case of a supported document. No
-general verifier or general JSON-to-Agda lowering exists — everything
+general verifier or general JSON-to-Agda lowering exists. Everything
 outside that one guarantee family and its two exact case rules is
 UNSUPPORTED to the tool, and no violation is ever reported by it. The
 tool's Wasp Confinement Profile v0 lowers only exactly one rule-1 case and
@@ -73,7 +73,7 @@ Stricter from-scratch variant:
 agda --safe --no-libraries --ignore-interfaces -i agda agda/Mithril/Everything.agda
 ```
 
-Every module — kernel and experiment alike — is checked in `--safe` mode,
+Every module, kernel and experiment alike, is checked in `--safe` mode,
 uses Agda builtins only (no external library), and contains no
 `postulate`, no `primTrustMe`, no termination or rewrite pragmas, and no
 holes.
@@ -100,13 +100,13 @@ Capability s c γ act
 ```
 
 indexed by the **exact pre-state `s`, caller `c`, argument environment `γ`,
-and complete action `act`** — the action including its effect or designated
-read observation, not merely its policy. Its fields (`grant` packages them)
+and complete action `act`** (including its effect or designated read
+observation, not merely its policy). Its fields (`grant` packages them)
 are:
 
-- `pre-wf : WF s` — the pre-state is well-formed;
-- `caller-ok : ValidCaller s c` — an authenticated caller exists in `s`;
-- `args-ok : ValidArgs s γ` — every entity reference in the arguments
+- `pre-wf : WF s`: the pre-state is well-formed;
+- `caller-ok : ValidCaller s c`: an authenticated caller exists in `s`;
+- `args-ok : ValidArgs s γ`: every entity reference in the arguments
   exists in `s`;
 - `policy-ok : checkPolicy s γ c (policyOf act) ≡ true`.
 
@@ -134,8 +134,8 @@ execute-wf : (cap : Capability s c γ act) (al : Allocator s)
 The raw effect interpreter (`execMut`) and its conditional preservation
 lemma are **private** to `Mithril.Effect`: they carry no authorization and
 cannot be invoked from outside as a transition. `Mithril.Core`'s state
-combinators (`setMem`, `alloc`) remain public as *unauthorized semantics* —
-total functions on states with conditional lemmas — and are documented as
+combinators (`setMem`, `alloc`) remain public as *unauthorized semantics*:
+total functions on states with conditional lemmas. They are documented as
 such; only `execute` consumes authorization and represents an authorized
 transition. Consequently, since any `execute` post-state is well-formed, no
 authorized execution can install a Membership tuple with a nonexistent
@@ -151,12 +151,12 @@ are unconstructable).
   branches; effects and outputs of `AnyPrincipal` actions live at the
   anonymous level (`modeAuth`), so they cannot contain `actorT`.
 - **Scope of the Actor claim.** The above excludes *direct actor syntax and
-  environment access* — nothing more. An ordinary valid `User` argument may
+  environment access*, and nothing more. An ordinary valid `User` argument may
   have the same extensional value as the authenticated actor, and such an
   argument may be consumed by anonymous-indexed effects or outputs
   (`Mithril.Spike.actor-value-flows-as-argument`). Core v0 claims no value
   provenance tracking and no information-flow non-interference.
-- **Total, closed-world semantics — with ghost regions.** Relation lookup
+- **Total, closed-world semantics, with ghost regions.** Relation lookup
   is a total function into `Maybe`; there is no unwrap form and no partial
   evaluation (`eval` returns a bare `Val t`). Absence orders as bottom.
   State functions are total over `Nat` indices: `projOrg` values at or
@@ -187,11 +187,11 @@ are unconstructable).
   the allocator supplies no initializer values (required attributes come
   from the declared `InitTerm`). Beyond unrepresentability, this is now a
   semantic theorem: `fresh-not-evaluable` shows no entity-reference term of
-  a valid request — argument, actor, or attribute path — can evaluate to a
+  a valid request (argument, actor, or attribute path) can evaluate to a
   fresh candidate, and a fresh candidate offered *as* an argument makes the
   request invalid, so no capability exists for it.
 - **Freshness is the exact next index, not mere nonmembership.** For the
-  counter representation, `Fresh s k r` means `ix r ≡ count s k` — strictly
+  counter representation, `Fresh s k r` means `ix r ≡ count s k`, which is strictly
   stronger than "does not exist". Nonmembership follows
   (`fresh-not-exists`), and exactness is what makes the candidate exist
   after allocation (`alloc-exists`). A generic kernel with abstract
@@ -202,12 +202,12 @@ are unconstructable).
   exactly, not merely bounded: the selected kind's counter increments by
   exactly one (`alloc-count`; authorized: `execute-create-count-selected`);
   every unrelated kind's counter is exactly unchanged (`alloc-count-other`;
-  authorized: `execute-create-count-other`) — together, the exact
+  authorized: `execute-create-count-other`); together these establish the exact
   counter-vector change. The created Project's `organization` attribute is
   exactly the evaluation of the capability-indexed action's declared
   initializer under the capability's pre-state, caller environment and
   arguments, at exactly the allocator's candidate (`alloc-projOrg-new`;
-  authorized: `execute-create-project-init`) — the allocator contributes
+  authorized: `execute-create-project-init`); the allocator contributes
   only the candidate and freshness evidence, unavailable to policy
   evaluation. Pre-existing entities, attribute values and relation tuples
   are preserved (`alloc-preserves-exists`, `alloc-projOrg`, `alloc-mem`,
@@ -229,7 +229,7 @@ first application-level proof slice on top of the kernel: **one action, one
 property, by hand**. `Mithril.Acme` is a hand-transcribed, fixed-schema
 Agda application *experiment* outside the verifier kernel: `mithril verify`
 neither embeds nor imports it, no JSON-to-Agda lowering produces it, and
-nothing checks the transcription against the JSON document — the tool's
+nothing checks the transcription against the JSON document. The tool's
 own generated module is derived separately from the normalized document.
 
 - `Mithril.Acme.changeRole` hand-transcribes the `Membership.changeRole`
@@ -242,8 +242,8 @@ own generated module is derived separately from the normalized document.
   transcribed constructor by constructor with the JSON's nesting.
 - `Mithril.Guarantee.NoSelfPrivilegeEscalation` states the selected
   guarantee case for one transition: the subject's own Membership
-  authority in the scope organization — the payload ordered with absence
-  as bottom, `nothing < Member < Admin` — does not increase.
+  authority in the scope organization, with the payload ordered using absence
+  as bottom (`nothing < Member < Admin`), does not increase.
 - `Mithril.Acme.changeRole-actor-authority-unchanged` proves the stronger
   fact for **every** pre-state, authenticated actor, argument environment,
   capability and allocator: an authorized execution leaves the actor's own
@@ -269,8 +269,8 @@ general property of Core.
 ## Generic vs. specialized
 
 **Generic in shape** (expected to survive generalization): the indexing
-disciplines — terms by authentication level/context/type, effects by result
-descriptor, capabilities by pre-state/caller/arguments/complete action —
+disciplines (terms by authentication level/context/type, effects by result
+descriptor, capabilities by pre-state/caller/arguments/complete action),
 plus total closed-world lookup, upsert semantics,
 freshness-as-execution-input, and the structure of the validity,
 preservation and frame lemmas.
@@ -293,8 +293,8 @@ kernel could serve any other schema):
 **Not mechanized in Agda at all**: JSON representation, parsing, the CLI,
 Wasp generation, production reference allocation, concurrency, the full
 Core action language, and the TenantIsolation and AuthenticatedMutation
-property families — where any of these exist, they are host-tool code
+property families. Where any of these exist, they are host-tool code
 outside every Agda claim. Of NoSelfPrivilegeEscalation, the Agda tree
 carries only the fixed-schema proposition, its hand-transcribed
-`Membership.changeRole` instance, and — through the generated module — the
+`Membership.changeRole` instance, and, through the generated module, the
 two exact case rules of `mithril verify`; nothing else is verified.

@@ -9,7 +9,7 @@ For the accessible explanation of these pieces, read
 pipeline and artifact-ownership specification, read
 [compiler-architecture.md](compiler-architecture.md).
 
-Status date: 2026-09-03. Mithril is experimental. It is not a complete
+Status date: 2026-09-10. Mithril is experimental. It is not a complete
 verifier, not a general web framework, and not a finished security
 product.
 
@@ -18,7 +18,7 @@ product.
 | Command | What it does |
 |---|---|
 | `mithril validate FILE` | The complete deterministic frontend: JSON parsing, structural validation against the compiled-in `core/schema.json`, complete Core v0 name resolution, complete Core v0 static typing, deterministic normalization into the internal typed normalized Core. |
-| `mithril contract FILE` | The same pipeline, then a deterministic, line-oriented, human-readable security contract rendered from the typed normalized Core. A review artifact, not a proof. |
+| `mithril contract FILE` | The same pipeline, then a deterministic, line-oriented text contract rendered from the typed normalized Core for human review. Its presentation is provisional. A review artifact, not a proof. |
 | `mithril verify FILE` | The same pipeline, then the one implemented verifier slice: for a supported document, deterministic generation of a document-specific Agda obligation module, checked by exactly Agda 2.8.0 in safe mode against trusted kernel modules embedded at compile time. |
 | `mithril wasp generate CORE_FILE WASP_ROOT` | The same pipeline plus the verify gate (VERIFIED required), then lowering of the verified obligation into a closed 14-file Wasp 0.25.0/PostgreSQL application installed as a complete root, finished with the confinement check. |
 | `mithril wasp check CORE_FILE WASP_ROOT` | Regenerates the same bundle without writing and checks that `WASP_ROOT` is exactly the closed profile: every managed file byte-identical, nothing missing, nothing extra. |
@@ -42,7 +42,7 @@ enum with absence as bottom, and whose non-empty case collection
 consists entirely of cases each matching exactly one of these rules,
 classified independently and in authored order:
 
-- **Rule 1 — change-other**: an `AuthenticatedOnly` action with exactly
+- **Rule 1 (change-other):** an `AuthenticatedOnly` action with exactly
   the subject/scope/payload parameter list, a `SetRelation` effect
   binding subject, scope, and payload to exactly those parameters, a
   case scope of exactly the scope parameter, and the allow policy
@@ -54,7 +54,7 @@ classified independently and in authored order:
           IsSome(Lookup(authority, [subject, scope]))))
   ```
 
-- **Rule 2 — bounded-self-update**: an `AuthenticatedOnly` action with
+- **Rule 2 (bounded-self-update):** an `AuthenticatedOnly` action with
   exactly the scope/payload parameter list, a `SetRelation` effect
   binding the subject endpoint to exactly `Actor`, the scope endpoint to
   the scope parameter, and the payload to the payload parameter, a case
@@ -67,15 +67,15 @@ classified independently and in authored order:
   with no further conjunct (an explicit `IsSome` is redundant under
   absence as bottom and is deliberately not accepted).
 
-The support gate inspects the normalized document structurally — stored
-identities and evidence, never raw JSON bytes, file names, hashes, or
+The support gate inspects the normalized document structurally, using stored
+identities and evidence rather than raw JSON bytes, file names, hashes, or
 policy evaluation. Semantically equivalent but differently authored
 policy shapes are deliberately `UNSUPPORTED`: unsupported forms fail
 closed.
 
 `NspeSupportPlan` (`Mithril.Core.Internal.NspeSupportPlan`) is the
-internal Haskell IR that records this classification as a support
-witness — the shared authority, ranking, and identity facts plus the
+internal Haskell IR that records this classification as a support witness:
+the shared authority, ranking, and identity facts plus the
 rule-tagged case plans. It is stated once and consumed unchanged by both
 the Agda generator and the Wasp emitter. It is not generated Haskell and
 is not itself a proof.
@@ -84,11 +84,11 @@ is not itself a proof.
 
 | Fixture | Result |
 |---|---|
-| [`test/fixtures/acme-nspe.mir.json`](../test/fixtures/acme-nspe.mir.json) | `VERIFIED` (exit 0) — one Rule-1 case. |
-| [`test/fixtures/acme-nspe-self-update.mir.json`](../test/fixtures/acme-nspe-self-update.mir.json) | `VERIFIED` (exit 0) — a Rule-1 case plus a Rule-2 case. |
-| [`test/fixtures/acme-nspe-dangerous.mir.json`](../test/fixtures/acme-nspe-dangerous.mir.json) | `UNSUPPORTED` (exit 3) — deliberately. A genuine self-promotion counterexample, but `UNSUPPORTED` is a support decision, not a violation verdict. |
-| [`test/fixtures/acme-nspe-unsafe.mir.json`](../test/fixtures/acme-nspe-unsafe.mir.json) | `UNSUPPORTED` (exit 3) — the guard-free unsafe variant. |
-| [`examples/acme/acme.mir.json`](../examples/acme/acme.mir.json) | `UNSUPPORTED` (exit 3) — the canonical broad example validates but selects three guarantees; TenantIsolation and AuthenticatedMutation verification is not implemented. |
+| [`test/fixtures/acme-nspe.mir.json`](../test/fixtures/acme-nspe.mir.json) | `VERIFIED` (exit 0): one Rule-1 case. |
+| [`test/fixtures/acme-nspe-self-update.mir.json`](../test/fixtures/acme-nspe-self-update.mir.json) | `VERIFIED` (exit 0): a Rule-1 case plus a Rule-2 case. |
+| [`test/fixtures/acme-nspe-dangerous.mir.json`](../test/fixtures/acme-nspe-dangerous.mir.json) | Deliberately `UNSUPPORTED` (exit 3). It is a genuine self-promotion counterexample, but `UNSUPPORTED` is a support decision, not a violation verdict. |
+| [`test/fixtures/acme-nspe-unsafe.mir.json`](../test/fixtures/acme-nspe-unsafe.mir.json) | `UNSUPPORTED` (exit 3): the guard-free unsafe variant. |
+| [`examples/acme/acme.mir.json`](../examples/acme/acme.mir.json) | `UNSUPPORTED` (exit 3): the canonical broad example validates but selects three guarantees; TenantIsolation and AuthenticatedMutation verification is not implemented. |
 
 A `VERIFIED` outcome means exactly: every selected case of the one
 selected obligation of this document was checked by Agda. It establishes
@@ -123,7 +123,7 @@ of the application, and anything outside the fixed inventory fails the
 confinement check. A future composable adapter is plausible, but it is
 not implemented. Generating correct handlers alone cannot establish
 whole-application security, because manually written server code could
-bypass them — that is why the current profiles are closed.
+bypass them. That is why the current profiles are closed.
 
 The confinement claim is exactly: the source root the checker walked
 was, at the time of checking or generation, a valid clean source
@@ -143,19 +143,19 @@ after `wasp build`. Source-root confinement is not a runtime sandbox.
 |---|---|
 | 0 | Success: valid, contract rendered, `VERIFIED`, `GENERATED`, or `CONFINED`. |
 | 1 | Invalid input (parse, structural, name, or type errors) or an unusable Wasp root path. |
-| 2 | Internal or tool failure — including every Agda checker problem (missing or wrong-version Agda, launch or workspace failure, a nonzero check after gate acceptance). Never a semantic verdict. |
+| 2 | Internal or tool failure, including every Agda checker problem (missing or wrong-version Agda, launch or workspace failure, a nonzero check after gate acceptance). Never a semantic verdict. |
 | 3 | `UNSUPPORTED`: the document (or, for the Wasp commands, the verified case sequence) lies outside the implemented support rules. Not a safety verdict, not a violation verdict. |
 | 4 | Wasp root not confined, or not replaceable (unmarked nonempty root or unmanaged path), reported without mutation. |
 
 Result vocabulary:
 
-- `VERIFIED` — every required theorem of every selected case was
+- `VERIFIED`: every required theorem of every selected case was
   accepted by Agda 2.8.0.
-- `UNSUPPORTED` — the document is outside the implemented support rules.
+- `UNSUPPORTED`: the document is outside the implemented support rules.
   It is **not** "safe", "unsafe", "rejected as dangerous", or
   "violated". No general `VIOLATED` result and no counterexample engine
   exists.
-- `CONFINED` — the checked source root is byte-identical to the
+- `CONFINED`: the checked source root is byte-identical to the
   regenerated closed profile.
 
 ## Trusted components
@@ -178,15 +178,15 @@ change to the authored model:
 
 ## Explicit non-claims
 
-- `core/schema.json` defines the structural JSON grammar only — not
+- `core/schema.json` defines the structural JSON grammar only, not
   semantic correctness and not proof.
 - Normalization is structural canonicalization of one authored document
   only: no policy evaluation, no simplification, no folding, no claim of
   semantic equivalence between differently authored documents, and no
   semantic diff.
-- The human-readable contract is a deterministic review artifact, not a
-  proof; its rendered guarantees are explicitly labelled unverified
-  proof obligations.
+- The text contract is a deterministic review artifact with provisional
+  human-facing presentation, not a proof; its rendered guarantees are
+  explicitly labelled unverified proof obligations.
 - No general proof search is implemented; the handwritten Agda kernel
   defines generic semantics and lemmas, and the generated module
   re-proves exactly the two supported rules per document.
@@ -205,7 +205,7 @@ change to the authored model:
 
 ## Known unresolved boundaries
 
-Deliberate, documented gaps — not desired contracts:
+These deliberate, documented gaps are not desired contracts:
 
 - Duplicate JSON object members are accepted under the JSON parser's
   (Aeson's) member semantics rather than rejected; which occurrence wins

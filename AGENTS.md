@@ -8,31 +8,31 @@ defaults.
 
 Mithril is an experimental verification-oriented compiler toolchain for a
 small authorization DSL/IR (Mithril Core, authored as JSON). One
-deterministic Haskell frontend — parse → structural validation → resolution
-→ typecheck → normalization — produces the typed normalized Core that the
+deterministic Haskell frontend (parse → structural validation → resolution
+→ typecheck → normalization) produces the typed normalized Core that the
 contract renderer, the Agda verifier slice, and the confined Wasp emitter
 all consume.
 
 **Current supported slice**: the verifier recognizes exactly two structural
-NSPE (No Self Privilege Escalation) proof rules — Rule 1 (change-other) and
-Rule 2 (bounded-self-update) — and nothing else; the Wasp backend lowers
+NSPE (No Self Privilege Escalation) proof rules: Rule 1 (change-other) and
+Rule 2 (bounded-self-update), and nothing else; the Wasp backend lowers
 exactly `[Rule 1]` (Profile v0) and `[Rule 1, Rule 2]` (Profile v1) as
 closed 14-file demonstrators. Everything else fails closed as
 `UNSUPPORTED`, which is never a safety or violation verdict. The complete
-ledger — supported shapes, exit codes, trusted components, non-claims — is
+ledger of supported shapes, exit codes, trusted components, and non-claims is
 [docs/current-scope.md](docs/current-scope.md); do not restate it here or
 in code comments.
 
 ## Authoritative documents
 
-1. [`docs/compiler-architecture.md`](docs/compiler-architecture.md) —
+1. [`docs/compiler-architecture.md`](docs/compiler-architecture.md):
    authoritative for the pipeline and artifact ownership (authored vs.
    derived vs. trusted).
-2. [`core/schema.json`](core/schema.json) — authoritative for the external
+2. [`core/schema.json`](core/schema.json): authoritative for the external
    Core v0 JSON shape.
-3. [`docs/current-scope.md`](docs/current-scope.md) — the exact current
+3. [`docs/current-scope.md`](docs/current-scope.md): the exact current
    scope and claim boundary.
-4. [`docs/how-mithril-works.md`](docs/how-mithril-works.md) — accessible
+4. [`docs/how-mithril-works.md`](docs/how-mithril-works.md): accessible
    background; not normative.
 
 ## Hard rules
@@ -48,8 +48,8 @@ in code comments.
    interpretation of the JSON.
 4. **The LLM boundary is fixed.** An LLM may at most propose the authored
    Mithril JSON. LLM-generated Agda, contracts, normalization, or target
-   enforcement code is forbidden — and LLM assistance in *developing this
-   repository* never changes that product boundary.
+   enforcement code is forbidden. LLM assistance in *developing this
+   repository* does not change that product boundary.
 5. **Fail closed.** Unsupported forms are `UNSUPPORTED`, never approximated,
    silently widened, or reported as verdicts. Never weaken the support gate
    to make a document pass.
@@ -82,11 +82,11 @@ in code comments.
     (`test/api-probes/`); changing what external code can construct, import,
     or coerce requires an explicit task, and the probes must keep passing.
 
-## Architecture constraints (decided — do not reopen)
+## Architecture constraints (decided; do not reopen)
 
 - Haskell (GHC 9.12.4, cabal-install 3.18.1.0, GHC2021) is the host-tool
   language; Agda 2.8.0 is the separate checker, reached only through
-  generated files and a process boundary — never as a Haskell library.
+  generated files and a process boundary, never as a Haskell library.
 - The internal representations live in a package-private sublibrary;
   identifier namespaces are distinct non-coercible types; stage indexes
   gate every boundary. Do not add dependencies or select
@@ -96,7 +96,7 @@ in code comments.
   order/uniqueness, `User` assumptions, or structural invariants requires
   the mandatory audit of the decoder, representations, resolver,
   typechecker, normalizer, and renderer coverage plus targeted regressions
-  in the same change — see
+  in the same change; see
   [the architecture rule](docs/compiler-architecture.md#schema-and-resolver-evolution).
   Recompilation is not the audit.
 - **Wasp profile limits are exact**: Profile v0 lowers exactly one Rule-1
@@ -120,7 +120,7 @@ in code comments.
   [docs/compiler-architecture.md](docs/compiler-architecture.md)), not in
   inline comments.
 - Public documentation must separate implemented behavior, evidence,
-  trusted assumptions, and future design — and keep limitations next to
+  trusted assumptions, and future design, and keep limitations next to
   the claims they limit.
 
 ## Working discipline
@@ -141,12 +141,12 @@ in code comments.
 
 At the end of every task, report:
 
-- **Files changed** — created, modified, or deleted, by path.
-- **Decisions made** — anything you chose that the task did not fully
+- **Files changed:** created, modified, or deleted, by path.
+- **Decisions made:** anything you chose that the task did not fully
   specify.
-- **Checks run** — what you actually verified and how (and what you could
+- **Checks run:** what you actually verified and how (and what you could
   not verify).
-- **Unresolved questions** — anything ambiguous, blocked, or deferred to a
+- **Unresolved questions:** anything ambiguous, blocked, or deferred to a
   human.
 
 Report failures and skipped steps plainly. A wrong "done" is worse than an
