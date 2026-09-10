@@ -6,187 +6,165 @@
 
 # Mithril
 
-Mithril is an experimental, narrow prototype for authorization policies. It
-is for developers and researchers exploring how one constrained policy source
-can drive human review, formal checking, and a small executable demonstration.
-It is not a ready-to-install security product or a general authorization
-verifier.
+**Formal verification for backend permissions.**
 
-Authorization logic is easy for people and coding agents to get subtly wrong.
-If the policy a reviewer reads, the model a proof checker checks, and the code
-a server runs are written independently, they can encode different rules.
-Mithril makes all three derive deterministically from one authored Mithril Core
-document, currently represented as JSON.
+Mithril helps developers check permission rules before those rules become
+backend code. Its current prototype can prove that selected role-changing
+operations do not let a user promote themselves to admin.
 
-One frontend parses, validates, resolves, typechecks, and normalizes that
-document. The resulting checked internal representation is the sole input to
-every downstream generator. This avoids independent backend interpretations
-of the JSON. It does not prove that a generated proof model or application has
-the same semantics as the Core document; those correspondences remain trusted
-boundaries.
+You describe the permissions and database changes in JSON. Mithril generates
+and checks proofs for the rules it supports, and can generate a small
+[Wasp](https://wasp.sh/) backend demo from the same description. You do not
+write the proofs yourself.
 
-> **Status: experimental.** The verifier supports one property with exactly
-> two accepted action shapes. Everything outside those shapes is
-> `UNSUPPORTED`, which is a support decision, not a safety or violation
-> verdict. The complete implementation and claim ledger is
-> [docs/current-scope.md](docs/current-scope.md).
+[Try the demo](#try-the-demo) · [How it works](#how-it-works) · [Documentation](#documentation)
 
-## A concrete supported example
+> **Experimental.** You can try the role-management demo today. Integration
+> into an existing application is not available yet.
 
-The runnable [fixture with two selected NSPE cases](test/fixtures/acme-nspe-self-update.mir.json)
-models organization roles ordered as `Member < Admin`:
+## Why Mithril?
 
-- Rule 1 lets an actor with the top authority, `Admin`, change another
-  existing member's role.
-- Rule 2 lets an authenticated actor update their own role only when
-  `newRole <= currentRole`.
+A role-management endpoint can accept valid input, require login, and still
+let an ordinary member assign themselves `Admin`. Authentication establishes
+who is making the request; the permission checks must also restrict what
+that person can change. A developer or coding agent can miss that distinction
+while adding an endpoint or updating a handler.
 
-The selected property is **No Self Privilege Escalation** (NSPE). For these
-two actions, a user may demote themselves but cannot use either action to
-promote themselves. Mithril calls the two accepted action shapes
-*structural proof rules* because the support gate matches their policy and
-effect structure exactly. A differently written policy is `UNSUPPORTED` even
-if it appears semantically equivalent.
+Tests can catch this bug when they exercise the relevant request. Formal
+verification can establish a property for every request and state covered
+by a mathematical model, under its stated assumptions. For the supported
+role-changing operations, Mithril checks a proof that the caller's own role
+cannot increase.
 
-## What the prototype does today
+Mithril puts the permission checks and the data updates they guard in one
+description. You can review it and rerun verification whenever you or a coding
+agent changes it. The aim is to make this kind of security check practical
+without requiring application developers to write mathematical proofs.
 
-Given Core JSON, the source build can produce three derived surfaces from the
-same checked internal representation, called the typed normalized Core:
+## Example: prevent self-promotion
 
-1. `mithril contract` renders a deterministic text contract for human review.
-   Its human-facing presentation is provisional, and the contract is not a
-   proof.
-2. `mithril verify` generates a document-specific Agda module. For a supported
-   document, Agda 2.8.0 checks every selected case of its one selected NSPE
-   obligation.
-3. `mithril wasp generate` can emit one of two exact, closed 14-file
-   [Wasp](https://wasp.sh/) demonstrator profiles when the verified case
-   sequence is supported by the emitter. `mithril wasp check` compares a
-   source root with the regenerated profile.
+Consider an app where users belong to organizations as either a `Member` or
+an `Admin`. The [example document](test/fixtures/acme-nspe-self-update.mir.json)
+selects these two operations for verification:
 
-`VERIFIED` means exactly that Agda 2.8.0 accepted every required theorem for
-every selected case of the document's one selected NSPE obligation. It says
-nothing about other guarantees, actions outside the selected cases, including
-other actions that can write the role relation but were not selected for the
-NSPE obligation, or the security of a complete application. There is no
-general proof search, `VIOLATED` verdict, or counterexample engine.
+| Operation | Permission rule |
+|---|---|
+| Change another member's role | The caller must be an admin in that organization, and the target must be a different, existing member. |
+| Change your own role | The requested role must be equal to or below your current role in that organization. |
 
-The Wasp demonstrator makes the supported policies executable as authenticated
-Actions over PostgreSQL. Profile v0 accepts exactly `[Rule 1]`; Profile v1
-accepts exactly `[Rule 1, Rule 2]` in authored order. Every other verified case
-sequence is refused before the destination is accessed.
-Each generated Action performs its authorization reads and single relation
-update in a Prisma transaction at PostgreSQL `Serializable` isolation.
-The separate integration battery builds both generated profiles and exercises
-their Actions through Wasp's HTTP and authentication path against PostgreSQL.
+The self-update condition, written as pseudocode, is:
 
-Both profiles own the complete 14-file source tree. `CONFINED` means that the
-root walked by the checker was, at that time, byte-identical to the regenerated
-closed profile. The profiles are demonstrators, not a composable Wasp
-integration or a runtime sandbox. Code or data can still be changed after the
-check, and no whole-runtime or general application-security claim follows.
+```text
+newRole <= currentRole
+```
 
-### Trust and limitations
+An admin can demote themselves or promote someone else. A member cannot use
+either operation to make themselves an admin. This is the property Mithril
+checks, called **No Self Privilege Escalation**.
 
-The relevant trusted computing base includes the Haskell tool, the embedded
-Agda kernel and support rules, Agda 2.8.0, and, for the executable slice, Wasp,
-Node, Prisma, PostgreSQL, the templates, and the lowering. No theorem currently
-proves Core-to-Agda or Core-to-Wasp semantic preservation. See the
-[exact trusted components and non-claims](docs/current-scope.md#trusted-components).
+The example file also contains other actions. Only the two selected
+operations are covered by this verification result.
 
-## LLM and coding-agent boundary
+## How it works
 
-An optional, untrusted LLM may propose the authored Core JSON. Mithril has no
-natural-language interface, and no LLM participates in parsing, normalization,
-contract rendering, Agda generation or checking, Wasp generation, or
-verification verdicts.
+1. **Describe the operations.** A JSON file called Mithril Core describes
+   the relevant data, roles, permission checks, database updates, and the
+   security property to verify. You can author it directly or have a coding
+   agent propose it. You still review whether it expresses your intent.
 
-Separately, this repository has been developed with substantial coding-agent
-assistance under human-directed architecture, review, and testing. Agent-written
-code is reviewed and tested like other code. Passing tests are evidence, not a
-proof or a reason to trust the implementation.
+2. **Review and verify.** Mithril validates the description and can render
+   a text summary for review. For supported rules, it generates proofs and
+   runs [Agda](https://agda.readthedocs.io/), a mathematical proof checker.
+   `VERIFIED` means Agda accepted every required proof for the selected
+   operations. Inputs outside the supported rules return `UNSUPPORTED`;
+   that result does not tell you whether those inputs are safe or unsafe.
+   The review summary's presentation is still being improved.
 
-## Quickstart
+3. **Generate the demo backend.** For the supported Wasp operation
+   combinations, Mithril generates a standalone application with
+   authenticated operations that check permissions and update PostgreSQL
+   in a transaction. Its source checker can then detect changes to that
+   generated application. This is a demo of executable enforcement, with
+   the exact supported combinations documented in the
+   [current scope](docs/current-scope.md#wasp-profile-dispatch-exact).
 
-The runnable supported document used here is currently a test fixture. There
-is no released binary, installer, container image, Nix setup, or Homebrew
-package, so the current path builds and runs the tool from this repository.
+An LLM can help author the input; it does not generate or approve the proofs
+or backend inside Mithril's pipeline. That work is done by the compiler and
+proof checker.
 
-Prerequisites:
+## Try the demo
 
-- GHC 9.12.4
-- cabal-install 3.18.1.0
-- Agda 2.8.0 on the search path (`verify` and both `wasp` commands invoke it)
-- a Linux/POSIX environment
+The current tool runs from source on Linux. You need **GHC 9.12.4**,
+**cabal-install 3.18.1.0**, and **Agda 2.8.0** on your search path. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the development setup.
+
+```sh
+git clone https://github.com/mithril-ir/mithril.git
+cd mithril
+cabal run mithril -- verify test/fixtures/acme-nspe-self-update.mir.json
+```
+
+The first run builds the tool. The command should report `VERIFIED` for
+the selected operations. The input is a test fixture you can inspect and edit.
+
+To see the generated review text:
+
+```sh
+cabal run mithril -- contract test/fixtures/acme-nspe-self-update.mir.json
+```
+
+<details>
+<summary>Generate and check the Wasp demo</summary>
 
 From the repository root:
 
 ```sh
-cabal run mithril -- validate test/fixtures/acme-nspe-self-update.mir.json
-cabal run mithril -- contract test/fixtures/acme-nspe-self-update.mir.json
-cabal run mithril -- verify test/fixtures/acme-nspe-self-update.mir.json
 mithril_demo_dir=$(mktemp -d /tmp/mithril-demo.XXXXXX)
 cabal run mithril -- wasp generate test/fixtures/acme-nspe-self-update.mir.json "$mithril_demo_dir/wasp"
 cabal run mithril -- wasp check test/fixtures/acme-nspe-self-update.mir.json "$mithril_demo_dir/wasp"
 ```
 
-The first invocation builds the tool and can take a few minutes. The commands
-should report the fixture as `VERIFIED` and the generated Wasp root as
-`CONFINED`. Wasp 0.25.0, Node 24, and PostgreSQL 16 are needed only for the
-separate live integration battery, not for these source-tree generation and
-comparison commands.
+`CONFINED` means the source tree matches the generated demo at check time.
+It does not check a running deployment. These two commands generate and
+compare source files; they do not start a server. Wasp, Node, and PostgreSQL
+are needed for the separate
+[integration battery](CONTRIBUTING.md#build-and-test).
 
-The broader handwritten example,
-[`examples/acme/acme.mir.json`](examples/acme/acme.mir.json), validates and
-renders a contract but is deliberately `UNSUPPORTED` by `verify`: it selects
-additional guarantee families that are not implemented.
+</details>
 
-## The pipeline in one view
+<a name="trust-and-limitations"></a>
 
-```text
-human authorization intent
-    |  optional, untrusted human or LLM translation
-    v
-authored Mithril Core JSON
-    |  parse -> structural validation -> resolution -> typecheck -> normalize
-    v
-typed normalized Core
-    |-- text contract for human review
-    |-- document-specific Agda module, checked by Agda 2.8.0
-    `-- closed Wasp demonstrator, for either exact supported profile
-```
+## What the proof covers
 
-Normalization is structural canonicalization, not policy evaluation. It does
-not simplify policies or establish that differently authored documents mean
-the same thing.
+The prototype verifies one property for a limited set of role-changing
+rules. It checks the operations described in Core, rather than analyzing
+arbitrary application code. Other authorization properties and integration
+with existing applications remain future work.
 
-For an accessible explanation of the stages, Agda check, and Wasp boundary,
-read [docs/how-mithril-works.md](docs/how-mithril-works.md). The
-[compiler architecture](docs/compiler-architecture.md) is authoritative for
-the pipeline and artifact ownership.
+The proof applies to the selected operations in the mathematical model.
+The translations from Core to that model and to the generated backend have
+not themselves been proved correct. The compiler and runtime remain trusted,
+and the result does not establish the security of a complete deployed app.
+The [scope and trust documentation](docs/current-scope.md) gives the precise
+boundaries.
 
 ## Documentation
 
-| Document | Purpose |
-|---|---|
-| [docs/how-mithril-works.md](docs/how-mithril-works.md) | An introduction for programmers new to formal methods and compiler terminology. |
-| [docs/current-scope.md](docs/current-scope.md) | The exact supported slice, result meanings, trusted components, non-claims, and versions. |
-| [docs/compiler-architecture.md](docs/compiler-architecture.md) | The normative compiler pipeline and artifact-ownership specification. |
-| [agda/README.md](agda/README.md) | The Agda kernel, experiments, and checking commands. |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor workflow and canonical commands. |
-| [SECURITY.md](SECURITY.md) | Vulnerability reporting and claim scoping. |
-| [AGENTS.md](AGENTS.md) | Repository-specific rules for coding agents. |
+- [How Mithril works](docs/how-mithril-works.md): a walkthrough of the example and the implementation.
+- [Current scope](docs/current-scope.md): supported rules, result meanings, and security assumptions.
+- [Compiler architecture](docs/compiler-architecture.md) and [Agda kernel](agda/README.md): the technical details.
+- [Contributing](CONTRIBUTING.md): development setup, tests, and contribution workflow.
 
-## Contributing
+Feedback on real authorization use cases is welcome in
+[GitHub issues](https://github.com/mithril-ir/mithril/issues). Report
+vulnerabilities through [SECURITY.md](SECURITY.md), and follow our
+[code of conduct](CODE_OF_CONDUCT.md) when participating.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the current contribution workflow
-and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards. Report
-security issues according to [SECURITY.md](SECURITY.md).
+This repository has been developed with substantial coding-agent assistance,
+under human-directed architecture, review, and testing. That assistance is
+not evidence that the implementation is correct.
 
 If Mithril saves you from an authorization bug, feel free to buy us a beer
 (preferably a Hacker-Pschorr).
 
-## License
-
-Mithril is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for
-the full text.
+Licensed under [Apache 2.0](LICENSE).
