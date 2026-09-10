@@ -1,316 +1,284 @@
 # How Mithril works
 
-This is an accessible but technically serious tour of Mithril for
-someone who knows programming but not necessarily Haskell, Agda, type
-theory, or compilers. It explains what each piece is, what it
-establishes, and — just as important — what it does not.
+This guide is for programmers who know ordinary web applications but are new
+to formal methods, Agda, and compiler terminology. It explains the current
+prototype through one role-changing example, then follows that example through
+the implementation.
 
-The exact scope ledger lives in [current-scope.md](current-scope.md).
-The authoritative pipeline specification is
+The exact implementation and claim ledger is [current-scope.md](current-scope.md).
+The normative pipeline and artifact-ownership rules are in
 [compiler-architecture.md](compiler-architecture.md).
 
-## Is Mithril a compiler, a DSL, or an IR?
+## Start with a role-changing application
 
-All three names appear in the documentation, and they refer to
-different parts:
+Consider an application with users, organizations, and a `Membership`
+relation. Each membership carries one of two roles:
 
-- **Mithril Core** is a small authorization DSL: entities, enums,
-  relations, actions with allow policies and effects, and guarantee
-  selections. It is represented externally as JSON and used as an IR —
-  a document you author (or an untrusted LLM proposes) rather than a
-  language you type programs in.
-- **The Haskell program** (`mithril`, Cabal package `mithril-ir`) is
-  the compiler/toolchain: it reads a Core document and produces the
-  derived artifacts.
-- Mithril as a whole is best described as *an experimental
-  verification-oriented compiler toolchain for a small authorization
-  DSL/IR*.
+```text
+Member < Admin
+```
 
-The design commitment: a human describes access-control intent, that
-intent is captured as one authored Core JSON document, and everything
-downstream derives from that document deterministically. An LLM may
-propose the authored JSON, but no LLM participates downstream in the
-deterministic compiler path.
+The runnable
+[`acme-nspe-self-update.mir.json`](../test/fixtures/acme-nspe-self-update.mir.json)
+fixture contains two relevant actions:
 
-## Repository map
+1. `Membership.changeRole` lets an `Admin` change another existing member's
+   role. Its policy requires the actor to have the top role, the actor and
+   target to be different users, and the target membership to exist.
+2. `Membership.changeOwnRole` lets an authenticated user write their own role
+   only when `newRole <= currentRole`.
 
-| Path | Contents |
-|---|---|
-| `core/schema.json` | The normative JSON Schema (draft 2020-12) for the external shape of a Core v0 document. |
-| `examples/acme/` | The handwritten canonical Acme example model (human-facing authored example). |
-| `src/`, `src-internal/`, `app/` | The Haskell host tool: CLI, frontend, contract renderer, verifier, Wasp emitter. `src-internal/` is a package-private sublibrary holding the internal representations. |
-| `agda/Mithril/` | The handwritten embedded Agda kernel; five of its modules are the trusted kernel embedded into the tool (see [`agda/README.md`](../agda/README.md)). |
-| `test/fixtures/` | Authored regression inputs and committed golden outputs (contracts, generated Agda modules, generated Wasp trees). |
-| `test/api-probes/` | Compile-fail probes that pin the public API boundary. |
-| `test/wasp-integration/` | The separate real Wasp/PostgreSQL integration harness. |
-| `docs/` | This document, the scope ledger, and the compiler architecture. |
+The second action permits an `Admin` to become a `Member` and permits an equal
+write. It does not permit a `Member` to become an `Admin`. The first action
+writes another user's membership, not the actor's. Together, these two exact
+action shapes support the selected property that a user cannot raise their
+own authority through either action.
 
-Two conventions worth knowing: `examples/` contains human-facing
-authored examples, while `test/fixtures/` contains authored regression
-inputs and committed golden outputs — golden outputs are never edited
-by hand. Local experiments belong in `/tmp`, a Git-ignored path, or a
-separate clone, never inside the repository tree.
+Mithril calls this property **No Self Privilege Escalation** (NSPE). It calls
+the two accepted action shapes **structural proof rules** because the verifier
+recognizes their precise parameters, policy tree, effect, and case scope. In
+this example, the case scope is the organization this guarantee case applies
+to. It does not search for a proof of an arbitrary policy. A semantically
+similar policy written in a different shape is outside the implemented rules
+and is reported `UNSUPPORTED`.
 
-## The frontend
+This example exercises both currently supported structural rules; Mithril is
+not a general authorization verifier.
 
-There is exactly one frontend, and every backend consumes its output:
+## Why use one source document?
+
+Authorization systems often have several descriptions of the same intended
+rule: prose for a reviewer, a model for analysis, and application code for the
+server. When those are written separately, a small difference in a guard,
+role order, or target identity can make them disagree. Coding agents face the
+same risk as human implementers.
+
+Mithril takes one constrained Core document and derives its review contract,
+Agda obligation module, and supported Wasp application through one
+deterministic compiler path. The purpose is to remove separate interpretations
+of the input inside the backends.
+
+Using one source does not, by itself, prove that a generated Agda model or
+TypeScript application preserves the Core document's meaning. No such
+semantic-preservation theorem exists yet. The generators and their mappings
+remain trusted parts of the relevant claim.
+
+## The input: Mithril Core
+
+**Mithril Core** is a small authorization domain-specific language (DSL). A
+domain-specific language represents one limited problem area rather than
+general-purpose computation. Core describes:
+
+- entities and their attributes;
+- ordered enum values such as `Member < Admin`;
+- relations such as a user's membership in an organization;
+- actions, including their parameters, allow policies, effects, and results;
+- selected guarantee obligations.
+
+Core is currently authored as JSON. The same JSON also serves as the
+compiler's external intermediate representation (IR), meaning the structured
+form accepted by the compiler. A human can write it directly. An optional,
+untrusted LLM can propose it, but Mithril has no natural-language interface.
+The document must still be reviewed as the statement of intent.
+
+[`core/schema.json`](../core/schema.json) defines the permitted JSON shape.
+Passing that schema establishes only that the JSON has the expected structure.
+It does not establish that names resolve, types match, an action is safe, or a
+guarantee holds.
+
+## One frontend produces one checked internal form
+
+Every command that consumes a Core file begins with the same Haskell frontend:
 
 ```text
 parse -> structural validation -> resolution -> typecheck -> normalization
 ```
 
-| Stage | Establishes |
+Each stage adds a limited fact:
+
+| Stage | What it establishes |
 |---|---|
-| parse | The input is well-formed JSON (no trailing garbage). |
-| structural validation | The JSON conforms to `core/schema.json`, which is compiled into the tool at build time — no runtime file or environment lookup can substitute the grammar. |
-| resolution | Declaration names are unique per namespace and every name reference resolves to an existing declaration. |
-| typecheck | Every term, policy, effect, result, and guarantee satisfies the Core v0 static-typing judgments. |
-| normalization | The well-typed document becomes the *typed normalized Core*: terms stamped with their static types, enum orders materialized as explicit rankings, endpoint bindings made explicit, `CreateEntity` initializers in declaration order. |
+| Parse | The file is well-formed JSON with no trailing input. |
+| Structural validation | The JSON conforms to the supported profile of `core/schema.json`. |
+| Resolution | Declaration names are unique in their namespaces, and every reference names an existing declaration of the right kind. |
+| Typecheck | Terms, policies, effects, results, relation endpoints, enum orders, and guarantee parameters satisfy the Core v0 static type rules. |
+| Normalization | The checked document is copied into one explicit internal form with resolved identities, stored term types, materialized enum ranks, and explicit endpoint bindings. |
 
-Normalization is structural canonicalization, not policy evaluation: no
-boolean simplification, no constant folding, no operand reordering, and
-no claim that two differently authored but equivalent documents
-normalize to the same model. It is also not a semantic diff.
+The final value is the **typed normalized Core**. “Typed” means the static type
+rules have passed. “Normalized” means the compiler has made structural facts
+explicit and deterministic. It does not mean that the compiler evaluated the
+policy, simplified Boolean expressions, compared two documents for equivalent
+meaning, or proved a guarantee.
 
-The result is carried as an internal Haskell representation that
-external code cannot construct or forge (more on that below). Contract
-rendering, Agda generation, and Wasp generation all consume this same
-typed normalized Core — none of them re-reads the JSON.
+The internal Haskell API attaches a stage to each document. The contract
+renderer and generators accept only the normalized stage, and external code
+cannot construct that internal representation through the public API. These
+types enforce compiler-pipeline discipline within Haskell. They do not prove
+an authorization property.
 
-## What `core/schema.json` does and does not establish
+## Three derived surfaces
 
-The schema defines the structural JSON grammar of a Core v0 document:
-required fields, closed constructor sets, which shapes may appear
-where. Passing it establishes JSON shape conformance only. It is not
-semantic correctness — name resolution, typing, and every deeper check
-belong to the frontend stages — and it is certainly not proof. Any
-standard draft 2020-12 validator can check the same structural
-conformance.
+All current downstream components consume the same typed normalized Core. None
+re-reads the authored JSON.
 
-## The contract renderer
+### Text contract for review
 
-`mithril contract FILE` renders the typed normalized Core as a
-line-oriented, human-readable security contract: the entities, enums
-(with materialized ranks), relations, actions (parameters, principal
-mode, policies, effects, results), and the selected guarantees —
-explicitly labelled *unverified proof obligations* — followed by a
-fixed limitations section.
+`mithril contract FILE` renders a deterministic, line-oriented account of the
+normalized declarations, actions, and selected guarantees. It gives a reviewer
+a stable view of what entered the compiler, especially when an LLM proposed
+the JSON.
 
-The contract is the human-review gate of the pipeline: it exists so a
-person can read what was actually authored, in particular when an LLM
-proposed the JSON. It is a deterministic review artifact, not a proof.
-Rendering evaluates no policy, compares no two documents, and
-establishes nothing.
+The contract's human-facing presentation is provisional. Rendering does not
+evaluate a policy or establish a guarantee. The selected guarantees are
+labelled as unverified proof obligations, so the contract is a review artifact,
+not a proof.
 
-## NSPE: the one verified property family
+### Document-specific Agda module
 
-NSPE means **No Self Privilege Escalation**: no principal can use the
-modeled operations to raise their own authority. Concretely, the
-supported obligation is about an *authority relation* — for example, a
-`Membership` relation from users to organizations carrying an ordered
-role enum (`Member < Admin`).
+Agda is a programming language and type checker in which a proposition can be
+represented as a type and a proof as a value of that type. If the type checker
+accepts the value, it has checked the proof against the definitions and rules
+provided to it. Readers do not need to know Agda syntax to understand the
+boundary here.
 
-The verifier currently recognizes exactly two structural proof rules:
+Mithril contains five handwritten Agda kernel modules. The kernel defines the
+fixed state, policy, effect, authorization, and NSPE semantics used by the
+current verifier slice. It is embedded into the Haskell tool and is trusted.
 
-- **Rule 1 — change-other**: an authenticated admin may change *another*
-  user's role. The policy shape requires the actor to hold the top
-  authority value, to be distinct from the subject, and the subject to
-  already be a member. Because the actor never writes their own tuple,
-  their own authority cannot increase.
-- **Rule 2 — bounded-self-update**: an authenticated user may write
-  *their own* tuple, but only to a payload bounded by their pre-state
-  authority (`new role <= current role`). Self-demotion is possible;
-  self-promotion is not.
+For a supported Core document, `mithril verify FILE` generates a separate
+document-specific Agda module. The module instantiates a known proof shape for
+each accepted Rule-1 or Rule-2 case. The tool places the generated module and
+embedded kernel in a fresh temporary workspace and invokes exactly Agda 2.8.0
+with `--safe --no-libraries --ignore-interfaces`.
 
-The exact policy and effect shapes are in
-[current-scope.md](current-scope.md#supported-verifier-slice-exact) —
-they are matched structurally and exactly, so a semantically equivalent
-but differently written policy is `UNSUPPORTED`. That is deliberate:
-unsupported forms fail closed rather than being approximated.
+This is deterministic proof generation for two known rules, not general proof
+search. Agda checks every selected case of the one selected NSPE obligation.
+No Core-to-Agda semantic-preservation theorem checks the generator's mapping,
+so the Haskell generator, support rules, and embedded kernel remain trusted.
 
-## What `NspeSupportPlan` is
+### Closed Wasp demonstrator
 
-When the support gate accepts a document, it records *why* in
-`NspeSupportPlan`, an internal Haskell IR: the validated authority
-facts (relation, endpoints, the materialized two-value ranking with its
-bottom, top, and absent rank) plus one rule-tagged plan per case, in
-authored order. It is a *support witness* — the single statement of the
-classification, consumed unchanged by both the Agda generator and the
-Wasp emitter, so the two backends can never disagree about what was
-accepted. It is not generated Haskell code, and it is not itself a
-proof; the proof happens in Agda.
+[Wasp](https://wasp.sh/) is a web application framework. Mithril currently
+uses it for two small executable profiles:
 
-## What Haskell's type system establishes vs. what Agda proves
+- Profile v0 accepts exactly the case sequence `[Rule 1]`.
+- Profile v1 accepts exactly `[Rule 1, Rule 2]` in authored order.
 
-These are two different kinds of assurance:
+Both profiles are closed 14-file applications. Every other verified sequence,
+including a Rule-2 singleton or a reversed pair, is refused before Mithril
+resolves, inspects, stages, backs up, or writes the destination.
 
-- **Haskell's type system** enforces *pipeline invariants*. Documents
-  carry an opaque stage index (`Parsed`, `StructurallyValid`,
-  `Resolved`, `Typed`, `Normalized`), and the contract renderer,
-  verifier, and Wasp emitter accept only `Normalized`. External code
-  cannot construct a normalized document, coerce between stages, or
-  import the internal representations — compile-fail probes under
-  `test/api-probes/` pin all of this. This guarantees the pipeline
-  cannot be bypassed *within Haskell's type discipline*; it proves
-  nothing about authorization.
-- **Agda proves the security theorems.** For a supported document, the
-  tool generates a document-specific Agda module stating the NSPE
-  theorems for each case against the generic kernel, and the Agda
-  type checker verifies those proofs. That check — not the Haskell
-  types, not the tests — is what `VERIFIED` reports.
+The generated Actions require Wasp authentication and use `context.user.id`
+as the actor identity. Each authorization read and its one relation update run
+inside a Prisma interactive transaction at PostgreSQL `Serializable`
+isolation. These details are part of the two profile mappings. They are not a
+general Wasp backend.
 
-## The kernel and the generated module
+`mithril wasp check CORE_FILE WASP_ROOT` regenerates the selected profile in
+memory and checks the whole source root. It rejects missing, changed, extra,
+symbolically linked, or hard-linked inputs. `mithril wasp generate` installs a
+complete owned root and finishes with the same check.
 
-The handwritten Agda kernel (`agda/Mithril/`: `Base`, `Core`, `Policy`,
-`Effect`, `Guarantee`) defines generic semantics and lemmas: states,
-policies, effects, and what "no self privilege escalation" means. It is
-authored, reviewed, and trusted.
+`CONFINED` describes the source snapshot the checker walked at the time of the
+check. It is not a runtime sandbox. Later mutation, changes after `wasp build`,
+dependency compromise, and other processes with database credentials are
+outside that claim. Wasp, Node, Prisma, PostgreSQL, the templates, and the
+Core-to-Wasp lowering remain trusted; no Core-to-Wasp semantic-preservation
+theorem exists.
 
-The Haskell tool embeds the exact kernel sources at compile time and,
-for a supported document, deterministically generates a
-document-specific module, `Mithril/Generated.agda`, with one proof
-group per case (for Rule 1: case-scope, actor-distinctness,
-actor-authority-unchanged, and no-self-escalation theorems; for Rule 2:
-case-scope, policy-bounds-payload, actor-authority-written, and
-no-self-escalation theorems). No general proof search is implemented —
-the generator instantiates the known proof shape for the two known
-rules, and nothing else.
+The closed design prevents an unnoticed handwritten server path from sitting
+beside the generated Actions in the checked source root. It also makes the
+profiles unsuitable for composition with a normal hand-edited Wasp
+application. A future composable adapter is an architecture direction, not an
+implemented feature.
 
-## The Agda checker boundary
+## How support is decided
 
-The generated module and the kernel sources are materialized into a
-fresh isolated temporary workspace and checked by the *external* Agda
-2.8.0 executable with `--safe --no-libraries --ignore-interfaces`,
-across a process boundary. The Haskell tool does not import Agda
-compiler internals. Exactly version 2.8.0 is required; any other
-version, a launch failure, or a nonzero check after the gate accepted
-the document is a *tool failure* (exit 2), never a semantic outcome.
+Before Agda runs, a pure **support gate** examines the typed normalized Core.
+It accepts exactly one selected NSPE obligation whose nonempty cases each match
+Rule 1 or Rule 2. It records the accepted relation, endpoint identities, role
+ranking, and rule tag for every case in authored order.
 
-One honest limitation: no semantic-preservation theorem currently
-proves that the Haskell frontend's reading of a Core document
-corresponds to the generated Agda model. The generator, the embedded
-kernel, and the support rules are trusted components of the `VERIFIED`
-claim.
+That record is an internal Haskell value named `NspeSupportPlan`. It is a
+support witness: it records why the document fits the implemented slice. Both
+the Agda generator and Wasp emitter consume the same plan instead of defining
+their own acceptance rules. The plan is not generated code and is not a proof.
 
-## What `VERIFIED` and `UNSUPPORTED` mean
+The two main verifier results are intentionally different:
 
-- `VERIFIED` (exit 0): every required theorem of every selected case of
-  the document's one selected obligation was accepted by Agda. Nothing
-  else — no other guarantee, no other action, no unselected authority
-  writer, and nothing about a running application.
-- `UNSUPPORTED` (exit 3): the document lies outside the implemented
-  support rules, with deterministic reasons anchored at the offending
-  sites, decided before any checker runs. `UNSUPPORTED` is **not** a
-  safety or violation verdict. The fixture
-  `test/fixtures/acme-nspe-dangerous.mir.json` is a genuine
-  self-promotion counterexample, and it is reported `UNSUPPORTED` — not
-  "violated", because no general `VIOLATED` result or counterexample
-  engine exists. A document selecting no guarantees is likewise
-  unsupported, never vacuously verified.
+- `VERIFIED` (exit 0) means Agda 2.8.0 accepted every required theorem for
+  every selected case of the document's one selected obligation.
+- `UNSUPPORTED` (exit 3) means the document lies outside the implemented
+  structural rules. It does not mean safe, unsafe, dangerous, or violated.
 
-## What golden tests establish
+There is no `VIOLATED` result or counterexample engine. The exact rule shapes,
+diagnostic classes, and all exit codes are specified in
+[current-scope.md](current-scope.md).
 
-The test suite freezes the exact bytes of the rendered contracts, the
-generated Agda modules, and the generated Wasp trees (the "golden"
-files under `test/fixtures/`). Golden files protect deterministic
-output and expose drift: if the generator changes, the diff is visible
-and must be reviewed. They are not proofs — a golden file pins *what*
-the tool produces, not that what it produces is correct.
+## Evidence, proof, and trust
 
-## The Wasp profiles
+Several different mechanisms provide different kinds of evidence:
 
-[Wasp](https://wasp.sh/) is the first executable target. Two confined
-profiles exist, dispatched over the verified case sequence:
+- Haskell stage types prevent accidental pipeline bypass within the exposed
+  Haskell interfaces.
+- Golden tests freeze the exact bytes of contracts, generated Agda modules,
+  and Wasp trees so output drift is visible.
+- Agda checks the generated proof terms for every selected case of a supported
+  obligation.
+- The Wasp confinement check compares a complete source root with the
+  regenerated closed profile.
 
-- **Profile v0** accepts exactly `[Rule 1]` and generates one
-  authenticated Action.
-- **Profile v1** accepts exactly `[Rule 1, Rule 2]` in authored order
-  and generates two authenticated Actions.
+Only the Agda step checks the stated NSPE theorems. A stage type, deterministic
+translation, passing test, golden file, or confinement result is not a formal
+proof of backend correspondence or general security.
 
-Every other verified case sequence is refused before any destination
-access. Each profile is a closed 14-file demonstrator application: a
-normal Wasp 0.25.0 application on PostgreSQL whose every
-server-capable and security-sensitive input is a managed file
-regenerated from the typed normalized Core and compared byte-for-byte.
-The generated Actions require Wasp authentication, use
-`context.user.id` as the only identity, run their authorization reads
-and the single relation update inside one Prisma interactive
-transaction at `Serializable` isolation, deny with one uniform 403, and
-use no raw SQL.
+The relevant trusted computing base includes the Haskell tool and its pinned
+dependencies, the embedded Agda kernel, the two support rules, Agda 2.8.0, and,
+for the Wasp slice, Wasp, Node, Prisma, PostgreSQL, the templates, and the
+lowering. The exact list and non-claims are maintained in the
+[scope ledger](current-scope.md#trusted-components).
 
-## Closed-app confinement
+## Repository map
 
-`mithril wasp check` walks the complete source root (without following
-symbolic links, rejecting hard links) and rejects every missing,
-altered, or unexpected file. The authority is the regenerated closed
-path inventory plus exact bytes; a denylist scan only labels *why* an
-already-rejected file is dangerous. `mithril wasp generate` installs
-the bundle as a complete root with staging, backup, and rollback, and
-finishes with the same check.
+| Path | Contents |
+|---|---|
+| `core/schema.json` | The normative JSON Schema for the external Core v0 document shape. |
+| `examples/acme/` | The handwritten broad Acme example. It validates and renders a contract but is not supported by the verifier. |
+| `src/`, `src-internal/`, `app/` | The Haskell CLI, frontend, contract renderer, verifier slice, and Wasp emitter. `src-internal/` is package-private. |
+| `agda/Mithril/` | The five embedded kernel modules plus authored experiments outside that kernel. See [`agda/README.md`](../agda/README.md). |
+| `test/fixtures/` | Authored regression inputs and committed golden outputs. Generated goldens are changed only through their generators. |
+| `test/api-probes/` | Compile-fail probes that pin the public Haskell API and stage boundary. |
+| `test/wasp-integration/` | The separate live Wasp and PostgreSQL integration harness. |
+| `docs/` | This guide, the exact scope ledger, and the normative architecture. |
 
-What this buys: at the time of checking or generation, the source tree
-is exactly the generated application — no smuggled second Action, no
-extra server code, no dependency drift. What it does not buy: runtime
-protection. Mutation after the check, tampering after `wasp build`,
-compromised dependencies, and processes holding the database
-credentials are all outside the claim (the full boundary is in
-[current-scope.md](current-scope.md#wasp-profile-dispatch-exact)).
+The supported quickstart document remains in `test/fixtures/` because it is a
+regression fixture. `examples/` contains human-facing authored examples. Local
+experiments belong outside the repository or in an ignored location; generated
+goldens are never edited by hand.
 
-## The bypass problem, and the honest future path
+## Product and development use of coding agents
 
-Why closed applications at all? Because generating correct handlers
-alone cannot establish whole-application security: an operation-level
-claim ("this Action enforces this policy") is defeated by any manually
-written server code that reads or writes the same tables around the
-handler. A verified front door means little next to an unverified side
-door.
+In the product architecture, an optional untrusted LLM can propose only the
+authored Core JSON. No LLM participates after that boundary: parsing,
+normalization, contract rendering, Agda generation and checking, Wasp
+generation, and verdict reporting are deterministic toolchain steps.
 
-The current profiles resolve this by owning the whole (deliberately
-tiny) application, so the operation-level claim and the
-whole-application claim coincide — at the cost of composability. The
-current Wasp backend is not composable with arbitrary manually edited
-pages or server code.
+Separately, substantial coding-agent assistance has been used to develop this
+repository under human-directed architecture, review, and testing. That fact
+does not strengthen any trust claim. Agent-written code is reviewed and tested
+like other code, and test results remain evidence rather than proof.
 
-A future *composable adapter* — one that confines only the
-security-sensitive boundary while letting humans write UI and ordinary
-business logic around it — is plausible and is the intended direction
-(see the [Wasp v1 boundary](compiler-architecture.md#wasp-v1-boundary)
-and [future backend model](compiler-architecture.md#future-backend-model)
-sections of the architecture). It is not implemented, and no partial
-version of it exists.
-
-Also honest: no semantic-preservation theorem proves that the generated
-TypeScript corresponds to the Core semantics the Agda proof was about.
-The correspondence is documented per the adapter obligations table and
-trusted, not proved.
-
-## Trusted computing base
-
-Determinism is not correctness: a deterministic pipeline reproducibly
-delivers whatever its trusted components produce, including their bugs.
-The `VERIFIED` and `CONFINED` claims rest on the Haskell tool and its
-pinned dependencies, the embedded Agda kernel and the two support
-rules, the external Agda 2.8.0 toolchain, and — for the Wasp slice —
-Wasp, Node, Prisma, PostgreSQL, the templates, and the lowering. The
-full list is in
-[current-scope.md](current-scope.md#trusted-components).
-
-## Glossary
+## Short glossary
 
 | Term | Meaning |
 |---|---|
-| Mithril Core | The small authorization DSL, authored as JSON and used as an IR. |
-| Typed normalized Core | The internal canonical form of a validated document; the single input of every backend. |
-| Contract | The deterministic human-readable restatement of a normalized document. A review artifact, not a proof. |
-| NSPE | No Self Privilege Escalation, the one currently verified property family. |
-| Rule 1 / Rule 2 | The two exact structural NSPE proof rules: change-other and bounded-self-update. |
-| `NspeSupportPlan` | The internal Haskell support witness recording why a document was accepted; consumed by both backends. |
-| Support gate | The pure structural check deciding supported vs. `UNSUPPORTED`, before any checker runs. |
-| Kernel | The handwritten, trusted generic Agda modules embedded into the tool. |
-| `Mithril/Generated.agda` | The deterministically generated document-specific Agda obligation module. |
-| `VERIFIED` | Agda accepted every required theorem of every selected case. Exit 0. |
-| `UNSUPPORTED` | Outside the implemented support rules. Not a safety or violation verdict. Exit 3. |
-| Golden file | A committed byte-frozen expected output that pins determinism and exposes drift; not a proof. |
-| Wasp Confinement Profile v0 / v1 | The two closed 14-file demonstrator applications, for `[Rule 1]` and `[Rule 1, Rule 2]`. |
-| `CONFINED` | The checked source root is byte-identical to the regenerated closed profile. Exit 0. |
-| Trusted computing base | The components a claim silently relies on; a defect there invalidates the claim. |
+| Mithril Core | The constrained authorization DSL, currently authored as JSON. |
+| IR | Intermediate representation: structured compiler input or internal data. |
+| Typed normalized Core | The checked internal form consumed by every downstream generator. Its existence proves no policy property. |
+| NSPE | No Self Privilege Escalation, the only property family currently supported by the verifier. |
+| Structural proof rule | One exact policy and effect shape recognized by the support gate. |
+| Agda kernel | The handwritten and trusted definitions and lemmas used to check generated obligations. |
+| `VERIFIED` | Agda 2.8.0 accepted every required theorem for every selected case of one supported obligation. |
+| `UNSUPPORTED` | Outside the implemented rules; not a safety or violation verdict. |
+| `CONFINED` | The checked source root matched the regenerated closed Wasp profile at check time. |
+| Trusted computing base | Components whose defects can invalidate a claim even when the authored document is unchanged. |
