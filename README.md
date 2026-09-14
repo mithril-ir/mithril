@@ -24,6 +24,29 @@ Writing those proofs usually requires specialist knowledge and considerable time
 
 ## How it works
 
+```mermaid
+flowchart TB
+    author["You or a coding agent"] --> core["Permission rules (Core JSON)"]
+    core --> mithril["Mithril"]
+
+    mithril --> contract["Contract for review"]
+    mithril --> proofs["Proofs checked by Agda"]
+    mithril -->|"Supported profiles"| backend["Wasp backend demo"]
+    proofs -. "Verification must pass" .-> backend
+
+    classDef neutral fill:#f6f8fa,stroke:#8c959f,color:#1c1c1a
+    classDef purple fill:#b9a6e1,stroke:#827099,color:#1c1c1a
+    classDef pink fill:#d8b4c9,stroke:#9b788b,color:#1c1c1a
+    classDef green fill:#cbe4d8,stroke:#77998a,color:#1c1c1a
+
+    class author,core neutral
+    class mithril,backend purple
+    class contract pink
+    class proofs green
+```
+
+Wasp generation requires successful verification and a supported combination of operations.
+
 Mithril brings three steps together:
 
 1. **Describe your permissions.** Write a structured description of your data, roles, operations, and permission rules. This format is called Mithril Core and currently uses JSON. You can tell a coding agent what you need in natural language and have it propose Core JSON. You then read the generated contract to check whether it describes the behavior you want.
