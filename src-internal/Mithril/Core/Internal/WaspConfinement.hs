@@ -26,6 +26,26 @@
 -- additional operation or server path, dependency or
 -- database-provider drift), so a reviewer sees the bypass by name.
 --
+-- == A directory outside the inventory is reported once
+--
+-- A directory the managed paths do not require — an installation or
+-- build tree (@node_modules@, @.wasp@, @dist@, @build@), a migrations
+-- or version-control directory, or any unknown directory, at the
+-- root or nested inside a required directory — violates the profile
+-- by existing, whatever it holds.  It is reported once, at its own
+-- path, and nothing below it is enumerated: its files, links, hard
+-- links, and subdirectories add nothing to the verdict, and their
+-- denylist labels are not produced.  So a root that ordinary Wasp
+-- tooling has installed into names @node_modules@ once instead of
+-- every installed file.  Nothing is thereby accepted that was not
+-- accepted before: the directory entry itself remains a violation in
+-- both modes, so the root is rejected exactly as before and the
+-- collapse only removes redundant diagnostics.  The managed paths
+-- are never affected, because every ancestor of a managed path is a
+-- required directory; a managed file's own diagnostics (an edited
+-- generated Action, dependency or provider drift, a link at its
+-- path) are always reported.
+--
 -- == The snapshot itself is validated first
 --
 -- Before any path is looked up, every supplied snapshot path must be
@@ -60,8 +80,10 @@
 -- as the other profile's marker so a reviewer sees the transition by
 -- name.
 --
--- Diagnostics are deterministic: path-labelled, sorted, and
--- deduplicated.  Paths are root-relative with forward slashes.
+-- Diagnostics are deterministic: path-labelled, sorted, deduplicated,
+-- and bounded by the inventory and the entries outside any unexpected
+-- directory, never by the size of an installed tree.  Paths are
+-- root-relative with forward slashes.
 module Mithril.Core.Internal.WaspConfinement
   ( -- * Root snapshots
     RootEntry (..)
@@ -233,11 +255,25 @@ checkConfinement mode bundle entries =
       , bytes == actual
       ]
 
+    -- Every directory the inventory does not require (module header:
+    -- reported once).  A managed path occupied by a directory belongs
+    -- here too: its occupation is the violation, not its contents.
+    unexpectedDirectories =
+      Set.fromList
+        [ path
+        | RootEntry path Directory <- entries
+        , not (Set.member path expectedDirectories)
+        ]
+
+    belowUnexpectedDirectory path =
+      any (`Set.member` unexpectedDirectories) (parentDirectories path)
+
     unmanagedFindings =
       concat
         [ classifyUnmanaged (entryPath entry) (entryKind entry)
         | entry <- entries
         , not (Map.member (entryPath entry) managed)
+        , not (belowUnexpectedDirectory (entryPath entry))
         ]
 
     classifyUnmanaged path kind =

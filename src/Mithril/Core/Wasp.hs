@@ -92,7 +92,12 @@
 -- part of the source root.  The snapshot itself is validated first
 -- (non-canonical, absolute, aliased, or duplicate entries are
 -- rejected before any lookup).  A denylist scan labels /why/ an
--- already-rejected file is dangerous but is never the authority.
+-- already-rejected file is dangerous but is never the authority.  A
+-- directory the inventory does not require (an installation, build,
+-- migration, or version-control tree, or any unknown directory) is
+-- reported once, and nothing below it is enumerated: its existence
+-- alone decides, so the verdict is unchanged and the diagnostics stay
+-- bounded whatever it holds.
 -- 'OwnershipCheck' is the replacement rule a regeneration applies to
 -- an existing root: it recognizes exactly the two literal ownership
 -- markers over the common inventory, so an owned root of either
