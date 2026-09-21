@@ -18,7 +18,7 @@ import System.Environment (getArgs)
 import System.Exit (exitFailure, exitWith)
 import System.IO (hPutStrLn, stderr)
 
-import Mithril.CLI (Command (..), parseCommand, renderHelp, renderVersion)
+import Mithril.CLI (Command (..), parseCommand, renderHelp, renderVersion, renderWaspHelp)
 import Mithril.Command.Contract
   ( contractCoreFile
   , contractFailureExitCode
@@ -52,6 +52,7 @@ main = do
   arguments <- getArgs
   case parseCommand arguments of
     Right ShowHelp -> putStr renderHelp
+    Right ShowWaspHelp -> putStr renderWaspHelp
     Right ShowVersion -> putStrLn (renderVersion (showVersion version))
     Right (Validate file) -> do
       outcome <- validateCoreFile file

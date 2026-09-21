@@ -5,18 +5,21 @@
 -- handles, choosing the exit status — belong to the executable's
 -- @Main@ module.
 --
--- The tool understands the self-describing invocations plus the five
--- commands of 'Command': @validate FILE@, @contract FILE@,
--- @verify FILE@, @wasp generate CORE_FILE WASP_ROOT@, and
+-- The tool understands the self-describing invocations (the root help,
+-- the Wasp-specific help, and the version) plus the five commands of
+-- 'Command': @validate FILE@, @contract FILE@, @verify FILE@,
+-- @wasp generate CORE_FILE WASP_ROOT@, and
 -- @wasp check CORE_FILE WASP_ROOT@.  What each command establishes is
 -- stated by its command module; see @docs\/current-scope.md@ for the
 -- supported slice, result meanings, trusted components, and explicit
--- non-claims.
+-- non-claims.  The help texts are deliberately short command summaries
+-- and point there instead of restating that ledger.
 module Mithril.CLI
   ( Command (..)
   , parseCommand
   , displayArgument
   , renderHelp
+  , renderWaspHelp
   , renderVersion
   ) where
 
@@ -26,6 +29,8 @@ import Data.Char (isPrint)
 data Command
   = -- | Print the help text and exit successfully.
     ShowHelp
+  | -- | Print the Wasp-specific help text and exit successfully.
+    ShowWaspHelp
   | -- | Print the package version and exit successfully.
     ShowVersion
   | -- | Parse FILE, validate it structurally against the compiled-in
@@ -53,8 +58,8 @@ data Command
 --
 -- Exactly these invocations are accepted: no arguments (help),
 -- @--help@, @-h@, @--version@, @validate FILE@, @contract FILE@,
--- @verify FILE@, @wasp generate CORE_FILE WASP_ROOT@, and @wasp check
--- CORE_FILE WASP_ROOT@.
+-- @verify FILE@, @wasp --help@, @wasp -h@, @wasp generate CORE_FILE
+-- WASP_ROOT@, and @wasp check CORE_FILE WASP_ROOT@.
 -- Anything else — an unknown argument, a missing FILE, or extra
 -- arguments after a complete invocation — yields a deterministic
 -- error message intended for stderr.  Every user-supplied argument
@@ -72,7 +77,7 @@ parseCommand (argument : rest) =
     Nothing -> Left (unknownArgumentError argument)
     Just command
       | null rest -> Right command
-      | otherwise -> Left (extraArgumentsError argument rest)
+      | otherwise -> Left (extraArgumentsError usageHint argument rest)
 
 -- | Interpret the argument list after a FILE-taking command name.
 -- The next argument is always FILE — a leading dash does not make it
@@ -84,18 +89,26 @@ fileCommand commandName construct rest =
     [file] -> Right (construct file)
     [] -> Left (missingFileError commandName)
     (_file : extras) ->
-      Left (extraArgumentsError (commandName ++ " FILE") extras)
+      Left (extraArgumentsError usageHint (commandName ++ " FILE") extras)
 
--- | Interpret the argument list after the @wasp@ command name: a
--- subcommand, @generate@ or @check@, followed by exactly CORE_FILE
--- and WASP_ROOT.  Neither argument is ever an option, and anything
--- after the two is rejected.
+-- | Interpret the argument list after the @wasp@ command name: the
+-- Wasp-specific help (@--help@ or @-h@, alone), or a subcommand,
+-- @generate@ or @check@, followed by exactly CORE_FILE and WASP_ROOT.
+-- The help flags are recognized only in the subcommand position: after
+-- a subcommand, neither argument is ever an option, and anything after
+-- the two is rejected.  Every diagnostic of this grammar points at the
+-- Wasp-specific help.
 waspCommand :: [String] -> Either String Command
 waspCommand rest =
   case rest of
     [] -> Left missingWaspSubcommandError
     ("generate" : more) -> twoArguments "wasp generate" WaspGenerate more
     ("check" : more) -> twoArguments "wasp check" WaspCheck more
+    (flag : more)
+      | isHelpFlag flag ->
+          if null more
+            then Right ShowWaspHelp
+            else Left (extraArgumentsError waspUsageHint ("wasp " ++ flag) more)
     (subcommand : _) -> Left (unknownWaspSubcommandError subcommand)
 
 twoArguments
@@ -104,15 +117,20 @@ twoArguments commandName construct arguments =
   case arguments of
     [coreFile, root] -> Right (construct coreFile root)
     (_coreFile : _root : extras) ->
-      Left (extraArgumentsError (commandName ++ " CORE_FILE WASP_ROOT") extras)
+      Left (extraArgumentsError waspUsageHint (commandName ++ " CORE_FILE WASP_ROOT") extras)
     _ -> Left (missingWaspArgumentsError commandName)
 
 -- | Map a single recognized option to its command.
 recognize :: String -> Maybe Command
-recognize "--help" = Just ShowHelp
-recognize "-h" = Just ShowHelp
 recognize "--version" = Just ShowVersion
-recognize _ = Nothing
+recognize argument
+  | isHelpFlag argument = Just ShowHelp
+  | otherwise = Nothing
+
+-- | The two spellings of a help request, shared by the root and the
+-- @wasp@ grammar.
+isHelpFlag :: String -> Bool
+isHelpFlag argument = argument == "--help" || argument == "-h"
 
 -- | Render a user-supplied command-line argument for inclusion in a
 -- diagnostic.  This is the single rendering point for every
@@ -138,15 +156,16 @@ unknownArgumentError :: String -> String
 unknownArgumentError argument =
   "mithril: unknown argument " ++ displayArgument argument ++ "\n" ++ usageHint
 
--- | Deterministic error for arguments after a complete invocation.
-extraArgumentsError :: String -> [String] -> String
-extraArgumentsError argument extras =
+-- | Deterministic error for arguments after a complete invocation,
+-- closed by the given usage hint.
+extraArgumentsError :: String -> String -> [String] -> String
+extraArgumentsError hint argument extras =
   "mithril: unexpected extra arguments after "
     ++ displayArgument argument
     ++ ": "
     ++ unwords (map displayArgument extras)
     ++ "\n"
-    ++ usageHint
+    ++ hint
 
 -- | Deterministic error for a FILE-taking command without its FILE
 -- argument.
@@ -160,12 +179,12 @@ missingFileError commandName =
 -- | Deterministic error for @wasp@ without its subcommand.
 missingWaspSubcommandError :: String
 missingWaspSubcommandError =
-  "mithril: 'wasp' requires a subcommand: generate or check\n" ++ usageHint
+  "mithril: 'wasp' requires a subcommand: generate or check\n" ++ waspUsageHint
 
 -- | Deterministic error for an unrecognized @wasp@ subcommand.
 unknownWaspSubcommandError :: String -> String
 unknownWaspSubcommandError subcommand =
-  "mithril: unknown wasp subcommand " ++ displayArgument subcommand ++ "\n" ++ usageHint
+  "mithril: unknown wasp subcommand " ++ displayArgument subcommand ++ "\n" ++ waspUsageHint
 
 -- | Deterministic error for a @wasp@ subcommand without exactly its
 -- two arguments.
@@ -174,131 +193,118 @@ missingWaspArgumentsError commandName =
   "mithril: '"
     ++ commandName
     ++ "' requires exactly two arguments: CORE_FILE WASP_ROOT\n"
-    ++ usageHint
+    ++ waspUsageHint
 
 usageHint :: String
 usageHint = "Run 'mithril --help' for usage."
 
+waspUsageHint :: String
+waspUsageHint = "Run 'mithril wasp --help' for usage."
+
 -- | Help text.  Ends with a newline; print with 'putStr'.
+--
+-- A short command summary in the conventional shape (one-line
+-- description, usage, commands, result meanings, pointers), never a
+-- restatement of the scope ledger: every line fits in 80 columns, and
+-- the exact supported scope, trusted components, and non-claims are
+-- delegated to the documents the last paragraph names.
 renderHelp :: String
 renderHelp =
   unlines
-    [ "mithril - host tool for the Mithril Core IR"
+    [ "mithril - check Mithril Core permission rules and generate a Wasp demonstrator"
     , ""
     , "Usage:"
-    , "  mithril                Print this help text."
-    , "  mithril --help         Print this help text."
-    , "  mithril -h             Print this help text."
-    , "  mithril --version      Print the package version."
-    , "  mithril validate FILE  Parse FILE as JSON, check it against the"
-    , "                         compiled-in Mithril Core v0 schema,"
-    , "                         resolve every Core v0 name, typecheck the"
-    , "                         resolved document, and normalize the"
-    , "                         typed document."
-    , "  mithril contract FILE  Run the complete validate pipeline on"
-    , "                         FILE, then print the deterministic"
-    , "                         human-readable security contract of the"
-    , "                         normalized document to stdout."
-    , "  mithril verify FILE    Run the complete validate pipeline on"
-    , "                         FILE, then verify the normalized document"
-    , "                         against the one implemented support rule:"
-    , "                         a single selected NoSelfPrivilegeEscalation"
-    , "                         obligation whose every case matches one of"
-    , "                         the two exact structural proof rules"
-    , "                         (change-other, bounded self-update),"
-    , "                         checked by Agda 2.8.0."
-    , "  mithril wasp generate CORE_FILE WASP_ROOT"
-    , "                         Run the complete validate pipeline and the"
-    , "                         verify gate on CORE_FILE (VERIFIED required),"
-    , "                         then install the closed Wasp 0.25.0 application"
-    , "                         of that document as a complete root at WASP_ROOT"
-    , "                         (initialized when absent or empty, replaced as a"
-    , "                         whole when owned) and check its confinement."
-    , "  mithril wasp check CORE_FILE WASP_ROOT"
-    , "                         Regenerate the same bundle without writing and"
-    , "                         check that WASP_ROOT is exactly the closed"
-    , "                         profile: every managed file byte-identical,"
-    , "                         nothing else present."
+    , "  mithril <command> [arguments]"
+    , "  mithril --help | -h     Print this help text."
+    , "  mithril --version       Print the package version."
     , ""
-    , "validate performs JSON parsing, structural Core v0 validation"
-    , "against the supported profile of core/schema.json (compiled into"
-    , "the tool at build time), complete Core v0 name resolution:"
-    , "declaration-name uniqueness in every namespace and resolution"
-    , "of every name reference in its namespace, complete Core v0"
-    , "static typing of the resolved document: term, policy, effect and"
-    , "result types, operand and relation-endpoint compatibility,"
-    , "enum-order permutation validity, initializer completeness, and"
-    , "guarantee well-typedness, and deterministic normalization of the"
-    , "well-typed document into the internal typed normalized Core. It is"
-    , "not semantic verification and not proof checking; normalization"
-    , "is structural only (no boolean simplification, constant folding,"
-    , "or policy evaluation), and validate does not verify guarantees"
-    , "or generate anything."
-    , "contract renders the typed normalized Core of a document that"
-    , "passes that complete pipeline as a deterministic, line-oriented"
-    , "security contract for human review: the declared schema, every"
-    , "action's policies, effects and results, and the selected"
-    , "guarantees, which remain unverified proof obligations. It"
-    , "evaluates no policy, proves and verifies nothing, generates"
-    , "nothing executable, and is not a semantic diff."
-    , "verify implements exactly one proof slice: a document selecting"
-    , "exactly one NoSelfPrivilegeEscalation obligation, every case of"
-    , "which matches exactly one of two exact structural rules - the"
-    , "mechanized safe changeRole change-other rule (three parameters:"
-    , "subject, scope, payload) or the bounded self-update rule (two"
-    , "parameters: scope, payload; the actor's own tuple written to a"
-    , "payload bounded by its authority) - is checked by generating a"
-    , "deterministic Agda module with one proof group per case against"
-    , "the embedded trusted kernel and running exactly Agda 2.8.0 with"
-    , "--safe --no-libraries --ignore-interfaces (exit 0, VERIFIED, for"
-    , "exactly the selected cases of that one obligation)."
-    , "Everything else is UNSUPPORTED (exit 3) - including the canonical"
-    , "Acme example, whose TenantIsolation and AuthenticatedMutation"
-    , "obligations remain unverified, documents selecting no or several"
-    , "guarantees, cases matching neither rule, and semantically"
-    , "equivalent but differently authored shapes."
-    , "verify never reports a violation: an unsafe variant is"
-    , "unsupported, not a proved violation, and a checker problem is a"
-    , "tool failure (exit 2), never a semantic verdict. The generator,"
-    , "the embedded Agda kernel, the Agda toolchain, and the support"
-    , "rules themselves remain trusted components."
-    , "wasp generate and wasp check implement the Wasp Confinement Profiles for"
-    , "the verified NoSelfPrivilegeEscalation slice, which both require to be"
-    , "VERIFIED first: Profile v0 lowers exactly the singleton change-other"
-    , "(rule-1) case as one authenticated Action, and Profile v1 lowers exactly"
-    , "the ordered change-other, bounded self-update (rule-1, rule-2) case pair"
-    , "as two authenticated Actions exported by the one generated operation"
-    , "file over the same fourteen managed paths; arbitrary multi-case lowering"
-    , "is not implemented, so a verified document with any other case sequence"
-    , "(a singleton bounded self-update case, two rule-1 cases, the reversed"
-    , "pair, three or more cases) is refused by the profile dispatcher (exit 3)"
-    , "before any destination access - VERIFIED but Wasp-UNSUPPORTED is a valid"
-    , "outcome. Each profile is a normal Wasp 0.25.0 application on"
-    , "PostgreSQL whose specification, Prisma schema, dependency configuration,"
-    , "generated Actions, client shell, ownership marker, and manifest are"
-    , "managed inputs regenerated from the same typed normalized Core the"
-    , "verifier consumed, with fixed target names (never authored names) for"
-    , "every identifier, file, and route. check walks the source root without"
-    , "following symbolic links, rejects hard links, and rejects every missing,"
-    , "altered, or unexpected input (exit 4); generate stages the complete"
-    , "bundle beside the root, checks it, swaps it into place as a whole"
-    , "(an owned root of either profile transitions to the requested one),"
-    , "refuses an unmarked nonempty root or an unmanaged path without mutation"
-    , "(exit 4), refuses root paths with dot, empty, or trailing-separator"
-    , "components, linked ancestors, a linked root, or an existing backup"
-    , "sibling (exit 1), creates the root private (mode 0700 whatever the"
-    , "umask), and finishes with the same check."
-    , "A document outside the support rule is UNSUPPORTED (exit 3). Wasp, Node,"
-    , "Prisma, PostgreSQL, the templates, and the lowering remain trusted; no"
-    , "semantic-preservation theorem exists (a rendered bundle is trusted"
-    , "correspondence evidence, not a proof); the confinement claim covers the"
-    , "source snapshot at the time of checking, not concurrent same-user"
-    , "mutation after it, privileged users, checker or CI compromise,"
-    , "dependency compromise, external database credential holders, or"
-    , "tampering after the Wasp build; this is not a general Wasp backend, a"
-    , "whole-product generator, a complete verifier, or a runtime sandbox."
-    , "No other compiler stage is implemented: no complete verifier, no"
-    , "semantic diff, and no target generation beyond these two profiles."
+    , "Commands:"
+    , "  validate FILE           Check that FILE is a valid Mithril Core v0 document."
+    , "  contract FILE           Print the review contract of FILE. It is a review"
+    , "                          aid, not a proof."
+    , "  verify FILE             Verify the one selected guarantee of FILE with"
+    , "                          Agda 2.8.0: VERIFIED or UNSUPPORTED."
+    , "  wasp generate CORE_FILE WASP_ROOT"
+    , "                          Verify CORE_FILE (VERIFIED required), install its"
+    , "                          closed Wasp source root at WASP_ROOT, and check it."
+    , "  wasp check CORE_FILE WASP_ROOT"
+    , "                          Check that WASP_ROOT is exactly the regenerated"
+    , "                          closed Wasp source root of CORE_FILE."
+    , "  wasp --help             Print the Wasp-specific help text."
+    , ""
+    , "Results:"
+    , "  VERIFIED (exit 0)       Agda accepted every required proof of every selected"
+    , "                          case of the document's one selected guarantee."
+    , "  UNSUPPORTED (exit 3)    The document lies outside the implemented proof"
+    , "                          rules. This is neither a safety nor a violation"
+    , "                          verdict; no VIOLATED result exists."
+    , "  CONFINED (exit 0)       The Wasp source root is byte-identical to the"
+    , "                          regenerated closed bundle. NOT CONFINED (exit 4)"
+    , "                          otherwise."
+    , ""
+    , "Invalid input exits 1. A tool failure exits 2 and is never a verdict."
+    , ""
+    , "See README.md for the quickstart and docs/current-scope.md for the exact"
+    , "supported scope, trusted components, and non-claims."
+    ]
+
+-- | Wasp-specific help text (@mithril wasp --help@).  Ends with a
+-- newline; print with 'putStr'.
+--
+-- Beyond the two subcommands and their results, it states the one fact
+-- a first-time user needs and the reports alone do not convey: the
+-- generated root is a closed source artifact, so ordinary Wasp tooling
+-- belongs in a disposable copy, where NOT CONFINED is the expected
+-- outcome.  Every line fits in 80 columns.
+renderWaspHelp :: String
+renderWaspHelp =
+  unlines
+    [ "mithril wasp - generate and check the closed Wasp demonstrator"
+    , ""
+    , "Usage:"
+    , "  mithril wasp generate CORE_FILE WASP_ROOT"
+    , "  mithril wasp check CORE_FILE WASP_ROOT"
+    , "  mithril wasp --help | -h"
+    , ""
+    , "Commands:"
+    , "  generate    Run the verification gate on CORE_FILE (VERIFIED required),"
+    , "              lower its verified cases through a supported Wasp profile,"
+    , "              install the generated source root at WASP_ROOT, and finish"
+    , "              with the check below. An absent or empty WASP_ROOT is"
+    , "              initialized; a root mithril generated earlier that still holds"
+    , "              nothing else is replaced as a whole; any other nonempty"
+    , "              directory is refused unchanged."
+    , "  check       Regenerate the expected source bundle in memory and check that"
+    , "              WASP_ROOT is exactly that bundle: every managed file"
+    , "              byte-identical, nothing missing, nothing else present. Nothing"
+    , "              is written."
+    , ""
+    , "Profiles:"
+    , "  Exactly one change-other case selects Profile v0; that case followed by"
+    , "  exactly one bounded self-update case selects Profile v1. Every other"
+    , "  verified document is UNSUPPORTED here: VERIFIED, but not lowered."
+    , ""
+    , "Results:"
+    , "  GENERATED, CONFINED (exit 0)  WASP_ROOT is exactly the generated source root."
+    , "  NOT CONFINED (exit 4)         WASP_ROOT differs from the regenerated bundle,"
+    , "                                or generate may not replace it; nothing was"
+    , "                                written."
+    , "  UNSUPPORTED (exit 3)          CORE_FILE is outside the implemented proof"
+    , "                                rules or the two Wasp profiles. Neither a"
+    , "                                safety nor a violation verdict."
+    , ""
+    , "Invalid CORE_FILE or an unusable WASP_ROOT path exits 1. A tool failure"
+    , "exits 2 and is never a verdict."
+    , ""
+    , "The generated root is a closed source artifact, not a general Wasp"
+    , "application to edit by hand. Run Wasp tooling only in a disposable copy of"
+    , "it: wasp install, wasp start, and migrations add node_modules, .wasp,"
+    , "package-lock.json, migrations, and environment files, so that copy becomes"
+    , "NOT CONFINED as expected while the clean generated root stays CONFINED."
+    , "Regenerate the clean root and refresh the copy whenever CORE_FILE changes."
+    , "mithril itself needs Agda 2.8.0 for the verification gate but no Wasp,"
+    , "Node, or PostgreSQL installation; running the copy needs the Wasp 0.25.0"
+    , "CLI, Node.js 24, and a PostgreSQL database. See README.md for the quickstart."
     ]
 
 -- | Version line for the given package version string.

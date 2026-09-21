@@ -192,6 +192,38 @@ profiles unsuitable for composition with a normal hand-edited Wasp
 application. A future composable adapter is an architecture direction, not an
 implemented feature.
 
+#### A first run in practice
+
+The [README quickstart](../README.md#try-it) is the copy-paste version. This
+is the same sequence, with what each step establishes:
+
+1. **Verify.** `mithril verify CORE_FILE` runs the support gate and, for a
+   supported document, Agda. This is the only step that checks the NSPE
+   theorems.
+2. **Generate.** `mithril wasp generate CORE_FILE /tmp/mithril-wasp-source`
+   repeats that gate, refuses a document that is not `VERIFIED` or that fits
+   neither profile, installs the fourteen generated files as a private
+   directory, and checks it. The generated files are correspondence evidence
+   for the trusted lowering, not a proof about the application.
+3. **Check.** `mithril wasp check CORE_FILE /tmp/mithril-wasp-source`
+   compares that directory byte for byte with the regenerated bundle.
+   `CONFINED` describes this source snapshot at this moment and nothing else.
+4. **Run, elsewhere.** Copy the source root to a disposable working copy such
+   as `/tmp/mithril-wasp-run` and run Wasp only there: `wasp install`, a
+   PostgreSQL connection (`DATABASE_URL` in `.env.server`, or `wasp start db`,
+   which needs Docker), `wasp db migrate-dev --name init`, and `wasp start`.
+   What then happens at runtime is the behavior of Wasp, Node, Prisma, and
+   PostgreSQL on those files; Mithril trusts them and claims nothing about it.
+
+Running the copy needs the Wasp 0.25.0 CLI, Node.js 24, and PostgreSQL 16,
+the versions the integration battery pins; Mithril itself needs none of them.
+Installation, build, migration, and environment outputs (`node_modules`,
+`.wasp`, `package-lock.json`, `migrations`, `.env.server`) are outside the
+closed profile, so the working copy reports `NOT CONFINED`. That is expected
+and says nothing about the generation; the untouched source root stays
+`CONFINED`. When the Core document changes, regenerate the source root, check
+it, and recreate the working copy from it.
+
 ## How support is decided
 
 Before Agda runs, a pure **support gate** examines the typed normalized Core.
@@ -282,3 +314,4 @@ like other code, and test results remain evidence rather than proof.
 | `UNSUPPORTED` | Outside the implemented rules; not a safety or violation verdict. |
 | `CONFINED` | The checked source root matched the regenerated closed Wasp profile at check time. |
 | Trusted computing base | Components whose defects can invalidate a claim even when the authored document is unchanged. |
+| Working copy | A disposable copy of a generated source root in which Wasp tooling runs. It is expected to become `NOT CONFINED`; the confinement claim covers the source root, not the copy. |

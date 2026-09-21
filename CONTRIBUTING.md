@@ -19,11 +19,14 @@ than product code.
 ## Prerequisites
 
 - GHC 9.12.4 and cabal-install 3.18.1.0 (GHC2021 language edition)
-- Agda 2.8.0 on the search path (the test suite and `mithril verify` invoke
-  the real executable)
+- Agda 2.8.0 on the search path (the test suite, `mithril verify`, and the
+  verification gate of `mithril wasp generate` and `mithril wasp check`
+  invoke the real executable)
 - a POSIX shell on Linux (the documented current workflow)
-- only for the separate Wasp integration battery: the Wasp 0.25.0 CLI,
-  Node.js 24, and PostgreSQL 16
+- only for executing a generated Wasp demonstrator or running the separate
+  Wasp integration battery: the Wasp 0.25.0 CLI, Node.js 24, and
+  PostgreSQL 16; `mithril verify`, `mithril wasp generate`, and
+  `mithril wasp check` need none of them
 
 No lint or formatting command has been selected. Do not invent one; such
 tools will be documented here if and when they are chosen.
