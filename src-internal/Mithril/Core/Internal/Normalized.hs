@@ -12,83 +12,74 @@
 -- ("Mithril.Core.Internal.Contract"), the verifier slice
 -- ("Mithril.Core.Internal.Verify"), and the Wasp emitter
 -- ("Mithril.Core.Internal.Wasp").  It is a distinct model from the
--- resolved representation ("Mithril.Core.Internal.Resolved") — not
--- the resolved 'Mithril.Core.Internal.Resolved.Model' under another
--- stage tag — although it deliberately shares the resolved leaf
--- vocabulary: namespace-specific identifiers, 'Ref' reference sites,
--- source paths, the declared attribute, parameter, and payload type
--- families, and the actor-availability index.
+-- resolved representation ("Mithril.Core.Internal.Resolved"), not
+-- that model under another stage tag, although it deliberately shares
+-- the resolved leaf vocabulary: namespace-specific identifiers, 'Ref'
+-- reference sites, source paths, the declared attribute, parameter,
+-- and payload type families, and the actor-availability index.
 --
 -- == What normalization adds to the resolved model
 --
 -- * /Types on every term./  Every 'ValueTerm' and 'PolicyTerm' node
 --   carries the static type the typechecker determined for it
---   ("Mithril.Core.Internal.StaticType"), so no later backend ever
---   reruns type inference.  The declared attribute, parameter, and
---   payload type families are the resolved declaration nodes
---   themselves (re-exported here), and 'attributeStaticType',
---   'parameterStaticType', and 'payloadStaticType' — the one
---   statement of each projection into the type vocabulary, defined in
+--   ("Mithril.Core.Internal.StaticType"), so no backend reruns type
+--   inference.  The declared-type projections 'attributeStaticType',
+--   'parameterStaticType', and 'payloadStaticType', defined in
 --   "Mithril.Core.Internal.StaticType" and consumed by the
---   typechecker's judgment as well — are re-exported alongside them,
---   so backends never reinterpret a declared family.
--- * /Materialized enum ranks./  A declared enum order — typechecked
---   to be a complete permutation of the enum's values — becomes an
---   explicit 'EnumOrder': every value with its 0-based rank, in
---   ascending rank order exactly as authored.  Ordered comparisons
---   name their ranking through 'OrderedType', so a backend reads
---   ranks instead of re-deriving orderedness.
+--   typechecker's judgment as well, are re-exported here as the one
+--   statement of each projection, so backends never reinterpret a
+--   declared family.
+-- * /Materialized enum ranks./  A declared enum order, typechecked to
+--   be a complete permutation of the enum's values, becomes an
+--   explicit 'EnumOrder' (every value with its 0-based rank, in the
+--   authored order), and ordered comparisons name their ranking
+--   through 'OrderedType', so a backend reads ranks instead of
+--   re-deriving orderedness.
 -- * /Explicit endpoint bindings./  The endpoint terms of lookups and
---   relation effects are paired one-to-one with the declared
---   endpoints they bind ('EndpointBinding'), so the typechecked
---   arity and per-position entity compatibility is present in the
---   structure instead of being an implicit positional convention.
+--   relation effects are paired one-to-one with the declared endpoints
+--   they bind ('EndpointBinding'), so the typechecked arity and
+--   per-position entity compatibility is present in the structure
+--   instead of being an implicit positional convention.
 -- * /Initializers in declaration order./  A @CreateEntity@ effect
 --   lists exactly one typed initializer per attribute of its target
 --   entity, in the target entity's attribute declaration order (the
---   resolved model lists the name-keyed initializers in ascending
---   key order; see the decoder note there).
+--   resolved model lists the name-keyed initializers in ascending key
+--   order; this is the one ordering change of normalization).
 -- * /Explicit guarantee structure./  Guarantee case terms are typed
 --   in their action's environment, and a @NoSelfPrivilegeEscalation@
 --   case's zero-or-one scope term is paired with the authority's
 --   scope endpoint ('ScopeBinding').
 -- * /The distinguished @User@ identity as an independent anchor./
---   'modelUserEntity' carries the canonical identity of the
---   distinguished @User@ entity exactly as the resolver designated it
---   once ('Resolved.modelUserEntity': the unique schema-designated
---   declaration, the entity every @Actor@ term denotes and every
---   guarantee subject endpoint was typechecked to reference),
---   validated by the typechecker against the declaration it names,
---   carried by its signature, and propagated here — so a backend
---   checks subject and @Actor@ evidence against one independently
---   carried identity instead of re-deriving it from an authored
---   name, a declaration position, or the very evidence it is
---   checking.
+--   'modelUserEntity' carries the canonical identity the resolver
+--   designated once ('Resolved.modelUserEntity': the unique
+--   schema-designated declaration, the entity every @Actor@ term
+--   denotes), validated by the typechecker against the declaration it
+--   names and propagated here, so a backend checks subject and
+--   @Actor@ evidence against one independently carried identity
+--   instead of re-deriving it from an authored name, a declaration
+--   position, or the very evidence it is checking.
 --
 -- Declaration names and every source path survive as
--- diagnostic/rendering metadata only: resolved linkage and equality
--- go through the identifiers, exactly as in the resolved model, and
--- no reference field holds a name for later stages to look up again.
--- Identifiers, declaration order, and term structure are preserved
--- unchanged from the resolved model (the initializer reordering above
--- is the one ordering change).
+-- diagnostic/rendering metadata only: linkage and equality go through
+-- the identifiers, exactly as in the resolved model, and no reference
+-- field holds a name for later stages to look up again.  Identifiers,
+-- declaration order, and term structure are otherwise preserved
+-- unchanged from the resolved model.
 --
 -- == What normalization is not
 --
 -- Normalization is deterministic /structural/ canonicalization of one
--- authored document.  It performs no boolean simplification, no
--- constant folding, no operand sorting, no policy evaluation, no
--- proof checking, and no semantic optimization: an authored
--- @And(true, true)@ normalizes to an @And@ over two @Bool@ literals,
--- and the operands of every binary constructor keep their authored
--- order.  Consequently two differently authored documents are /not/
--- claimed to normalize to equal models even when they are
--- semantically or alpha-equivalent — equality of normalized models is
--- only guaranteed to be reflexive across repeated runs over one
--- authored document.  A value of this model attests nothing beyond
--- what the pipeline stages established: it is well-typed normalized
--- structure, still unverified — no policy is evaluated, no guarantee
--- is established, and no security property holds because of it.
+-- authored document: no boolean simplification, constant folding,
+-- operand sorting, policy evaluation, proof checking, or semantic
+-- optimization (an authored @And(true, true)@ normalizes to an @And@
+-- over two @Bool@ literals, and binary operands keep their authored
+-- order), and no claim that differently authored documents normalize
+-- to equal models even when they are semantically or
+-- alpha-equivalent; equality of normalized models is guaranteed only
+-- across repeated runs over one authored document.  A value of this
+-- model is well-typed normalized structure and nothing more: no
+-- policy is evaluated, no guarantee is established, and no security
+-- property holds because of it.  See @docs\/current-scope.md@.
 module Mithril.Core.Internal.Normalized
   ( -- * The normalized model
     Model (..)

@@ -44,14 +44,14 @@ description:
   is deterministic restatement only: it evaluates no policy, proves
   and checks nothing, and is not a semantic diff.
   @mithril verify FILE@ runs the same complete pipeline and then the
-  first connected verifier slice: a pure deterministic support gate
+  one verifier slice: a pure deterministic support gate
   over the normalized document and, for exactly one supported
   obligation family — a document selecting exactly one
   NoSelfPrivilegeEscalation obligation whose non-empty case
   collection consists of cases each matching exactly one of two exact
-  structural proof rules, the mechanized safe changeRole change-other
-  rule of the Agda spike (rule 1) or the bounded self-update rule
-  (rule 2), classified independently in authored order — a
+  structural proof rules, the change-other rule (rule 1) or the
+  bounded self-update rule (rule 2), classified independently in
+  authored order — a
   deterministically generated Agda obligation module with one proof
   group and checked manifest per case, materialized together with
   trusted kernel modules embedded at compile time into a fresh
@@ -64,12 +64,12 @@ description:
   unverified, documents selecting no or several guarantees, cases
   matching neither rule, and semantically equivalent but differently
   authored shapes — and every checker problem is a tool failure
-  (exit 2), never a semantic verdict: no violation outcome exists in
-  this milestone.  The Haskell generator, the embedded Agda kernel,
+  (exit 2), never a semantic verdict: no violation outcome exists.
+  The Haskell generator, the embedded Agda kernel,
   the external Agda toolchain, and the support rules themselves
   remain trusted components.
   @mithril wasp generate CORE_FILE WASP_ROOT@ and @mithril wasp check
-  CORE_FILE WASP_ROOT@ implement the first confined target slices, the
+  CORE_FILE WASP_ROOT@ implement the confined target slices, the
   Wasp Confinement Profiles v0 and v1: after the same complete
   pipeline and the verify gate (VERIFIED required), the one shared
   NoSelfPrivilegeEscalation support plan the verifier consumed is
@@ -163,7 +163,7 @@ extra-doc-files:    README.md
 -- The generated Wasp fixtures under test/fixtures/wasp-acme (the
 -- Wasp Confinement Profile v0 of the singleton rule-1 fixture) and
 -- test/fixtures/wasp-acme-self-update (the Wasp Confinement Profile
--- v1 of the two-case rule-1/rule-2 fixture) are the reviewed golden
+-- v1 of the two-case rule-1/rule-2 fixture) are the committed golden
 -- outputs of 'mithril wasp generate' (pinned byte-for-byte by the
 -- test suite and CI, regenerated only through the tool, never
 -- hand-edited); the rename variants under

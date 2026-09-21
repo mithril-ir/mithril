@@ -30,11 +30,10 @@
 --    terms), effect targets and @CreateEntity@ initializer keys,
 --    result terms, and every guarantee reference (case actions and
 --    their action-scoped terms, the @TenantIsolation@ access relation
---    with its subject and tenant endpoints — endpoints are
---    relation-owned members, resolved within the resolved access
---    relation, never global names — and the
---    @NoSelfPrivilegeEscalation@ authority relation, endpoints, and
---    payload-order enum).
+--    with its subject and tenant endpoints — relation-owned members
+--    resolved within the resolved access relation, never global
+--    names — and the @NoSelfPrivilegeEscalation@ authority relation,
+--    endpoints, and payload-order enum).
 --
 -- On success the resolved model additionally records the resolver's
 -- own designation of the distinguished @User@ entity
@@ -62,18 +61,16 @@
 -- entity, an @Argument@ denotes an entity when its declared parameter
 -- type is @EntityRef@, and a nested @Attribute@ denotes an entity
 -- when its resolved attribute declaration has @EntityRef@ type.  A
--- source that is known /not/ to denote an entity reference is a
--- resolution failure; nothing else about types is checked.
---
--- Everything else about types — general term typing, operand
--- compatibility, enum-order validity, relation and effect
--- compatibility, result typing, and guarantee well-typedness —
--- belongs to the static typechecker ("Mithril.Core.Typing"), with
--- normalization ("Mithril.Core.Normalization") after it.  A
--- structurally valid document can therefore resolve successfully and
--- still fail the typechecker.  A @'CoreDocument' 'Resolved'@ is an
--- attestation about names only — /not/ typed normalized Core, and no
--- semantic or security property.
+-- source known /not/ to denote an entity reference is a resolution
+-- failure; nothing else about types is checked here.  General term
+-- typing, operand compatibility, enum-order validity, relation and
+-- effect compatibility, result typing, and guarantee well-typedness
+-- belong to the static typechecker ("Mithril.Core.Typing"), with
+-- normalization ("Mithril.Core.Normalization") after it, so a
+-- structurally valid document can resolve successfully and still fail
+-- the typechecker.  A @'CoreDocument' 'Resolved'@ is an attestation
+-- about names only: /not/ typed normalized Core, and no semantic or
+-- security property.
 --
 -- == Failure classification
 --
@@ -89,8 +86,8 @@
 -- schema\/frontend drift or a decoder\/resolver bug, never a user
 -- error.  They are 'ResolverInvariantViolation's, kept separate from
 -- semantic violations, and they dominate: if the decoder cannot
--- interpret the document, the frontend no longer trusts its reading
--- and reports 'ResolverInvariantViolations' without attempting name
+-- interpret the document, the frontend does not trust its reading and
+-- reports 'ResolverInvariantViolations' without attempting name
 -- resolution.  Neither pass ever throws.
 module Mithril.Core.Resolution
   ( -- * Pipeline stage

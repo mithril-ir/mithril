@@ -187,10 +187,10 @@ for (const [scenarioName, rows, context, oneCommitted, bothOpen] of [
   rejected(`${scenarioName} 409/409 (both aborted — impossible for an isolated pair)`, rows, context, conflict(), conflict(), bothOpen, "not a permitted row");
 }
 
-// 3b. The reviewer's counterexamples: a denied demotion by the top-ranked
+// 3b. Denied-demotion counterexamples: a denied demotion by the top-ranked
 // actor, paired with a successful equal write and a final top value.
-rejected("same-operation demote = 403, keep = 200, final actor rank top (the reviewer's counterexample)", SAME_OPERATION_ROWS, sameContext, forbidden(), ok(), stateActorTop, "not a permitted row");
-rejected("cross-operation rule 1 = 403, rule 2 = 200, final peer rank top (the reviewer's counterexample)", CROSS_OPERATION_ROWS, crossContext, forbidden(), ok(), statePeerTop, "not a permitted row");
+rejected("same-operation demote = 403, keep = 200, final actor rank top (denied demotion beside a successful equal write)", SAME_OPERATION_ROWS, sameContext, forbidden(), ok(), stateActorTop, "not a permitted row");
+rejected("cross-operation rule 1 = 403, rule 2 = 200, final peer rank top (denied demotion beside a successful equal write)", CROSS_OPERATION_ROWS, crossContext, forbidden(), ok(), statePeerTop, "not a permitted row");
 // 200/200 with the tuple still at the top value: no serial interpretation.
 rejected("cross-operation 200/200 with the peer still at the top value", CROSS_OPERATION_ROWS, crossContext, ok(), ok(), statePeerTop, "final authority relation");
 rejected("same-operation 200/200 with the actor still at the top value", SAME_OPERATION_ROWS, sameContext, ok(), ok(), stateActorTop, "final authority relation");

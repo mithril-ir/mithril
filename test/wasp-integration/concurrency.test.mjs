@@ -85,7 +85,7 @@ check(
   `${PRISMA_TRANSACTION_TIMEOUT_MS}`,
 );
 check(
-  "the barrier interval literal is expressed in milliseconds and is no longer '5 seconds'",
+  "the barrier interval literal is expressed in milliseconds, never as '5 seconds'",
   barrierDeadlineInterval() === `${BARRIER_DEADLINE_MS} milliseconds` && !barrierDeadlineInterval().includes("5 seconds"),
   barrierDeadlineInterval(),
 );
@@ -162,7 +162,7 @@ const httpStyle = Object.assign(new Error("socket hang up"), { code: "ECONNRESET
   );
 }
 
-// --- 3. settlement and diagnostic rendering are TOTAL (finding 3) -----------
+// --- 3. settlement and diagnostic rendering are TOTAL ----------------------
 
 {
   // A synchronous task throw must become a recorded rejection, not
@@ -438,7 +438,7 @@ const httpStyle = Object.assign(new Error("socket hang up"), { code: "ECONNRESET
   );
 }
 
-// --- 4. a partial, aborted response rejects within a bound (finding 2) ------
+// --- 4. a partial, aborted response rejects within a bound ------------------
 
 // A server that, for /partial, declares a longer body than it writes
 // and then destroys the socket mid-message; for /ok it answers 200.
@@ -528,7 +528,7 @@ function createAbortServer() {
   check("the partial-abort server closed cleanly with no live sockets left", abort.sockets.size === 0, `${abort.sockets.size}`);
 }
 
-// --- 5. genuine overlap vs. a serialized dispatch (finding 1) ---------------
+// --- 5. genuine overlap vs. a serialized dispatch ---------------------------
 
 // A local barrier server that HOLDS each response until two requests
 // are genuinely present at once, and instruments enough to tell a
@@ -714,7 +714,7 @@ function overlapAccepted(metrics, observations, transportFailures) {
 }
 
 {
-  // Negative (reviewer-style): a deliberately serialized dispatch — the
+  // Negative control: a deliberately serialized dispatch — the
   // second request is issued only after the first has been released and
   // its socket has fully closed — uses two distinct SUCCESSIVE sockets
   // and both succeed, yet the strict oracle rejects it because the
@@ -798,16 +798,16 @@ function overlapAccepted(metrics, observations, transportFailures) {
     check(name, result.ok === false && cited, JSON.stringify(result));
   };
 
-  // A FROZEN, faithful copy of the PRE-correction predicate (the acceptance
-  // rule that ran in Wasp CI run 33522353608), preserved here ONLY so the
-  // differential regression below is EXECUTABLE, not merely asserted.  It is
-  // faithful to the former contract: the SAME structural guard, the SAME six
-  // required sequence records, and the SAME arrival / arrival-2 / positive-id
-  // / blocked-seen / distinct-backend / explicit-timeout clauses.  It differs
-  // from the current predicate in EXACTLY ONE clause: it required a boolean
-  // `committerCommitted === true` (the later, out-of-band post-round re-query
-  // result) in place of the current waiter-captured observed-committed id, and
-  // it never reads `waiterCommittedTxid` at all.
+  // A FROZEN, faithful copy of the LEGACY acceptance predicate, kept here
+  // ONLY so the differential regression below is EXECUTABLE, not merely
+  // asserted.  It is faithful to the legacy contract: the SAME structural
+  // guard, the SAME six required sequence records, and the SAME arrival /
+  // arrival-2 / positive-id / blocked-seen / distinct-backend /
+  // explicit-timeout clauses.  It differs from the current predicate in
+  // EXACTLY ONE clause: it required a boolean `committerCommitted === true`
+  // (an out-of-band, post-round re-query result) in place of the current
+  // waiter-captured observed-committed id, and it never reads
+  // `waiterCommittedTxid` at all.
   const evaluateLegacyBarrierEvidence = (evidence) => {
     if (evidence === null || typeof evidence !== "object" || Array.isArray(evidence)) {
       return { ok: false, reasons: ["the barrier evidence is not an object (it is null, an array, or a primitive)"] };
@@ -864,8 +864,8 @@ function overlapAccepted(metrics, observations, transportFailures) {
     if (waiterPid !== null && committerPid !== null && waiterPid.lastValue === committerPid.lastValue) {
       reasons.push("the waiter and committer are not two distinct backends");
     }
-    // The FORMER boolean-only clause the correction replaced: a post-round
-    // pg_xact_status re-query result required to be exactly true.
+    // The legacy boolean-only clause: a post-round pg_xact_status re-query
+    // result required to be exactly true.
     if (evidence.committerCommitted !== true) {
       reasons.push("the designated committer's transaction did not reach the committed state");
     }
@@ -978,17 +978,17 @@ function overlapAccepted(metrics, observations, transportFailures) {
   //     the committer's published id (exact binding, captured in the trigger's
   //     committed branch, NOT a post-round re-query) ---
   //
-  // This is the regression that EXPOSES the pre-correction seam (Wasp CI run
-  // 33522353608): the failing round was a genuine overlap round — arrivals 2,
-  // committerArrival 2, distinct pids, a blocked-seen tick, no timeout, and a
-  // status pair/body/relation matching a permitted serial row — that the OLD
-  // predicate rejected SOLELY because a separate, post-round pg_xact_status
-  // re-query of the committer's id returned something other than the literal
-  // "committed" (that raw value was not captured and its micro-cause is
-  // unknown).  The corrected predicate accepts exactly that round because
-  // acceptance now rests on the id the held-open waiter itself observed
-  // committed, which equals the committer's published id — with no post-round
-  // re-query anywhere in the evidence.
+  // This regression pins the seam of the legacy predicate: a genuine overlap
+  // round — arrivals 2, committerArrival 2, distinct pids, a blocked-seen
+  // tick, no timeout, and a status pair/body/relation matching a permitted
+  // serial row — could be rejected SOLELY because a separate, post-round
+  // pg_xact_status re-query of the committer's id returned something other
+  // than the literal "committed" (that re-query result is not part of the
+  // captured evidence, and its cause is not pinned down).  The current
+  // predicate accepts exactly that round because acceptance rests on the id
+  // the held-open waiter itself observed committed, which equals the
+  // committer's published id — with no post-round re-query anywhere in the
+  // evidence.
   check(
     "the barrier-evidence predicate accepts a genuine round proven by the waiter's captured observed-committed id (no post-round re-query field exists)",
     evaluateTwoAdminBarrierEvidence(validEvidence()).ok === true &&
@@ -999,9 +999,9 @@ function overlapAccepted(metrics, observations, transportFailures) {
   expectFail("the predicate rejects a missing waiterCommittedTxid record", omit("waiterCommittedTxid"), "waiterCommittedTxid:");
   // Fail closed for STALE/unobserved evidence: the waiter never observed a
   // commit, so the sequence stands at its reset state (isCalled false).  This
-  // is precisely the shape the old post-round re-query's non-"committed"
-  // result used to be conflated with, and it is now rejected as "the waiter
-  // never observed", never accepted.
+  // is precisely the shape a post-round re-query's non-"committed" result
+  // conflates with a genuine round; here it is rejected as "the waiter never
+  // observed", never accepted.
   expectFail(
     "the predicate rejects a round where the waiter never observed a commit (waiterCommittedTxid uninitialized)",
     { ...validEvidence(), waiterCommittedTxid: unset },
@@ -1029,46 +1029,46 @@ function overlapAccepted(metrics, observations, transportFailures) {
   expectFail("the predicate rejects an Infinity waiter observed-committed id", { ...validEvidence(), waiterCommittedTxid: { isCalled: true, lastValue: Infinity } }, "waiterCommittedTxid: lastValue");
   expectFail("the predicate rejects a string waiter observed-committed id", { ...validEvidence(), waiterCommittedTxid: { isCalled: true, lastValue: "4242" } }, "waiterCommittedTxid: lastValue");
 
-  // --- NON-VACUOUS differential: the correction is a real BEHAVIORAL change,
-  //     not a renamed or newly-required field ---
+  // --- NON-VACUOUS differential: the current and legacy predicates differ
+  //     BEHAVIORALLY, not by a renamed or newly-required field ---
   //
   // A dual-compatible round satisfies BOTH contracts at once: it carries the
-  // former boolean `committerCommitted: true` AND the current waiter-captured
+  // legacy boolean `committerCommitted: true` AND the current waiter-captured
   // `waiterCommittedTxid` equal to committerTxid.  Because it is valid under
   // the legacy contract too, the divergence shown below cannot be explained
-  // away as the old predicate merely missing a field it expected — every
-  // former requirement is satisfied.  (`evaluateLegacyBarrierEvidence` above
-  // is a frozen, faithful copy of that former contract, so this is executable,
+  // away as the legacy predicate merely missing a field it expected — every
+  // legacy requirement is satisfied.  (`evaluateLegacyBarrierEvidence` above
+  // is a frozen, faithful copy of the legacy contract, so this is executable,
   // not asserted.)
   const dualCompatiblePositive = () => ({ ...validEvidence(), committerCommitted: true });
   // The extra legacy field is INERT under the current predicate: it still
   // accepts the dual-compatible round, so no rejection below turns on the
   // field's mere presence.
   check(
-    "the CURRENT predicate accepts a dual-compatible round (former committerCommitted:true present AND waiter-captured id equal to committerTxid)",
+    "the CURRENT predicate accepts a dual-compatible round (legacy committerCommitted:true present AND waiter-captured id equal to committerTxid)",
     evaluateTwoAdminBarrierEvidence(dualCompatiblePositive()).ok === true,
     JSON.stringify(evaluateTwoAdminBarrierEvidence(dualCompatiblePositive())),
   );
   // Positive control for the frozen legacy contract: it, too, accepts the
   // dual-compatible round — so both predicates agree on the positive.
   check(
-    "the FROZEN LEGACY predicate accepts that same dual-compatible round (positive control: the whole former contract is satisfied)",
+    "the FROZEN LEGACY predicate accepts that same dual-compatible round (positive control: the whole legacy contract is satisfied)",
     evaluateLegacyBarrierEvidence(dualCompatiblePositive()).ok === true,
     JSON.stringify(evaluateLegacyBarrierEvidence(dualCompatiblePositive())),
   );
   // Faithfulness guard: the frozen legacy predicate is a real contract, not a
-  // rubber stamp — flip committerCommitted to false (the exact CI failure
-  // signature) and it fails closed, exactly as the former predicate did.
+  // rubber stamp — flip committerCommitted to false (the shape under which the
+  // legacy contract rejects a genuine round) and it fails closed.
   check(
-    "the FROZEN LEGACY predicate fails closed on committerCommitted:false (it is a faithful former contract, not a rubber stamp)",
+    "the FROZEN LEGACY predicate fails closed on committerCommitted:false (it is a faithful legacy contract, not a rubber stamp)",
     evaluateLegacyBarrierEvidence({ ...dualCompatiblePositive(), committerCommitted: false }).ok === false,
     JSON.stringify(evaluateLegacyBarrierEvidence({ ...dualCompatiblePositive(), committerCommitted: false })),
   );
   // The mismatch round differs from the positive control in EXACTLY ONE field:
   // the waiter's observed-committed id becomes a valid, positive, but DIFFERENT
   // id (4243 vs the committer's published 4242).  committerCommitted stays
-  // exactly true and every former clause stays valid, isolating the divergence
-  // to the waiter-txid binding the correction introduced.
+  // exactly true and every legacy clause stays valid, isolating the divergence
+  // to the current predicate's waiter-txid binding.
   const dualCompatibleMismatch = () => ({ ...dualCompatiblePositive(), waiterCommittedTxid: seq(4243) });
   check(
     "the positive control and the mismatch differ in EXACTLY ONE field: waiterCommittedTxid",
@@ -1082,7 +1082,7 @@ function overlapAccepted(metrics, observations, transportFailures) {
     JSON.stringify({ positive: dualCompatiblePositive(), mismatch: dualCompatibleMismatch() }),
   );
   // The CURRENT predicate REJECTS the mismatch, citing the exact-equality
-  // binding — the strengthened runtime proof at work.
+  // binding.
   check(
     "the CURRENT predicate REJECTS the mismatch (waiter observed-committed id 4243 != committer published id 4242), citing the binding",
     (() => {
@@ -1092,11 +1092,11 @@ function overlapAccepted(metrics, observations, transportFailures) {
     JSON.stringify(evaluateTwoAdminBarrierEvidence(dualCompatibleMismatch())),
   );
   // The FROZEN LEGACY predicate ACCEPTS that very same mismatch: committerCommitted
-  // is still true and every former clause holds, and it never reads
+  // is still true and every legacy clause holds, and it never reads
   // waiterCommittedTxid.  Old accepts, new rejects, on an object valid under the
-  // whole former contract: a genuine old-vs-new divergence, not a renamed field.
+  // whole legacy contract: a genuine divergence, not a renamed field.
   check(
-    "the FROZEN LEGACY predicate ACCEPTS that same mismatch (committerCommitted:true, every former clause valid, waiterCommittedTxid never read) — a real behavioral divergence",
+    "the FROZEN LEGACY predicate ACCEPTS that same mismatch (committerCommitted:true, every legacy clause valid, waiterCommittedTxid never read) — a real behavioral divergence",
     evaluateLegacyBarrierEvidence(dualCompatibleMismatch()).ok === true,
     JSON.stringify(evaluateLegacyBarrierEvidence(dualCompatibleMismatch())),
   );

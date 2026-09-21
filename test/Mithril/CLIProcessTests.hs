@@ -11,7 +11,7 @@
 -- pinned empty).  Each invocation runs twice and must be
 -- byte-identical, pinning determinism.
 --
--- The final group re-runs the review's schema-substitution attack
+-- The final group re-runs the schema-substitution attack
 -- against the real process: with @mithril_ir_datadir@ pointing at a
 -- directory containing an in-profile permissive schema, the binary
 -- must behave exactly as without the override, because the canonical
@@ -219,7 +219,7 @@ expectations =
           \  Unexpected end-of-input, expecting key literal\n"
       }
   , CliExpectation
-      { -- The independent review's near-Core document: rejected for
+      { -- The near-Core document: rejected for
         -- the missing canonical root requirements, so it can never
         -- reach resolution through the real binary.
         cliName = "validate rejects the near-Core document structurally"

@@ -48,7 +48,7 @@ datadirVariable :: String
 datadirVariable = "mithril_ir_datadir"
 
 -- | A schema inside the supported Core v0 profile that accepts any
--- JSON object.  This is the independent review's substitution attack:
+-- JSON object.  This is the schema-substitution attack:
 -- were the tool still willing to read its schema from a runtime
 -- location, planting these bytes there would mint
 -- @CoreDocument StructurallyValid@ — and then @Resolved@ or an

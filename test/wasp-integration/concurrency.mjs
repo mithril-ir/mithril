@@ -57,7 +57,7 @@ export const BARRIER_DEADLINE_MS = 2000;
 export const BARRIER_SAFETY_MARGIN_MS = PRISMA_TRANSACTION_TIMEOUT_MS - BARRIER_DEADLINE_MS;
 
 // The PostgreSQL interval literal for the barrier deadline, in
-// milliseconds (never the old '5 seconds').
+// milliseconds (never a '5 seconds' literal).
 export function barrierDeadlineInterval() {
   return `${BARRIER_DEADLINE_MS} milliseconds`;
 }
@@ -66,7 +66,7 @@ export function barrierDeadlineInterval() {
 // connection: each call builds a one-shot agent with keepAlive false,
 // so two concurrent calls use two independent sockets and cannot
 // head-of-line block each other on a shared keep-alive connection
-// (the observed CI failure mode).  Resolves { status, text } only for
+// (which would serialize requests meant to overlap).  Resolves { status, text } only for
 // a genuinely complete response; rejects with the transport error
 // (its code and any nested cause reachable through
 // describeTransportError) for every premature termination.

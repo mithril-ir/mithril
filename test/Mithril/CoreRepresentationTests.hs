@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Black-box checks over the explicit resolved-representation
--- milestone, exercised exclusively through the public library API: a
+-- | Black-box checks over the explicit resolved representation,
+-- exercised exclusively through the public library API: a
 -- successfully resolved document is carried as the internal decoded
 -- and name-resolved Core model, constructed by the real
 -- @parse -> validate -> resolve@ pipeline.
@@ -33,7 +33,7 @@
 -- @payloadOrder@ enum, incompatible comparison operands), so its
 -- acceptance by resolution is a regression that constructing the
 -- representation adds no typechecking — while the file-level
--- pipeline, which now continues into static typing, must reject it
+-- pipeline, which continues into static typing, must reject it
 -- with type violations, never name-resolution ones (the exact
 -- violation list is pinned in "Mithril.CoreTypingTests" and at the
 -- process level).

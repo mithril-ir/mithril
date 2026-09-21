@@ -18,8 +18,8 @@
 -- "Mithril.CoreResolutionTests" and the typing boundary by
 -- "Mithril.CoreTypingTests".
 --
--- The schema-provenance regressions at the end pin the review's
--- substitution attack shut: pointing the Cabal data-directory
+-- The schema-provenance regressions at the end pin the
+-- schema-substitution attack shut: pointing the Cabal data-directory
 -- override at a nonexistent or malicious location must not change
 -- which grammar validation uses, because the schema is a compile-time
 -- constant of the library, not a runtime lookup.
@@ -89,7 +89,7 @@ import Mithril.TestEnv
 acmePath :: FilePath
 acmePath = "examples/acme/acme.mir.json"
 
--- | The independent review's near-Core document: a checked-in fixture
+-- | The near-Core document: a checked-in fixture
 -- whose root carries plausible @schema@\/@actions@\/@guarantees@
 -- members but none of the canonical root requirements.
 nearCorePath :: FilePath
@@ -240,7 +240,7 @@ schemaProfileChecks schemaOutcome =
   , check
       "a minimal draft 2020-12 schema passes the profile check"
       (checkSchemaValue minimalSchema == Right ())
-  , -- The independent review's permissive schema: inside the keyword
+  , -- A permissive in-profile schema: inside the keyword
     -- profile, so the profile check accepts it — but acceptance
     -- yields only (), never a CoreSchema, so it cannot be used to
     -- mint a StructurallyValid document.  bundledCoreSchema is the
@@ -978,7 +978,7 @@ commandChecks missingFileOutcome readmeOutcome =
   ]
 
 --------------------------------------------------------------------
--- The review's near-Core document against the canonical schema
+-- The near-Core document against the canonical schema
 --------------------------------------------------------------------
 
 -- | The near-Core fixture must be rejected structurally — for the
@@ -1031,13 +1031,13 @@ nearCoreChecks schema nearCoreBytes nearCoreOutcome =
 -- Schema provenance under data-directory overrides
 --------------------------------------------------------------------
 
--- | The review's substitution attack, pinned shut end to end: no
+-- | The schema-substitution attack, pinned shut end to end: no
 -- @mithril_ir_datadir@ value — nonexistent or pointing at a real
 -- directory containing an in-profile permissive schema — may alter
 -- the grammar validation uses, because 'bundledCoreSchema' is a
--- compile-time constant.  Under the pre-fix runtime lookup the
--- malicious half of this test minted a structurally \"valid\"
--- non-Core document; now the same setup must change nothing.
+-- compile-time constant.  A runtime package-data lookup would let the
+-- malicious half of this test mint a structurally \"valid\"
+-- non-Core document; the same setup must change nothing.
 schemaOverrideChecks :: IO [Check]
 schemaOverrideChecks = do
   variableBefore <- lookupEnv datadirVariable

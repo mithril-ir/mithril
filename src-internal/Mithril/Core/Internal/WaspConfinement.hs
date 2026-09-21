@@ -6,10 +6,10 @@
 -- and Profile v1 alike): given the regenerated bundle
 -- ("Mithril.Core.Internal.Wasp") and a snapshot of a source root
 -- (every entry, taken without following symbolic links and with hard
--- links classified — "Mithril.Core.Internal.WaspFilesystem" takes
--- it), decide deterministically whether the root is exactly the
--- closed profile the bundle instantiates, or — before a regeneration
--- — whether the root is one this tool owns and may replace.
+-- links classified; "Mithril.Core.Internal.WaspFilesystem" takes it),
+-- decide deterministically whether the root is exactly the closed
+-- profile the bundle instantiates, or, before a regeneration, whether
+-- the root is one this tool owns and may replace.
 --
 -- == The authority
 --
@@ -19,14 +19,12 @@
 -- and nothing else may exist in the root except the directories the
 -- managed paths require.  Missing, altered, hard-linked, and
 -- unexpected inputs are all violations.  The denylist scan below is
--- deliberately /not/ the authority — a file that differs from the
--- bundle or lies outside the inventory is already rejected; the scan
--- only labels /why/ a rejected file is dangerous (a second Prisma
+-- deliberately /not/ the authority: a file that differs from the
+-- bundle or lies outside the inventory is already rejected, and the
+-- scan only labels /why/ a rejected file is dangerous (a second Prisma
 -- import, a raw-query API, a database driver, dynamic code, an
 -- additional operation or server path, dependency or
 -- database-provider drift), so a reviewer sees the bypass by name.
---
--- == A directory outside the inventory is reported once
 --
 -- A directory the managed paths do not require — an installation or
 -- build tree (@node_modules@, @.wasp@, @dist@, @build@), a migrations
@@ -35,36 +33,32 @@
 -- by existing, whatever it holds.  It is reported once, at its own
 -- path, and nothing below it is enumerated: its files, links, hard
 -- links, and subdirectories add nothing to the verdict, and their
--- denylist labels are not produced.  So a root that ordinary Wasp
--- tooling has installed into names @node_modules@ once instead of
--- every installed file.  Nothing is thereby accepted that was not
--- accepted before: the directory entry itself remains a violation in
--- both modes, so the root is rejected exactly as before and the
--- collapse only removes redundant diagnostics.  The managed paths
--- are never affected, because every ancestor of a managed path is a
--- required directory; a managed file's own diagnostics (an edited
--- generated Action, dependency or provider drift, a link at its
--- path) are always reported.
+-- denylist labels are not produced, so the diagnostics stay bounded
+-- by the inventory and the entries outside such directories, never by
+-- the size of an installed tree.  The managed paths are never
+-- affected, because every ancestor of a managed path is a required
+-- directory; a managed file's own diagnostics (an edited generated
+-- Action, dependency or provider drift, a link at its path) are
+-- always reported.
 --
 -- == The snapshot itself is validated first
 --
 -- Before any path is looked up, every supplied snapshot path must be
 -- a canonical root-relative path (no leading separator, no empty,
 -- dot, or dot-dot component) and no two entries may name the same
--- path — neither literally nor after alias normalization.  A snapshot
+-- path, neither literally nor after alias normalization.  A snapshot
 -- violating this is rejected with those diagnostics alone, so no
 -- duplicate, aliased, or absolute entry can ever shadow, resolve, or
--- mask another; the result is independent of the entries' order.
+-- mask another, and the result is independent of the entries' order.
 --
--- == Ownership
+-- == Ownership and full checks
 --
 -- 'OwnershipCheck' is the rule a regeneration applies to an existing
 -- root before replacing it as a whole: an empty root may be
--- initialized; a nonempty root may be replaced only if it carries
--- one of exactly the two literal Mithril ownership markers — the
--- Profile-v0 marker or the Profile-v1 marker, byte-exact
+-- initialized; a nonempty root may be replaced only if it carries one
+-- of exactly the two literal Mithril ownership markers, byte-exact
 -- ('recognizedOwnershipMarkers'; no marker is parsed and no other
--- marker is recognized) — and holds nothing outside the fixed
+-- marker is recognized), and holds nothing outside the fixed
 -- inventory, which both profiles share (altered or missing managed
 -- files are recoverable and permitted).  An owned root of either
 -- profile may therefore be replaced by a regeneration of either
@@ -80,10 +74,8 @@
 -- as the other profile's marker so a reviewer sees the transition by
 -- name.
 --
--- Diagnostics are deterministic: path-labelled, sorted, deduplicated,
--- and bounded by the inventory and the entries outside any unexpected
--- directory, never by the size of an installed tree.  Paths are
--- root-relative with forward slashes.
+-- Diagnostics are deterministic: path-labelled, sorted, and
+-- deduplicated.  Paths are root-relative with forward slashes.
 module Mithril.Core.Internal.WaspConfinement
   ( -- * Root snapshots
     RootEntry (..)

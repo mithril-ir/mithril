@@ -10,44 +10,40 @@
 -- application bundle — the /Wasp Confinement Profile v0/ for a
 -- singleton rule-1 plan, or the /Wasp Confinement Profile v1/ for
 -- exactly the ordered rule-1, rule-2 case pair.  The public boundary
--- is exactly "Mithril.Core.Wasp"; the effectful filesystem boundary
--- is "Mithril.Core.Internal.WaspFilesystem" behind the CLI boundary
+-- is "Mithril.Core.Wasp"; the effectful filesystem boundary is
+-- "Mithril.Core.Internal.WaspFilesystem" behind the CLI boundary
 -- "Mithril.Command.Wasp"; the pure checker that decides whether a
 -- source-root snapshot is exactly a regenerated bundle is
 -- "Mithril.Core.Internal.WaspConfinement".
 --
 -- == What is generated
 --
--- Exactly the supported case shapes, and nothing else: a normal Wasp
--- 0.25.0 application whose complete security-sensitive input surface
--- is owned by this emitter —
+-- A normal Wasp 0.25.0 application whose complete security-sensitive
+-- input surface is owned by this emitter, fourteen managed files for
+-- either profile: the TypeScript specification @main.wasp.ts@ (Wasp
+-- username-and-password auth, exactly one route\/page, and exactly
+-- the profile's authenticated Actions); the Prisma schema (PostgreSQL
+-- datasource; the subject and scope entities as models, the authority
+-- relation as a model with a composite identity over its endpoint
+-- fields and the payload enum as its payload column, the enum's
+-- values in declaration order); the one generated operation file
+-- @src\/mithrilCaseAction.ts@ exporting every Action of the profile;
+-- the dependency, TypeScript, and Vite configuration; the Wasp root
+-- marker, the Mithril ownership marker, and the ignore files; a
+-- minimal static client page (the client shell Wasp requires); and a
+-- deterministic generation manifest.
 --
--- * the TypeScript specification @main.wasp.ts@ (Wasp auth with
---   username-and-password, exactly one route\/page, and exactly the
---   profile's authenticated Actions: one for Profile v0, two for
---   Profile v1);
--- * the Prisma schema (PostgreSQL datasource; the subject and scope
---   entities as models, the authority relation as a model with a
---   composite identity over its endpoint fields and the payload enum
---   as its payload column, the authority enum's values in declaration
---   order);
--- * the generated TypeScript Action implementation(s), all in the one
---   file @src\/mithrilCaseAction.ts@: every Action requires Wasp
---   authentication, uses @context.user.id@ as the only identity,
---   validates its arguments, reads the authority tuples it needs and
---   performs the authorized @SetRelation@ write inside one Prisma
---   interactive transaction at @Serializable@ isolation, retries
---   Prisma @P2034@ conflicts a fixed number of times, and uses no raw
---   SQL — the rule-1 Action @mithrilCaseAction@ changes /another/
---   subject's authority behind the privilege floor, the actor\/subject
---   guard, and the subject-membership condition; the rule-2 Action
---   @mithrilSelfUpdateAction@ (Profile v1 only) writes the actor's
---   /own/ tuple to a payload bounded by the actor's pre-state
---   authority, with no caller-supplied subject argument;
--- * the dependency configuration, TypeScript and Vite configuration,
---   the Wasp root marker, the Mithril ownership marker, the ignore
---   files, a minimal static client page (the client shell Wasp
---   requires), and a deterministic generation manifest.
+-- Every Action requires Wasp authentication, uses @context.user.id@ as
+-- the only identity, validates its arguments, reads the authority
+-- tuples it needs and performs the authorized @SetRelation@ write
+-- inside one Prisma interactive transaction at @Serializable@
+-- isolation, retries Prisma @P2034@ conflicts a fixed number of
+-- times, and uses no raw SQL.  The rule-1 Action @mithrilCaseAction@
+-- changes /another/ subject's authority behind the privilege floor,
+-- the actor\/subject guard, and the subject-membership condition; the
+-- rule-2 Action @mithrilSelfUpdateAction@ (Profile v1 only) writes
+-- the actor's /own/ tuple to a payload bounded by the actor's
+-- pre-state authority, with no caller-supplied subject argument.
 --
 -- == Target names: fixed, role-derived, collision-free
 --
@@ -63,30 +59,28 @@
 -- identity (@Value0@, @Value1@, …).  The fixed names ('targetNames')
 -- are pairwise distinct and are none of Prisma's scalar type names,
 -- Prisma's reserved names, Wasp's injected auth models, or
--- JavaScript\/TypeScript reserved words — pinned by the test suite
--- against closed lists.  Consequently the closed path inventory
+-- JavaScript\/TypeScript reserved words (pinned by the test suite
+-- against closed lists), so the closed path inventory
 -- ('managedPaths') never depends on authored names or on the profile,
 -- a supported document renders whatever its declarations are called,
 -- and renaming a declaration or an action changes only metadata.
---
--- Authored names and identities survive as display metadata only:
--- inside line comments (through 'quotedName', which escapes every
--- control character, so no name can end a comment line) and inside
--- JSON\/JavaScript string literals (through 'jsStringLiteral').  The
+-- Authored names survive as display metadata only: inside line
+-- comments through 'quotedName', which escapes every control
+-- character so no name can end a comment line, and inside
+-- JSON\/JavaScript string literals through 'jsStringLiteral'.  The
 -- manifest states the complete authored-to-target mapping explicitly.
 --
 -- == The profile dispatcher
 --
--- Two profiles exist, and the dispatcher ('selectWaspProfile')
--- selects one from the /ordered rule tags/ of the shared plan's case
--- collection alone — it never inspects or reclassifies the normalized
--- model, and it never re-derives a rule:
+-- 'selectWaspProfile' selects a profile from the /ordered rule tags/
+-- of the shared plan's case collection alone; it never inspects or
+-- reclassifies the normalized model and never re-derives a rule:
 --
 -- * @[rule 1]@ — exactly one change-other case — selects Profile v0
 --   ('WaspProfileV0Plan');
--- * @[rule 1, rule 2]@ — exactly two cases, the change-other case at
---   position 0 and the bounded-self-update case at position 1, in
---   authored order — selects Profile v1 ('WaspProfileV1Plan');
+-- * @[rule 1, rule 2]@ — the change-other case at position 0 and the
+--   bounded-self-update case at position 1, in authored order —
+--   selects Profile v1 ('WaspProfileV1Plan');
 -- * every other sequence — a singleton rule-2 case, two rule-1 cases,
 --   the reversed pair, two rule-2 cases, three or more cases — is
 --   refused as unsupported to every profile, with deterministic
@@ -100,30 +94,23 @@
 -- by the plan, the bundle, its summary, its ownership marker, and its
 -- manifest; no later stage infers it from an operation count.
 --
--- == Determinism
+-- == Determinism and provenance
 --
--- The bundle depends only on the plan — never on file paths, time,
--- or environment — every file uses Unix line endings, no tabs, and
--- exactly one final newline.  The same normalized document always
--- renders to the same bytes, and the golden fixture of each profile
--- is pinned byte-for-byte against a fresh bundle.
---
--- == Provenance
---
--- Rendering is pure lowering of a /supported/ shape: constructing the
--- plan attests that the shared support gate accepted the normalized
--- document, nothing more.  No rendered byte claims that the document
--- was verified; whether the production verifier reported VERIFIED
--- before generation is stated only by the generating command's
--- report ("Mithril.Command.Wasp", which requires it).
---
--- == Scope
---
--- Arbitrary multi-case lowering is not implemented: Profile v1 lowers
--- exactly the ordered rule-1, rule-2 pair and nothing wider.  The
--- templates below and this lowering are trusted components; see
--- @docs\/current-scope.md@ for the supported slice, result meanings,
--- trusted components, and explicit non-claims.
+-- The bundle depends only on the plan — never on file paths, time, or
+-- environment — every file uses Unix line endings, no tabs, and
+-- exactly one final newline, and each profile's golden fixture is
+-- pinned byte-for-byte against a fresh bundle.  Rendering is pure
+-- lowering of a /supported/ shape: constructing the plan attests that
+-- the shared support gate accepted the normalized document, nothing
+-- more.  No rendered byte claims that the document was verified;
+-- whether the production verifier reported VERIFIED before generation
+-- is stated only by the generating command's report
+-- ("Mithril.Command.Wasp", which requires it).  Arbitrary multi-case
+-- lowering is not implemented: Profile v1 lowers exactly the ordered
+-- rule-1, rule-2 pair and nothing wider.  The templates below and
+-- this lowering are trusted components; @docs\/current-scope.md@
+-- states the supported slice, result meanings, trusted components,
+-- and explicit non-claims.
 module Mithril.Core.Internal.Wasp
   ( -- * The bundle
     WaspBundle

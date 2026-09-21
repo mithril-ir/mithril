@@ -5,153 +5,59 @@
 -- pure bundle renderer and the pure confinement checker),
 -- "Mithril.Core.Internal.WaspFilesystem" (the root validation and the
 -- whole-directory installation with its fault-injection seam), and
--- "Mithril.Command.Wasp" (the effectful generate\/check boundary).
+-- "Mithril.Command.Wasp" (the effectful generate\/check boundary),
+-- for both Wasp Confinement Profiles and the transitions between
+-- them.
 --
--- The groups:
+-- The check names describe the individual cases; the machinery
+-- behind them is what makes them subtle:
 --
--- 1. /Golden and determinism./  The supported fixture renders to the
---    same bundle twice, from a relocated copy of the Core file, and —
---    through the real generate command — into two different roots
---    with byte-identical files; the committed fixture
---    @test\/fixtures\/wasp-acme@ is exactly the fresh bundle; the
---    closed path inventory is pinned literally and is the profile's
---    fixed inventory; every file is UTF-8 with Unix line endings, no
---    tabs, and one final newline; the manifest parses with its
---    pinned authored-to-target mapping; the generated Action carries
---    the pinned semantics literally; no rendered byte claims
---    verification; and the fixed target names are pinned against
---    closed lists of Prisma scalar and reserved names, Wasp's
---    injected auth models, and JavaScript\/TypeScript reserved words.
---
--- 2. /One shared plan./  The emitter is the composition of the shared
---    support gate, the profile dispatcher over the tagged case
---    collection (Profile v0 for the exact singleton rule-1 plan,
---    Profile v1 for the exact ordered rule-1, rule-2 pair, every
---    other plan refused), and the (total) plan renderer; the unsafe
---    variant and the canonical Acme document are refused with exactly
---    the verifier's reasons; a singleton rule-2 document and every
---    other verified plan outside both profiles are refused by the
---    dispatcher before any lowering or destination access; and an
---    independent oracle — the declarations read straight out of the
---    authored JSON — agrees with both the generated Agda module and
---    the Wasp manifest, so the verifier and the emitter provably
---    selected the same declarations.
---
--- 3. /Plan-consumption inventory./  Every shared field, every field
---    of the tagged per-case plan, and every rule-1 and rule-2 fact is
---    classified (consumed by both consumers, Wasp-only, verifier-only,
---    or a Wasp gate diagnostic anchor), every Wasp-rendered field has
---    field-specific mutations whose expected output fragments are
---    absent from the base bundle and present in the mutated one, and
---    the rule-2 facts are never pretended to be Wasp-consumed.
---
--- 4. /Renamed models./  Each committed rename variant (a scope entity
---    named @String@, Wasp's auth model names, reserved words, acronyms
---    and digits, boundary leading characters, authored names spelled
---    like the target names, and a declaration order differing from
---    the ranking) renders with the fixed inventory and fixed
---    identifiers, its authored names confined to comments, string
---    metadata, and the manifest; hostile plan names cannot inject
---    syntax.
---
--- 5. /Pure confinement./  The exact snapshot is confined; missing,
---    altered, hard-linked, linked, and unexpected entries are
---    rejected with pinned labels; the ownership rule accepts empty
---    and owned roots (altered or missing managed files included) and
---    refuses unmarked roots, unmanaged paths, links, and hard links;
---    duplicate, aliased, absolute, and dot-relative snapshot entries
---    are rejected with pinned diagnostics independent of input order;
---    a directory outside the inventory (a populated @node_modules@,
---    every other specially identified toolchain tree, an unknown
---    directory, one nested under @src@, a directory at a managed
---    path) is reported once with none of its descendants enumerated,
---    while the lockfile, an edited generated Action, and links inside
---    the required directories keep their exact labels.
---
--- 6. /Confinement attack matrix./  Through the real filesystem
---    boundary, a fresh copy of the fixture is mutated one bypass at a
---    time and each attack fails @check@ with exactly its sorted,
---    deduplicated diagnostics — including hard-linked root and nested
---    files, and populated installation, build, and migration trees
---    reported once per directory.
---
--- 7. /Installation./  Through the installation seam with injected
---    faults and through the command: absent, empty, valid, altered,
---    partial, unmanaged, toolchain-populated, unmarked, read-only,
---    regular-file, symlink,
---    stale-staging, failed-swap (with and without a successful
---    rollback), symlink-before-revalidation, and root- and
---    parent-replacement destinations each leave the complete old or
---    the complete new bundle; an occupied backup sibling path — an
---    empty or nonempty directory, a regular file, a symbolic link
---    (dangling or not), whether present before staging or appearing
---    between staging and the pre-rename revalidation — refuses the
---    installation with the old root and the occupying entry untouched
---    byte-for-byte and type-for-type; the staging directory and the
---    installed root carry the private permission bits 0700 even under
---    umask 000 (and a regeneration over a wide-mode owned root
---    installs a private root); lexical dot, dot-dot, empty,
---    trailing-separator, and ancestor-link paths are refused;
---    regeneration after a supported rename and after a meaningful
---    byte change succeeds without any manual step.
---
--- 8. /Command outcomes./  Reports, exit classifications, and the
---    unsupported\/invalid paths through the command.
---
--- 9. /Profile v1 golden./  The two-case fixture renders the Wasp
---    Confinement Profile v1: the committed fixture
---    @test\/fixtures\/wasp-acme-self-update@ is exactly the fresh
---    bundle over exactly the fourteen Profile-v0 paths; the one
---    operation file exports both Actions, the rule-1 Action's code
---    lines being exactly Profile v0's; the rule-2 Action's semantics,
---    the two-Action specification, the format-1 manifest with its
---    ordered operations array, the explicit profile identity, the
---    distinct literal markers, and the summary are pinned.
---
--- 10. /Profile dispatcher./  The ordered rule tags select Profile v0
---    (@[rule 1]@) or Profile v1 (@[rule 1, rule 2]@); a singleton
---    rule-2 case, two rule-1 cases, the reversed pair, two rule-2
---    cases, three and four cases are refused with exact reasons at
---    exact paths, through the emitter and — with zero destination
---    access, proven against a destination trap that fails every
---    resolution, read-only inspection, or mutation deterministically
---    (its positive controls: both commands on both supported
---    documents fail on it), as well as against absent, unrelated,
---    and owned roots of both profiles — through the command; retagged
---    and swapped plans prove the dispatcher reads only the tags.
---
--- 11. /Profile-v1 plan consumption./  The Profile-v1 inventory (the
---    case position and the rule-2 fact become consumed) and a
---    field-specific mutation table over the shared facts and both
---    cases.
---
--- 12. /Profile-v1 renames and hostile names./  Every committed rename
---    variant extended in memory by a bounded self-update action; the
---    hostile-name regression over both cases.
---
--- 13. /Profile-v1 confinement./  Exact snapshots, the cross-profile
---    full checks with their exact violations, replacement ownership
---    of both literal markers (and only those), and the labelling of
---    missing or additional Actions.
---
--- 14. /Transitions./  v0 → v1 and v1 → v0 through the installation
---    seam and the command: whole-root replacement, recovery, refusals
---    without mutation, atomic failure with rollback, private mode,
---    and no staging or backup leftovers.
---
--- 15. /Profile-v1 command outcomes./  The committed fixture's checks
---    in both directions and the pinned Profile-v1 reports, with the
---    Profile-v0 reports unchanged.
---
--- 16. /The frozen compatibility surface./  The pre-Profile-v1
---    construction and matching surface — the legacy
---    @WaspBundleSummary@ record view with its three selectors and
---    the two-argument @WaspNotConfined@ outcome — keeps its pinned
---    semantics (legacy construction builds the Profile-v0 singleton;
---    legacy matching projects operation 0 and hides nothing from the
---    complete view; a match over the four pre-Profile-v1
---    constructors is exhaustive) next to the trusted complete views
---    the CLI reports.
+-- * /Goldens and determinism./  Each profile's committed fixture
+--   (@test\/fixtures\/wasp-acme@, @test\/fixtures\/wasp-acme-self-update@)
+--   must be exactly a fresh bundle, and bundles rendered from
+--   relocated copies and into different roots must be byte-identical.
+--   The fixed target names are pinned against closed lists of Prisma
+--   scalar and reserved names, Wasp's injected auth models, and
+--   JavaScript\/TypeScript reserved words; the committed rename
+--   variants and hostile plan names show that authored names reach
+--   only comments, string metadata, and the manifest.
+-- * /One shared plan./  An independent oracle — the declarations read
+--   straight out of the authored JSON — must agree with both the
+--   generated Agda module and the Wasp manifest, so the verifier and
+--   the emitter provably selected the same declarations.  The
+--   plan-consumption inventories classify every plan field as
+--   consumed by both consumers, by one of them, or as a diagnostic
+--   anchor, with field-specific mutations proving each consumption.
+-- * /The dispatcher reads only the tags./  Retagged and swapped plans
+--   prove that profile selection depends on the ordered rule tags
+--   alone.  Refusals are proven to touch no destination against a
+--   trap that fails every resolution, inspection, or mutation
+--   deterministically (its positive controls: both commands on both
+--   supported documents fail on it).
+-- * /Confinement./  Pure snapshots and a real-filesystem attack matrix
+--   (a fresh copy of the fixture mutated one bypass at a time) must
+--   fail with exactly their sorted, deduplicated diagnostics; a
+--   directory outside the inventory is reported once with none of
+--   its descendants enumerated; duplicate, aliased, absolute, and
+--   dot-relative snapshot entries are rejected independently of input
+--   order; and the cross-profile checks name the other profile's
+--   marker.
+-- * /Installation./  Through the seam with injected faults and
+--   through the command, every destination shape (absent, empty,
+--   valid, altered, partial, unmanaged, toolchain-populated,
+--   unmarked, read-only, regular-file, symlink, stale staging, failed
+--   swap with and without rollback, a root or parent replaced before
+--   the final revalidation, an occupied backup sibling of any kind)
+--   must leave the complete old or the complete new bundle, and the
+--   staging directory and installed root must carry the private
+--   permission bits 0700 even under umask 000.
+-- * /The frozen compatibility surface./  The legacy
+--   @WaspBundleSummary@ record view with its three selectors and the
+--   two-argument @WaspNotConfined@ outcome keep their pinned
+--   semantics next to the complete profile-aware views the CLI
+--   reports: legacy construction builds the Profile-v0 singleton, and
+--   legacy matching projects operation 0 and hides nothing from the
+--   complete view.
 module Mithril.CoreWaspTests
   ( tests
   ) where
@@ -4996,7 +4902,7 @@ compatibilityChecks baseBundle v1Bundle =
           && summaryOperations legacyRecord == changeOtherOperationSummary :| []
       )
   , check
-      "compatibility: the six legacy selectors of the Profile-v0 summary are the former singleton values"
+      "compatibility: the six legacy selectors of the Profile-v0 summary are the legacy singleton values"
       ( summaryModelName v0Rendered == "Acme"
           && summaryGuarantee v0Rendered == "NoSelfPrivilegeEscalation"
           && summaryCaseAction v0Rendered == "Membership.changeRole"

@@ -17,14 +17,14 @@
 -- the two supported proof rules, rule 1 (/change-other/) or rule 2
 -- (/bounded self-update/).  The shared support gate
 -- ("Mithril.Core.Internal.NspeSupportPlan") states the exact rules;
--- see @docs\/current-scope.md@ for the supported slice, result
--- meanings, trusted components, and explicit non-claims.  Every
+-- @docs\/current-scope.md@ is the canonical ledger of the supported
+-- slice, result meanings, trusted components, and non-claims.  Every
 -- authored case is classified independently in authored order and
 -- tagged with its rule; one case outside both rules makes the whole
 -- obligation unsupported.  The gate inspects stored identities and
--- evidence structurally: it never compares raw JSON bytes,
+-- evidence structurally — it never compares raw JSON bytes,
 -- recognizes file names, hashes the model, repeats parsing,
--- resolution, or type inference, or evaluates policy, and it
+-- resolution, or type inference, or evaluates policy — and it
 -- deliberately rejects semantically equivalent but differently
 -- authored shapes as unsupported.
 --
@@ -51,7 +51,7 @@
 --   case with its position, rule, action, and checked theorem
 --   inventory ('VerifiedCase').
 -- * 'VerificationUnsupported': the normalized document lies outside
---   the supported slice.  Decided by the pure gate before any checker
+--   the supported slice, decided by the pure gate before any checker
 --   runs, with non-empty, deterministic, sorted, deduplicated
 --   reasons.  A document selecting no guarantees is unsupported,
 --   never vacuously verified.
