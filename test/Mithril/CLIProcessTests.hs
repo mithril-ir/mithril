@@ -36,10 +36,15 @@ import Data.List (intercalate, isInfixOf, isPrefixOf, sort)
 import System.Directory
   ( canonicalizePath
   , createDirectory
+  , createDirectoryIfMissing
+  , createFileLink
+  , doesDirectoryExist
   , doesPathExist
   , getPermissions
+  , getSymbolicLinkTarget
   , getTemporaryDirectory
   , listDirectory
+  , pathIsSymbolicLink
   , removeDirectory
   , removeDirectoryRecursive
   , removeFile
@@ -50,7 +55,7 @@ import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
 import System.IO (hClose, openTempFile)
-import System.Posix.Files (fileMode, getSymbolicLinkStatus)
+import System.Posix.Files (createLink, fileMode, getSymbolicLinkStatus)
 import System.Process
   ( CreateProcess (..)
   , proc
@@ -1073,6 +1078,13 @@ waspProcessChecks = do
   writeFile (collisionRoot </> "notes.txt") "keep\n"
   collision <- invokeMithril ["wasp", "generate", nspePath, collisionRoot]
   collisionEntries <- listDirectory collisionRoot
+  let toolchainRoot = scratch </> "toolchain"
+  _ <- invokeMithril ["wasp", "generate", nspePath, toolchainRoot]
+  populateToolchain toolchainRoot
+  toolchainBefore <- treeListing toolchainRoot
+  toolchainChecked <- invokeMithril ["wasp", "check", nspePath, toolchainRoot]
+  toolchainGenerate <- invokeMithril ["wasp", "generate", nspePath, toolchainRoot]
+  toolchainAfter <- treeListing toolchainRoot
   trailingGenerate <- invokeMithril ["wasp", "generate", nspePath, neverCreated ++ "/"]
   neverCreatedAfterTrailing <- doesPathExist neverCreated
   trailingCheck <- invokeMithril ["wasp", "check", nspePath, waspFixtureRoot ++ "/"]
@@ -1197,6 +1209,16 @@ waspProcessChecks = do
             && collisionEntries == ["notes.txt"]
         )
     , check
+        "wasp check of a generated root that ordinary Wasp tooling has installed into exits 4 with one line per toolchain directory (its contents never enumerated) and the lockfile"
+        ( toolchainChecked == (ExitFailure 4, toolchainReport toolchainRoot, "")
+            && length toolchainBefore > 90
+        )
+    , check
+        "wasp generate over that root refuses with exit 4, the same bounded report, and mutates nothing"
+        ( toolchainGenerate == (ExitFailure 4, toolchainReport toolchainRoot, "")
+            && toolchainAfter == toolchainBefore
+        )
+    , check
         "a trailing separator on an absolute root is an unusable root with exit 1 and creates nothing"
         ( trailingGenerate == (ExitFailure 1, "", neverCreated ++ "/: unusable Wasp root\n  " ++ emptyComponentReason ++ "\n")
             && not neverCreatedAfterTrailing
@@ -1304,7 +1326,7 @@ waspProcessChecks = do
                  \ exactly Agda 2.8.0\n  reported: Agda version 2.7.0\n"
                )
             && afterVerifierFailure == fixtureBytes
-            && sort scratchEntries == ["app", "fake-agda", "occupied", "self-update-parent", "sentinel", "singleton-parent", "singleton-rule2.mir.json", "umask-app"]
+            && sort scratchEntries == ["app", "fake-agda", "occupied", "self-update-parent", "sentinel", "singleton-parent", "singleton-rule2.mir.json", "toolchain", "umask-app"]
         )
     ]
   where
@@ -1313,6 +1335,74 @@ waspProcessChecks = do
     permissionBitsOf path = do
       metadata <- getSymbolicLinkStatus path
       pure (fileMode metadata .&. 0o777)
+    -- The exact NOT CONFINED report of a generated root that ordinary
+    -- Wasp tooling has installed into: one line per toolchain
+    -- directory, none of their contents, and the lockfile.
+    toolchainReport root =
+      root
+        ++ ": NOT CONFINED (Wasp Confinement Profile v0)\n\
+           \  .wasp: installation and build outputs (node_modules, .wasp) are not part of the clean source profile\n\
+           \  migrations: deployable migrations are not part of the clean source profile (migrate only in a temporary copy)\n\
+           \  node_modules: installation and build outputs (node_modules, .wasp) are not part of the clean source profile\n\
+           \  package-lock.json: a dependency lockfile is not part of the clean source profile (dependency drift)\n"
+
+-- | Leave a generated root the way ordinary Wasp tooling does: a
+-- populated @node_modules@ (nested packages, forty scripts full of
+-- denylisted tokens, a prisma-importing module, a @.bin@
+-- symbolic-link farm with a path escape, a hard-linked pair, a nested
+-- @node_modules@), a @.wasp@ build output, a migrations directory,
+-- and a lockfile.
+populateToolchain :: FilePath -> IO ()
+populateToolchain root = do
+  let nodeModules = root </> "node_modules"
+      package = nodeModules </> "@scope" </> "pkg"
+  createDirectoryIfMissing True (nodeModules </> ".bin")
+  createDirectoryIfMissing True (nodeModules </> "left-pad")
+  createDirectoryIfMissing True (package </> "lib")
+  createDirectoryIfMissing True (package </> "node_modules" </> "inner")
+  createDirectoryIfMissing True (root </> ".wasp" </> "out" </> "server")
+  createDirectoryIfMissing True (root </> "migrations" </> "20260921_init")
+  mapM_
+    ( \i -> do
+        writeFile (nodeModules </> "left-pad" </> ("file" ++ show i ++ ".js")) "const fs = require(\"fs\");\nmodule.exports = () => eval(\"1\");\n"
+        writeFile (package </> "lib" </> ("pkg" ++ show i ++ ".json")) ("{\"name\":\"pkg" ++ show i ++ "\"}\n")
+    )
+    [1 .. 40 :: Int]
+  writeFile (package </> "lib" </> "index.ts") "import { prisma } from \"wasp/server\";\nexport const leak = () => prisma.$queryRaw`select 1`;\n"
+  writeFile (package </> "package.json") "{ \"dependencies\": { \"pg\": \"8.0.0\" } }\n"
+  writeFile (package </> "node_modules" </> "inner" </> "index.js") "module.exports = require(\"child_process\");\n"
+  createFileLink "../left-pad/file1.js" (nodeModules </> ".bin" </> "left-pad")
+  createFileLink "/etc/hostname" (nodeModules </> ".bin" </> "escape")
+  writeFile (nodeModules </> "left-pad" </> "shared.txt") "shared\n"
+  createLink (nodeModules </> "left-pad" </> "shared.txt") (nodeModules </> "left-pad" </> "shared-link.txt")
+  writeFile (root </> ".wasp" </> "out" </> "server" </> "index.js") "generated\n"
+  writeFile (root </> "migrations" </> "20260921_init" </> "migration.sql") "create table x;\n"
+  writeFile (root </> "package-lock.json") "{}\n"
+
+-- | Every entry below a directory, sorted, without following
+-- anything: a symbolic link by its target, a directory by a marker,
+-- a regular file by its bytes — so two listings compare equal exactly
+-- when the tree is untouched.
+treeListing :: FilePath -> IO [(FilePath, String)]
+treeListing root = sort <$> walk ""
+  where
+    walk relative = do
+      names <- listDirectory (if null relative then root else root </> relative)
+      concat <$> mapM (\name -> entry (if null relative then name else relative </> name)) names
+    entry relativePath = do
+      let fullPath = root </> relativePath
+      isLink <- pathIsSymbolicLink fullPath
+      if isLink
+        then do
+          target <- getSymbolicLinkTarget fullPath
+          pure [(relativePath, "link -> " ++ target)]
+        else do
+          isDirectory <- doesDirectoryExist fullPath
+          if isDirectory
+            then ((relativePath, "directory") :) <$> walk relativePath
+            else do
+              bytes <- ByteString.readFile fullPath
+              pure [(relativePath, "file " ++ show bytes)]
 
 -- | Replace the first occurrence of a substring.
 replaceOnce :: String -> String -> String -> String

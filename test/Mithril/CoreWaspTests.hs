@@ -60,17 +60,25 @@
 --    and owned roots (altered or missing managed files included) and
 --    refuses unmarked roots, unmanaged paths, links, and hard links;
 --    duplicate, aliased, absolute, and dot-relative snapshot entries
---    are rejected with pinned diagnostics independent of input order.
+--    are rejected with pinned diagnostics independent of input order;
+--    a directory outside the inventory (a populated @node_modules@,
+--    every other specially identified toolchain tree, an unknown
+--    directory, one nested under @src@, a directory at a managed
+--    path) is reported once with none of its descendants enumerated,
+--    while the lockfile, an edited generated Action, and links inside
+--    the required directories keep their exact labels.
 --
 -- 6. /Confinement attack matrix./  Through the real filesystem
 --    boundary, a fresh copy of the fixture is mutated one bypass at a
 --    time and each attack fails @check@ with exactly its sorted,
 --    deduplicated diagnostics — including hard-linked root and nested
---    files.
+--    files, and populated installation, build, and migration trees
+--    reported once per directory.
 --
 -- 7. /Installation./  Through the installation seam with injected
 --    faults and through the command: absent, empty, valid, altered,
---    partial, unmanaged, unmarked, read-only, regular-file, symlink,
+--    partial, unmanaged, toolchain-populated, unmarked, read-only,
+--    regular-file, symlink,
 --    stale-staging, failed-swap (with and without a successful
 --    rollback), symlink-before-revalidation, and root- and
 --    parent-replacement destinations each leave the complete old or
@@ -1641,6 +1649,59 @@ snapshotOf bundle =
   RootEntry "src" Directory
     : [RootEntry path (RegularFile bytes) | (path, bytes) <- bundleBytes bundle]
 
+installOutputsMessage, buildOutputsMessage, migrationsMessage, unexpectedDirectoryMessage :: Text
+installOutputsMessage = "installation and build outputs (node_modules, .wasp) are not part of the clean source profile"
+buildOutputsMessage = "build outputs and version-control directories are not part of the clean source profile"
+migrationsMessage = "deployable migrations are not part of the clean source profile (migrate only in a temporary copy)"
+unexpectedDirectoryMessage = "an unexpected directory is not part of the closed path inventory"
+
+nodeModulesViolation :: ConfinementViolation
+nodeModulesViolation = ConfinementViolation "node_modules" installOutputsMessage
+
+lockfileEntry :: RootEntry
+lockfileEntry = RootEntry "package-lock.json" (RegularFile "{}\n")
+
+lockfileViolation :: ConfinementViolation
+lockfileViolation = ConfinementViolation "package-lock.json" "a dependency lockfile is not part of the clean source profile (dependency drift)"
+
+-- | A populated tree below a directory outside the inventory: a
+-- nested directory, scripts full of denylisted tokens (one of them
+-- importing prisma), a symbolic link, a hard link, a nested
+-- @node_modules@ declaring a database driver, and a foreign entry —
+-- everything whose diagnostics the directory's own violation must
+-- absorb.
+populatedTree :: FilePath -> [RootEntry]
+populatedTree dir =
+  [ RootEntry dir Directory
+  , RootEntry (dir <> "/nested") Directory
+  , RootEntry (dir <> "/nested/index.js") (RegularFile "module.exports = require(\"child_process\"); eval(\"1\");\n")
+  , RootEntry (dir <> "/nested/direct.ts") (RegularFile "import { prisma } from \"wasp/server\";\nexport const x = prisma.$queryRaw`select 1`;\n")
+  , RootEntry (dir <> "/escape") SymbolicLink
+  , RootEntry (dir <> "/shared.txt") HardLinkedFile
+  , RootEntry (dir <> "/node_modules") Directory
+  , RootEntry (dir <> "/node_modules/inner") Directory
+  , RootEntry (dir <> "/node_modules/inner/package.json") (RegularFile "{ \"dependencies\": { \"pg\": \"8.0.0\" } }\n")
+  , RootEntry (dir <> "/device") OtherEntry
+  ]
+
+-- | A @node_modules@ tree the way an ordinary install leaves it: the
+-- populated tree plus a @.bin@ symbolic-link farm, a scoped package,
+-- and two hundred scripts full of denylisted tokens.
+populatedNodeModules :: [RootEntry]
+populatedNodeModules =
+  populatedTree "node_modules"
+    <> [ RootEntry "node_modules/.bin" Directory
+       , RootEntry "node_modules/.bin/left-pad" SymbolicLink
+       , RootEntry "node_modules/.bin/tsc" SymbolicLink
+       , RootEntry "node_modules/@scope" Directory
+       , RootEntry "node_modules/@scope/pkg" Directory
+       , RootEntry "node_modules/@scope/pkg/package.json" (RegularFile "{ \"main\": \"index.js\" }\n")
+       , RootEntry "node_modules/left-pad" Directory
+       ]
+    <> [ RootEntry ("node_modules/left-pad/file" <> show i <> ".js") (RegularFile "const fs = require(\"fs\");\nmodule.exports = () => eval(\"1\");\n")
+       | i <- [1 .. 200 :: Int]
+       ]
+
 markerViolation :: ConfinementViolation
 markerViolation =
   ConfinementViolation
@@ -1823,7 +1884,7 @@ pureConfinementChecks bundle =
              ]
       )
   , check
-      "build outputs, migrations, lockfiles, environment files, and foreign directories are rejected by name"
+      "build outputs, migrations, lockfiles, environment files, and foreign directories are rejected by name (a directory once, its migration file not enumerated)"
       ( checkWaspConfinement
           FullCheck
           bundle
@@ -1844,7 +1905,6 @@ pureConfinementChecks bundle =
              , ConfinementViolation "dist" "build outputs and version-control directories are not part of the clean source profile"
              , ConfinementViolation "docs" "an unexpected directory is not part of the closed path inventory"
              , ConfinementViolation "migrations" "deployable migrations are not part of the clean source profile (migrate only in a temporary copy)"
-             , ConfinementViolation "migrations/init.sql" "an unexpected file is not part of the closed path inventory"
              , ConfinementViolation "node_modules" "installation and build outputs (node_modules, .wasp) are not part of the clean source profile"
              , ConfinementViolation "package-lock.json" "a dependency lockfile is not part of the clean source profile (dependency drift)"
              , ConfinementViolation "src/device" "an unsupported filesystem entry (neither a regular file nor a directory) is not allowed inside the confined source root"
@@ -1870,6 +1930,69 @@ pureConfinementChecks bundle =
              , ConfinementViolation "zzz.txt" "an unexpected file is not part of the closed path inventory"
              ]
       )
+  , check
+      "a populated node_modules tree is reported once, in both modes and in either input order, with none of its descendants enumerated"
+      ( checkWaspConfinement FullCheck bundle (snapshotOf bundle <> populatedNodeModules) == [nodeModulesViolation]
+          && checkWaspConfinement OwnershipCheck bundle (snapshotOf bundle <> populatedNodeModules) == [nodeModulesViolation]
+          && checkWaspConfinement FullCheck bundle (populatedNodeModules <> snapshotOf bundle) == [nodeModulesViolation]
+          && checkWaspConfinement OwnershipCheck bundle (reverse populatedNodeModules <> snapshotOf bundle) == [nodeModulesViolation]
+      )
+  , check
+      "the lockfile beside a populated node_modules tree stays an explicit violation in both modes"
+      ( checkWaspConfinement FullCheck bundle (snapshotOf bundle <> populatedNodeModules <> [lockfileEntry]) == [nodeModulesViolation, lockfileViolation]
+          && checkWaspConfinement OwnershipCheck bundle (snapshotOf bundle <> populatedNodeModules <> [lockfileEntry]) == [nodeModulesViolation, lockfileViolation]
+      )
+  , check
+      "every specially identified toolchain tree, an unknown directory, and an unexpected directory nested under src are each reported once as the nearest violating directory, while a file directly under src keeps its label"
+      ( checkWaspConfinement
+          FullCheck
+          bundle
+          ( snapshotOf bundle
+              <> concatMap populatedTree [".wasp", "dist", "build", ".git", "migrations", "docs", "src/lib"]
+              <> [RootEntry "src/extra.ts" (RegularFile "export const extra = 1;\n")]
+          )
+          == [ ConfinementViolation ".git" buildOutputsMessage
+             , ConfinementViolation ".wasp" installOutputsMessage
+             , ConfinementViolation "build" buildOutputsMessage
+             , ConfinementViolation "dist" buildOutputsMessage
+             , ConfinementViolation "docs" unexpectedDirectoryMessage
+             , ConfinementViolation "migrations" migrationsMessage
+             , ConfinementViolation "src/extra.ts" "an additional server-capable source file is not part of the closed path inventory"
+             , ConfinementViolation "src/lib" unexpectedDirectoryMessage
+             ]
+      )
+  , check
+      "an edited generated Action beside a populated node_modules tree keeps its precise diagnostic and its bypass labels"
+      ( checkWaspConfinement
+          FullCheck
+          bundle
+          (replaceEntry operationFile (RegularFile (fileOf bundle operationFile <> "\nconst x = await prisma.$queryRaw`select 1`;\n")) (snapshotOf bundle) <> populatedNodeModules)
+          == [ nodeModulesViolation
+             , ConfinementViolation (Text.pack operationFile) "the file uses a Prisma raw-query API ($queryRaw or $queryRawUnsafe)"
+             , ConfinementViolation (Text.pack operationFile) "the generated Action differs from the regenerated bundle (edited generated authorization)"
+             ]
+      )
+  , check
+      "links at a managed path and inside the required directories keep their labels beside a populated node_modules tree"
+      ( checkWaspConfinement
+          FullCheck
+          bundle
+          (replaceEntry ".npmrc" SymbolicLink (snapshotOf bundle) <> populatedNodeModules <> [RootEntry "src/escape.ts" SymbolicLink, RootEntry "src/linked.ts" HardLinkedFile])
+          == [ ConfinementViolation ".npmrc" "the managed path is occupied by a symbolic link, not the managed regular file"
+             , nodeModulesViolation
+             , ConfinementViolation "src/escape.ts" "a symbolic link is not allowed inside the confined source root (path escape)"
+             , ConfinementViolation "src/linked.ts" unmanagedHardLinkMessage
+             , ConfinementViolation "src/linked.ts" "an additional server-capable source file is not part of the closed path inventory"
+             ]
+      )
+  , check
+      "a managed path occupied by a directory is reported as occupied once; what it holds is not enumerated"
+      ( checkWaspConfinement
+          FullCheck
+          bundle
+          (replaceEntry "schema.prisma" Directory (snapshotOf bundle) <> [RootEntry "schema.prisma/schema.prisma" (RegularFile "datasource db { provider = \"sqlite\" }\n")])
+          == [ConfinementViolation "schema.prisma" "the managed path is occupied by a directory, not the managed regular file"]
+      )
   ]
 
 replaceEntry :: FilePath -> EntryKind -> [RootEntry] -> [RootEntry]
@@ -1877,6 +2000,37 @@ replaceEntry path kind entries =
   [ if entryPath entry == path then RootEntry path kind else entry
   | entry <- entries
   ]
+
+-- | Leave a generated root the way ordinary Wasp tooling does after
+-- an install, a build, and a migration: a populated @node_modules@
+-- (nested packages, forty scripts full of denylisted tokens, a
+-- prisma-importing module, a @.bin@ symbolic-link farm with a path
+-- escape, a hard-linked pair, a nested @node_modules@), a @.wasp@
+-- build output, a migrations directory, and a lockfile.  Everything
+-- lies inside the root, so no scratch file is needed beside it.
+populateToolchainTrees :: FilePath -> IO ()
+populateToolchainTrees root = do
+  let nodeModules = root </> "node_modules"
+      package = nodeModules </> "@scope" </> "pkg"
+  createDirectoryIfMissing True (nodeModules </> ".bin")
+  createDirectoryIfMissing True (nodeModules </> "left-pad")
+  createDirectoryIfMissing True (package </> "lib")
+  createDirectoryIfMissing True (package </> "node_modules" </> "inner")
+  createDirectoryIfMissing True (root </> ".wasp" </> "out" </> "server")
+  createDirectoryIfMissing True (root </> "migrations" </> "20260921_init")
+  forM_ [1 .. 40 :: Int] $ \i -> do
+    writeFile (nodeModules </> "left-pad" </> ("file" <> show i <> ".js")) "const fs = require(\"fs\");\nmodule.exports = () => eval(\"1\");\n"
+    writeFile (package </> "lib" </> ("pkg" <> show i <> ".json")) ("{\"name\":\"pkg" <> show i <> "\"}\n")
+  writeFile (package </> "lib" </> "index.ts") "import { prisma } from \"wasp/server\";\nexport const leak = () => prisma.$queryRaw`select 1`;\n"
+  writeFile (package </> "package.json") "{ \"dependencies\": { \"pg\": \"8.0.0\" } }\n"
+  writeFile (package </> "node_modules" </> "inner" </> "index.js") "module.exports = require(\"child_process\");\n"
+  createFileLink "../left-pad/file1.js" (nodeModules </> ".bin" </> "left-pad")
+  createFileLink "/etc/hostname" (nodeModules </> ".bin" </> "escape")
+  writeFile (nodeModules </> "left-pad" </> "shared.txt") "shared\n"
+  createLink (nodeModules </> "left-pad" </> "shared.txt") (nodeModules </> "left-pad" </> "shared-link.txt")
+  writeFile (root </> ".wasp" </> "out" </> "server" </> "index.js") "generated\n"
+  writeFile (root </> "migrations" </> "20260921_init" </> "migration.sql") "create table x;\n"
+  writeFile (root </> "package-lock.json") "{}\n"
 
 --------------------------------------------------------------------
 -- Group 6: the confinement attack matrix through the filesystem
@@ -1919,7 +2073,7 @@ confinementAttackChecks = do
          , check "a root that is a regular file is refused as unusable" fileRoot
          ]
   where
-    expectedAttackCount = 26
+    expectedAttackCount = 27
     op = Text.pack operationFile
     v path message = ConfinementViolation path message
     append path extra root = ByteString.appendFile (root </> path) extra
@@ -2059,9 +2213,7 @@ confinementAttackChecks = do
       , Attack
           "deployable migrations inside the root"
           (rootOnly (\root -> createDirectory (root </> "migrations") >> writeFile (root </> "migrations" </> "migration.sql") "alter table x;\n"))
-          [ v "migrations" "deployable migrations are not part of the clean source profile (migrate only in a temporary copy)"
-          , v "migrations/migration.sql" "an unexpected file is not part of the closed path inventory"
-          ]
+          [v "migrations" "deployable migrations are not part of the clean source profile (migrate only in a temporary copy)"]
       , Attack
           "installation and build outputs inside the root"
           ( rootOnly $ \root -> do
@@ -2074,6 +2226,14 @@ confinementAttackChecks = do
           , v ".wasp" "installation and build outputs (node_modules, .wasp) are not part of the clean source profile"
           , v "node_modules" "installation and build outputs (node_modules, .wasp) are not part of the clean source profile"
           , v "package-lock.json" "a dependency lockfile is not part of the clean source profile (dependency drift)"
+          ]
+      , Attack
+          "populated installation, build, and migration trees inside the root (ordinary Wasp tooling): each directory once, its contents never enumerated, the lockfile still named"
+          (rootOnly populateToolchainTrees)
+          [ v ".wasp" installOutputsMessage
+          , v "migrations" migrationsMessage
+          , nodeModulesViolation
+          , lockfileViolation
           ]
       , Attack
           "tampered manifest"
@@ -2157,6 +2317,27 @@ installationChecks bundle = do
     pure
       ( outcome == Left (InstallNotOwned (ConfinementViolation "notes.txt" "an unexpected file is not part of the closed path inventory" :| []))
           && before == after
+          && leftovers == ["app"]
+      )
+
+  toolchainTrees <- withScratchDirectory $ \scratch -> do
+    let root = scratch </> "app"
+    _ <- installBundle noInstallHooks bundle root
+    populateToolchainTrees root
+    before <- snapshotDirectory root
+    outcome <- installBundle noInstallHooks bundle root
+    after <- snapshotDirectory root
+    leftovers <- listDirectory scratch
+    pure
+      ( outcome
+          == Left
+            ( InstallNotOwned
+                ( ConfinementViolation ".wasp" installOutputsMessage
+                    :| [ConfinementViolation "migrations" migrationsMessage, nodeModulesViolation, lockfileViolation]
+                )
+            )
+          && before == after
+          && length before > 90
           && leftovers == ["app"]
       )
 
@@ -2624,6 +2805,7 @@ installationChecks bundle = do
     , check "install over an owned root with altered managed files recovers the complete bundle" altered
     , check "install over a partial owned root recovers the complete bundle" partial
     , check "install over an owned root holding an unmanaged path is refused without mutation" unmanaged
+    , check "install over an owned root holding populated installation, build, and migration trees is refused without mutation, each tree reported once" toolchainTrees
     , check "install over an unmarked nonempty root is refused without mutation" unmarked
     , check "install under a read-only parent fails at staging and leaves the old root complete (skipped as root)" readOnly
     , check "install onto a regular file is refused without mutation" regularFile
@@ -4357,6 +4539,11 @@ v1ConfinementChecks baseBundle v1Bundle =
       "Profile v1: an empty root reports every managed file missing"
       ( checkWaspConfinement FullCheck v1Bundle []
           == [ConfinementViolation (Text.pack path) "the managed file is missing" | path <- expectedInventory]
+      )
+  , check
+      "Profile v1: a populated node_modules tree beside the lockfile is reported once with the lockfile, in both modes"
+      ( checkWaspConfinement FullCheck v1Bundle (snapshotOf v1Bundle <> populatedNodeModules <> [lockfileEntry]) == [nodeModulesViolation, lockfileViolation]
+          && checkWaspConfinement OwnershipCheck v1Bundle (snapshotOf v1Bundle <> populatedNodeModules <> [lockfileEntry]) == [nodeModulesViolation, lockfileViolation]
       )
   , check
       "a valid Profile-v1 root is not confined against the Profile-v0 bundle: exactly the differing files, the other profile's marker named, and the additional Action labelled"
