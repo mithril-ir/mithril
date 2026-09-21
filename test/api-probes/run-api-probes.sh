@@ -298,9 +298,9 @@ else
 fi
 verify_policy probe-compatibility
 if [ "$compatibility_compiled" = no ]; then
-  fail "probe-compatibility did not compile; the adapter surface frozen before Profile v1 (the legacy WaspBundleSummary view, summaryCaseAction/summaryOperation/summaryRoute, the two-argument WaspNotConfined) no longer compiles for downstream source"
+  fail "probe-compatibility did not compile; the legacy adapter surface (the WaspBundleSummary view, summaryCaseAction/summaryOperation/summaryRoute, the two-argument WaspNotConfined) no longer compiles for downstream source"
 fi
-echo "ok: probe-compatibility compiles (the frozen pre-Profile-v1 adapter surface next to the Profile-v1 APIs)"
+echo "ok: probe-compatibility compiles (the legacy adapter surface next to the Profile-v1 APIs)"
 
 # expect NAME PATTERN...: NAME's effective warning policy is verified
 # first; then NAME must fail to build, and every PATTERN (grep -E)

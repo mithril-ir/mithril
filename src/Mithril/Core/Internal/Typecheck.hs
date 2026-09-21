@@ -25,6 +25,11 @@
 --
 -- == The typing judgment, construct by construct
 --
+-- This is the per-construct record the schema-evolution audit relies
+-- on (@docs\/compiler-architecture.md@): every construct of the
+-- resolved representation either has a judgment here or is stated to
+-- carry none.
+--
 -- /Value terms/: @Bool@ literals have type @Bool@; @Unit@ has type
 -- @Unit@; an @Enum@ term has its enum's type; an @Argument@ has its
 -- parameter's declared type; @Actor@ has type @EntityRef User@ (the
@@ -37,13 +42,13 @@
 -- type, and has type @Optional P@; @None@ has type @Optional P@ for
 -- its written payload type; @Some v@ has type @Optional T@ for the
 -- value type @T@ of @v@; @IsSome@ requires an @Optional@-typed
--- operand and has type @Bool@; @Equal@ requires its two operands to
--- have the same type — equality is total at every type, mirroring the
--- kernel semantics — and has type @Bool@; @LessOrEqual@ requires its
--- two operands to have the same /ordered/ type — @Enum E@ or
--- @Optional (Enum E)@ where @E@ declares an explicit order; absence
--- ranks as bottom — and has type @Bool@; @And@, @Or@, and @Not@
--- require @Bool@ operands and have type @Bool@.
+-- operand; @Equal@ requires its two operands to have the same type
+-- (equality is total at every type, mirroring the kernel semantics);
+-- @LessOrEqual@ requires its two operands to have the same /ordered/
+-- type, @Enum E@ or @Optional (Enum E)@ where @E@ declares an
+-- explicit order, with absence ranking as bottom; @And@, @Or@, and
+-- @Not@ require @Bool@ operands.  @IsSome@, @Equal@, @LessOrEqual@,
+-- @And@, @Or@, and @Not@ have type @Bool@.
 --
 -- /Actions/: every allow policy — the @AuthenticatedOnly@ policy and
 -- both branches of an @AnyPrincipal@ allow pair — must have type
@@ -62,37 +67,31 @@
 -- unique and resolve to the enum's own values, so the one remaining
 -- judgment is completeness: every declared value must appear.
 --
--- /Guarantees/: @AuthenticatedMutation@ carries no terms — its truth
+-- /Guarantees/: @AuthenticatedMutation@ carries no terms; its truth
 -- is a verification question, not a typing one.  A @TenantIsolation@
--- guarantee's structural access relation must be well-formed for the
--- guarantee's semantics: the access relation must be binary, its
--- subject and tenant endpoints must be distinct (two distinct
--- endpoints of a binary relation cover it; the relation's payload is
--- Unit or an enum exactly as any relation may declare, and defines no
--- action-specific floor — presence of a tuple is the baseline tenant
--- access, and role floors remain in action allow policies), and the
--- subject endpoint must reference the distinguished @User@ entity
--- (the subject of the obligation is the acting principal).  Each
--- case's actor-free terms are checked in its named action's parameter
--- environment: the @tenant@ term must be an entity reference of
--- exactly the tenant endpoint's entity, and the @protected@ term must
--- have type @Bool@ — the recorded parameters of the unverified
--- obligation that an allowed, protected request's principal holds
--- the @(subject = principal, tenant = tenant)@ tuple of the access
--- relation.  A case may name an @AnyPrincipal@ action:
--- whether its anonymous allow branch violates the obligation is a
--- verifier question, not a typing one.  A
--- @NoSelfPrivilegeEscalation@ authority must be well-formed for the
--- guarantee's semantics: its subject endpoint must reference the
--- distinguished @User@ entity (the subject of a self-escalation is
--- the acting principal), its scope endpoint must be distinct from the
--- subject endpoint, subject and scope together must cover the
--- relation's endpoints (an arity-two relation needs the one scope
--- endpoint), and the relation's payload must be exactly the
--- @payloadOrder@ enum, which must declare an order.  Each case must
+-- guarantee's structural access relation must be binary with
+-- distinct subject and tenant endpoints (which then cover it; the
+-- payload is Unit or an enum exactly as any relation may declare and
+-- defines no action-specific floor, since presence of a tuple is the
+-- baseline tenant access and role floors remain in action allow
+-- policies), and its subject endpoint must reference the
+-- distinguished @User@ entity.  Each case's actor-free terms are
+-- checked in its named action's parameter environment: the @tenant@
+-- term must be an entity reference of exactly the tenant endpoint's
+-- entity, and the @protected@ term must have type @Bool@; these are
+-- the recorded parameters of the unverified obligation that an
+-- allowed, protected request's principal holds the
+-- @(subject = principal, tenant = tenant)@ tuple of the access
+-- relation.  A case may name an @AnyPrincipal@ action; whether its
+-- anonymous allow branch violates the obligation is a verifier
+-- question.  A @NoSelfPrivilegeEscalation@ authority must have its
+-- subject endpoint reference the distinguished @User@ entity, a scope
+-- endpoint distinct from it, subject and scope together covering the
+-- relation's endpoints, and a payload that is exactly the
+-- @payloadOrder@ enum, which must declare an order; each case must
 -- name exactly as many scope terms as the authority names scope
--- endpoints, and each scope term — checked in the case's action
--- environment — must have the scope endpoint's entity type.
+-- endpoints, each of the scope endpoint's entity type in the case's
+-- action environment.
 --
 -- Nothing else in the model carries an unchecked typing obligation:
 -- attribute, parameter, relation-payload, and endpoint declared types
@@ -103,66 +102,55 @@
 -- == Diagnostics, cascades, and failure classification
 --
 -- After successful name resolution every term's type is determined
--- bottom-up — no user error can leave a type unknown — so every
--- reported violation is an independent fact about the document:
--- violations aggregate across the whole model without cascades, at
--- the retained source path of the offending node (this module
--- constructs no paths; it only reads the ones the representation
--- carries).  The deliberate dependent-check suppressions are
--- endpoint-position compatibility under an arity mismatch (the
--- pairing would be a guess), authority endpoint coverage under a
--- duplicated scope endpoint (the duplicate is the root cause),
--- tenant-access endpoint distinctness under a non-binary access
--- relation (with a single endpoint the coincidence is forced), and
--- the tenant-entity comparison for a tenant term that is not an
--- entity reference at all (there is no entity to compare).  A
--- root cause is likewise reported once: an enum without a declared
--- order is reported at each @LessOrEqual@ site that needs the order,
--- while an /incomplete/ declared order is reported only at the enum
--- declaration — the comparison sites see a declared order and stay
--- quiet.
+-- bottom-up, so every reported violation is an independent fact
+-- about the document: violations aggregate across the whole model
+-- without cascades, at the retained source path of the offending
+-- node (this module constructs no paths).  The deliberate
+-- dependent-check suppressions are endpoint-position compatibility
+-- under an arity mismatch, authority endpoint coverage under a
+-- duplicated scope endpoint, tenant-access endpoint distinctness
+-- under a non-binary access relation, and the tenant-entity
+-- comparison for a tenant term that is not an entity reference at
+-- all.  A root cause is likewise reported once: an enum without a
+-- declared order is reported at each @LessOrEqual@ site that needs
+-- the order, while an /incomplete/ declared order is reported only
+-- at the enum declaration.
 --
 -- Shapes the typechecker cannot interpret — identifier references
 -- outside the model, owner disagreements, an @Actor@ term that does
 -- not carry the distinguished entity, a stored distinguished-@User@
--- anchor whose declaration drifted after resolution (renamed,
--- duplicated, or displaced; 'checkDistinguishedUser') — are
--- impossible after successful name resolution.  They are
--- 'TypecheckerInvariantViolation's
--- (frontend drift or a resolver\/typechecker bug, exit status 2),
--- kept apart from user 'TypeViolation's and dominating them, and the
--- checker is total: it walks the whole model, aggregates everything
--- it finds, and never throws.
---
--- What this stage does /not/ establish: no policy evaluation, no
--- guarantee truth, no normalization, no verification.  A well-typed
--- document is not typed /normalized/ Core and proves no property.
+-- anchor whose declaration drifted after resolution
+-- ('checkDistinguishedUser') — are impossible after successful name
+-- resolution.  They are 'TypecheckerInvariantViolation's (frontend
+-- drift or a resolver\/typechecker bug, exit status 2), kept apart
+-- from user 'TypeViolation's and dominating them.  The checker is
+-- total: it walks the whole model, aggregates everything it finds,
+-- and never throws.  A well-typed document is not typed /normalized/
+-- Core and proves no property: no policy evaluation, guarantee
+-- truth, normalization, or verification happens here.
 --
 -- == The shared type-query facility
 --
--- Besides the checking pass, this module exposes — to this package
--- only — the total elaboration/type-query facility the normalizer
+-- Besides the checking pass, this module exposes, to this package
+-- only, the total elaboration\/type-query facility the normalizer
 -- ("Mithril.Core.Internal.Normalize") consumes: the model
 -- 'Signature', the term-checking 'Env', the 'inferValue' and
--- 'inferPolicy' judgments, and the ordered-operand classification
--- 'orderedVerdict' (built on the shared 'orderedPolicyType' shape and
--- yielding the 'Mithril.Core.Internal.StaticType.OrderedType'
--- evidence a normalized comparison stores), plus the signature
--- lookups and term-path projections the normalizer's walk needs, and
--- the distinguished @User@ identity ('signatureUser') — the
--- resolver's stored designation, validated by the checking pass
--- ('checkDistinguishedUser') and never reselected by name here —
--- which the normalizer carries into the normalized model as the one
--- independent anchor later backends check subject and @Actor@
--- evidence against.
--- Together with the declared-type projections of
--- "Mithril.Core.Internal.StaticType" this is the one statement of the
--- Core v0 typing judgment: the normalizer calls these functions to
--- obtain every determined type and every ordered reading and never
--- restates an inference or classification rule, and on a document
--- that already passed 'checkModel' the queries report no user
--- violation — any problem they do report there is reclassified by the
--- normalizer as an internal error.
+-- 'inferPolicy' judgments, the ordered-operand classification
+-- 'orderedVerdict' (yielding the
+-- 'Mithril.Core.Internal.StaticType.OrderedType' evidence a
+-- normalized comparison stores), the signature lookups and term-path
+-- projections the normalizer's walk needs, and the distinguished
+-- @User@ identity ('signatureUser': the resolver's stored
+-- designation, validated by 'checkDistinguishedUser' and never
+-- reselected by name here), which the normalizer carries into the
+-- normalized model as the one independent anchor later backends
+-- check subject and @Actor@ evidence against.  Together with the
+-- declared-type projections of "Mithril.Core.Internal.StaticType"
+-- this is the one statement of the Core v0 typing judgment: the
+-- normalizer restates no inference or classification rule, and on a
+-- document that already passed 'checkModel' the queries report no
+-- user violation (any problem they do report there is reclassified
+-- by the normalizer as an internal error).
 module Mithril.Core.Internal.Typecheck
   ( -- * Violations
     TypeViolation (..)

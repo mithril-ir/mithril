@@ -18,61 +18,35 @@
 -- normalizer propagates it ('N.modelUserEntity').  These checks
 -- establish that chain on the real S0 fixture, through the public
 -- stage functions, with the package-private sublibrary as the
--- white-box seam:
+-- white-box seam.
 --
--- 1. /User not at position zero./  The fixture with its entity list
---    rotated so that @User@ is the last declaration is a valid
---    authored document: the resolver stores the nonzero identity,
---    every @Actor@ term resolves to it, typing mints @Typed@ (which,
---    under the @Actor@ judgment, means the signature carried exactly
---    that identity), normalization propagates it, the shared support
---    gate anchors the subject at it, the injected checker runner is
---    invoked exactly once, the production verifier reports VERIFIED,
---    and the contract renders.  A forged copy whose stored anchor
---    says entity 0 (@Organization@ after the rotation) is refused at
---    the anchor: the signature reads the stored identity, never a
---    name scan (which would have found @User@ at entity 2 and passed).
--- 2. /Post-resolution name relocation./  Renaming the anchored
---    declaration away from @User@ and another declaration to @User@
---    — with or without redirecting every subject, parameter, and
---    @Actor@ evidence coherently to the renamed entity (the forgery a
---    name-scanning signature accepted, normalized, and verified) — is
---    refused as internal invariants naming the retained anchor
---    (entity 0); the renamed entity is never selected, and the forged
---    @Typed@ stage is refused by the normalizer's gate too.
--- 3. /Duplicate descriptive names./  A second (or a second and a
---    third) declaration named @User@ after resolution is refused
---    deterministically; no first match wins.
--- 4. /Stored-anchor metadata drift./  The anchored declaration
---    renamed, the stored identity moved to another declaration, the
---    stored identity naming no declaration, and the anchored
---    declaration's stored identifier displaced from its position are
---    each refused at the anchor, without any search for a replacement
---    — the displaced identifier by exactly the one missing-anchor
---    invariant, at the typechecker and at the normalizer's gate.
--- 5. /Actor inventories./  The @Actor@ occurrences the checks above
---    reason about are enumerated by two equivalent path-aware
---    traversals of the resolved and the normalized representation
---    ('resolvedActors', 'normalizedActors') that match every
---    term-bearing constructor explicitly.  Their exact path\/identity
---    inventories are pinned as literal lists — on S0 unrotated and
---    rotated, on the syntax-coverage fixture (lookup endpoints,
---    value-policy operands, an attribute-projection source, the
---    authenticated branch of an @AnyPrincipal@ pair, a @CreateEntity@
---    initializer), on a variant of it whose @Observe@ result and
---    @DeleteEntity@ target are the @Actor@, and on the two-case
---    fixture (a @SetRelation@ endpoint binding) — at both stages, so
---    the normalizer is shown to neither drop, add, reorder, nor
---    redirect an @Actor@ occurrence, and no check here can pass on an
---    empty or truncated traversal.
+-- What makes them subtle: a signature that re-selected @User@ by
+-- scanning names would accept every forgery here.  With the entity
+-- list rotated so that @User@ is the last declaration, a forged anchor
+-- naming entity 0 must be refused at the anchor rather than repaired
+-- by a name scan; renaming the anchored declaration away from @User@
+-- and another declaration to @User@, with or without every subject,
+-- parameter, and @Actor@ evidence redirected coherently to the
+-- renamed entity, must be refused as an internal invariant naming the
+-- retained anchor, at the typechecker and at the normalizer's gate
+-- alike; a second declaration named @User@ after resolution must be
+-- refused deterministically, with no first match winning; and every
+-- stored-anchor metadata drift (the anchored declaration renamed, the
+-- identity moved to another declaration, the identity naming no
+-- declaration, the anchored identifier displaced from its position)
+-- must be refused without any search for a replacement.
 --
--- The downstream regressions over the normalized anchor (coherent
--- subject redirection, zero checker invocations, no production
--- checker discovery, Wasp 'RenderInvariant', S0 and the rule-2
--- fixtures still VERIFIED, the Wasp profile dispatcher lowering S0 as
--- Profile v0 and R1 as Profile v1 while refusing every other plan)
--- stay in "Mithril.CoreVerificationTests" and
--- "Mithril.CoreWaspTests".
+-- The @Actor@ occurrences the checks reason about are enumerated by
+-- two equivalent path-aware traversals of the resolved and the
+-- normalized representation ('resolvedActors', 'normalizedActors')
+-- that match every term-bearing constructor explicitly, and their
+-- exact path\/identity inventories are pinned as literal lists at both
+-- stages, so the normalizer is shown to neither drop, add, reorder,
+-- nor redirect an @Actor@ occurrence, and no check here can pass on an
+-- empty or truncated traversal.  The downstream regressions over the
+-- normalized anchor (coherent subject redirection through the
+-- verifier and the Wasp emitter) stay in
+-- "Mithril.CoreVerificationTests" and "Mithril.CoreWaspTests".
 module Mithril.DistinguishedUserTests
   ( tests
   ) where

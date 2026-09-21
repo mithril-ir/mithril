@@ -416,15 +416,15 @@ no-ghost-caller-cap : ∀ {m Γ d} {γ : Args Γ} {act : Action m Γ d}
                     → ¬ Capability acme (authC ghostUser) γ act
 no-ghost-caller-cap {m = m} cap = ghost-caller-invalid m (caller-ok cap)
 
--- In particular the old counterexample — executing joinOrg as a ghost
--- user, which would have installed a Membership tuple with a nonexistent
+-- In particular the ghost-caller counterexample — executing joinOrg as a
+-- ghost user, which would install a Membership tuple with a nonexistent
 -- endpoint — is unconstructable.
 no-ghost-join-cap : ¬ Capability acme (authC ghostUser) orgArg joinOrg
 no-ghost-join-cap = no-ghost-caller-cap
 
 -- Ghost ARGUMENTS are equally dead.  `addMember` writes Membership at two
 -- argument endpoints under a deliberately permissive policy — precisely
--- the shape of the reviewed counterexample.
+-- the shape in which a ghost endpoint could enter the relation.
 UOCtx : Ctx
 UOCtx = ∅ ▸ entity UserK ▸ entity OrgK
 

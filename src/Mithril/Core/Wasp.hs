@@ -6,9 +6,10 @@
 -- Confinement Profile v0/ for a singleton rule-1 (change-other) plan,
 -- the /Wasp Confinement Profile v1/ for the exact ordered rule-1,
 -- rule-2 (bounded self-update) case pair — and the pure confinement
--- check of a source-root snapshot against a regenerated bundle.  See
--- @docs\/current-scope.md@ for the supported slice, result meanings,
--- trusted components, and explicit non-claims.
+-- check of a source-root snapshot against a regenerated bundle.
+-- @docs\/current-scope.md@ is the canonical ledger of the supported
+-- slice, result meanings, trusted components, and explicit
+-- non-claims.
 --
 -- > normalized opaque document
 -- >   -> shared NoSelfPrivilegeEscalation support gate
@@ -20,24 +21,34 @@
 -- @'Mithril.Core.Validation.CoreDocument' 'Normalized'@ — the stage
 -- indexes make a merely typed (or earlier) document unacceptable,
 -- pinned by downstream compile-fail probes — and consumes the same
--- shared support plan the verifier consumes: a document the verifier
--- reports unsupported is unsupported here for exactly the same
--- deterministic reasons.  The profile dispatch is fail-closed and
--- decided over the plan's ordered rule tags alone, never by
+-- shared support plan the verifier consumes, so a document the
+-- verifier reports unsupported is unsupported here for exactly the
+-- same deterministic reasons.  The profile dispatch is fail-closed
+-- and decided over the plan's ordered rule tags alone, never by
 -- re-deriving a rule or inspecting the normalized model: exactly
 -- @[rule 1]@ selects Profile v0, exactly @[rule 1, rule 2]@ in
 -- authored order selects Profile v1, and every other plan is
 -- refused.  Wasp profile support is narrower than verifier support,
 -- so a document the verifier reports VERIFIED can still be
 -- UNSUPPORTED here.  The emitter restates no part of the
--- supported-shape classification and no ranking logic of its own.
--- The bundle depends only on the document's content, never on its
--- filesystem path, time, or environment; the same normalized
--- document always renders to the same bytes.  The selected profile
--- is an explicit identity ('WaspProfile') carried by the bundle and
--- its summary — never inferred from an operation count — and the
--- summary lists the complete ordered operation list, one operation
--- per lowered case.
+-- supported-shape classification and has no ranking logic of its
+-- own: the finite role ranking is the materialized enum ranking of
+-- the normalized Core as validated by the shared plan.  The bundle
+-- depends only on the document's content, never on its filesystem
+-- path, time, or environment.  The selected profile is an explicit
+-- identity ('WaspProfile') carried by the bundle and its summary —
+-- never inferred from an operation count — and the summary lists the
+-- complete ordered operation list, one operation per lowered case.
+--
+-- The bundle is a closed Wasp application whose complete
+-- server-capable and security-sensitive input surface is owned by
+-- the generator.  Every identifier, filename, and route is a fixed
+-- target name derived from the role a declaration plays in the
+-- supported shape, never an authored name, so no authored name can
+-- collide with a target name and the closed path inventory is the
+-- same for every supported document and for both profiles
+-- ("Mithril.Core.Internal.Wasp" states the generated files and the
+-- naming rule).
 --
 -- == Provenance
 --
@@ -47,20 +58,6 @@
 -- provenance belongs to the CLI generation path
 -- ("Mithril.Command.Wasp"), which requires the production verifier
 -- to report VERIFIED before rendering and states so in its report.
---
--- == The bundle
---
--- A closed Wasp application whose complete server-capable and
--- security-sensitive input surface is owned by the generator.  Every
--- identifier, filename, and route is a fixed target name derived
--- from the role a declaration plays in the supported shape, never an
--- authored name, so no authored name can collide with a target name
--- and the closed path inventory is the same for every supported
--- document and for both profiles ("Mithril.Core.Internal.Wasp"
--- states the generated files and the naming rule).  The finite role
--- ranking is the materialized enum ranking of the normalized Core as
--- validated by the shared plan; no independent ordering authority
--- exists.
 --
 -- == The summary's compatibility view
 --
@@ -89,23 +86,19 @@
 -- else present except the directories the managed paths require; a
 -- symbolic link or a hard link anywhere is a violation, and
 -- installation, build, migration, and environment outputs are never
--- part of the source root.  The snapshot itself is validated first
--- (non-canonical, absolute, aliased, or duplicate entries are
--- rejected before any lookup).  A denylist scan labels /why/ an
--- already-rejected file is dangerous but is never the authority.  A
--- directory the inventory does not require (an installation, build,
--- migration, or version-control tree, or any unknown directory) is
--- reported once, and nothing below it is enumerated: its existence
--- alone decides, so the verdict is unchanged and the diagnostics stay
--- bounded whatever it holds.
--- 'OwnershipCheck' is the replacement rule a regeneration applies to
--- an existing root: it recognizes exactly the two literal ownership
--- markers over the common inventory, so an owned root of either
--- profile is replaced as a whole by a regeneration of either profile;
--- 'FullCheck' requires the exact marker, inventory, and bytes of the
--- requested profile.  The confinement claim is a statement about the
--- source root as walked at the time of checking or generation;
--- @docs\/current-scope.md@ states what lies outside it.
+-- part of the source root.  The snapshot itself is validated first,
+-- a denylist scan only labels /why/ an already-rejected file is
+-- dangerous, and a directory the inventory does not require is
+-- reported once with nothing below it enumerated.  'OwnershipCheck'
+-- is the replacement rule a regeneration applies to an existing root
+-- (exactly the two literal ownership markers over the common
+-- inventory, so an owned root of either profile is replaced as a
+-- whole by a regeneration of either profile); 'FullCheck' requires
+-- the exact marker, inventory, and bytes of the requested profile.
+-- "Mithril.Core.Internal.WaspConfinement" states the rules.  The
+-- confinement claim is a statement about the source root as walked
+-- at the time of checking or generation; @docs\/current-scope.md@
+-- states what lies outside it.
 --
 -- == Failure classification
 --

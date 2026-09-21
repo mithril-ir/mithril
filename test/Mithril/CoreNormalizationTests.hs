@@ -19,7 +19,7 @@
 -- the normalizer can observe.
 --
 -- The forged-document checks are the deliberate exception to the
--- public-pipeline rule, and they pin this milestone's central
+-- public-pipeline rule, and they pin the normalizer's central
 -- classification requirement: normalization has /no user-error
 -- class/.  The public pipeline cannot produce a typed document whose
 -- model breaks the normalizer's invariants (the typechecker would

@@ -7,29 +7,29 @@
 -- commands, shared by both profiles (the dispatcher has already
 -- selected one before this module is reached): root-path validation,
 -- the no-follow snapshot walker, and the complete-root installation
--- of a rendered bundle of either profile, including the whole-root
--- transitions between them (an owned root of either profile is
--- replaced as a whole by a regeneration of either profile).  The CLI
--- boundary "Mithril.Command.Wasp" is the only production caller; the
--- test suite reaches the installation seam directly to inject faults
+-- of a rendered bundle, including the whole-root transitions between
+-- the profiles (an owned root of either profile is replaced as a
+-- whole by a regeneration of either profile).  The CLI boundary
+-- "Mithril.Command.Wasp" is the only production caller; the test
+-- suite reaches the installation seam directly to inject faults
 -- between its steps.
 --
 -- == Root paths
 --
--- A root argument is accepted only in lexical form.  The grammar is:
--- the path is not empty; split on @\/@, every component is non-empty
--- and is neither @.@ nor @..@ — so a doubled separator, a trailing
--- separator (@app\/@, @\/tmp\/app\/@), @.\/app@, and @sub\/..\/app@ are
--- all rejected, never normalized; the one-character path @\/@ is the
--- filesystem root and is refused as a destination in its own right
--- (its separator is not a trailing empty component).  A relative path
--- is joined to the current working directory, giving one well-defined
--- absolute lexical path.  Every existing ancestor of that path is then
--- inspected with no-follow metadata ('getSymbolicLinkStatus'): an
--- ancestor that is a symbolic link or not a directory refuses the
--- root.  The final root must be a directory or absent; a symbolic
--- link (dangling or not) or any other entry refuses it.  The same
--- validation runs again immediately before the directory swap.
+-- A root argument is accepted only in lexical form: the path is not
+-- empty and, split on @\/@, every component is non-empty and neither
+-- @.@ nor @..@.  A doubled separator, a trailing separator (@app\/@,
+-- @\/tmp\/app\/@), @.\/app@, and @sub\/..\/app@ are all rejected, never
+-- normalized, and the one-character path @\/@ is the filesystem root
+-- and is refused as a destination in its own right (its separator is
+-- not a trailing empty component).  A relative path is joined to the
+-- current working directory, giving one well-defined absolute lexical
+-- path.  Every existing ancestor of that path is then inspected with
+-- no-follow metadata ('getSymbolicLinkStatus'): an ancestor that is a
+-- symbolic link or not a directory refuses the root.  The final root
+-- must be a directory or absent; a symbolic link (dangling or not) or
+-- any other entry refuses it.  The same validation runs again
+-- immediately before the directory swap.
 --
 -- == Snapshots
 --
@@ -44,8 +44,8 @@
 --
 -- 'installBundle' never writes into a live root file by file.  It
 --
--- 1. inspects the destination and decides: absent or empty — the
---    root may be initialized; nonempty — it may be replaced only if
+-- 1. inspects the destination and decides: absent or empty, the root
+--    may be initialized; nonempty, it may be replaced only if
 --    'Mithril.Core.Internal.WaspConfinement.OwnershipCheck' accepts
 --    the snapshot (the byte-exact ownership marker, nothing outside
 --    the fixed inventory, no links, no foreign entries); otherwise it
@@ -56,13 +56,14 @@
 --    a symbolic link (dangling or not), anything else — refuses the
 --    installation, and is never removed, replaced, truncated,
 --    followed, or otherwise touched;
--- 3. creates the sibling staging directory (@\<root\>.mithril-wasp-staging@,
---    refused if it already exists) atomically with the requested
---    private mode @0700@ ('System.Posix.Directory.createDirectory'
---    — never created wider and narrowed afterwards), verifies from its
---    no-follow metadata that the permission bits are exactly @0700@
---    (so an unusual umask cannot leave it wider or narrower), and
---    writes every file of the new bundle there;
+-- 3. creates the sibling staging directory
+--    (@\<root\>.mithril-wasp-staging@, refused if it already exists)
+--    atomically with the requested private mode @0700@
+--    ('System.Posix.Directory.createDirectory', never created wider
+--    and narrowed afterwards), verifies from its no-follow metadata
+--    that the permission bits are exactly @0700@ (so an unusual umask
+--    cannot leave it wider or narrower), and writes every file of the
+--    new bundle there;
 -- 4. runs the full confinement check against the staging directory;
 -- 5. revalidates the ancestors and the destination, and re-decides;
 -- 6. when an existing root must be moved aside, repeats the no-follow
@@ -72,41 +73,38 @@
 --    if that fails, renames the backup back into place;
 -- 8. removes the backup only after the new root is installed; and
 -- 9. runs the full confinement check over the installed root and
---    confirms the installed root — the very directory created in
+--    confirms that the installed root — the very directory created in
 --    step 3, so it keeps that mode across the rename — still has the
 --    private permission bits @0700@.
 --
 -- Every failure is classified with a stable operation label plus the
 -- classified I\/O error kind, names the backup or staging directory
 -- it had to leave behind, and leaves either the complete previous
--- root (in place, or at the named backup) or the complete new root —
--- never a mixture — because the only mutations of the destination
--- are whole-directory renames.
+-- root (in place, or at the named backup) or the complete new root,
+-- never a mixture, because the only mutations of the destination are
+-- whole-directory renames.
 --
--- == Private mode: what it establishes
+-- == Private mode: what it establishes, and what is excluded
 --
 -- The staging directory and therefore the installed root carry the
 -- permission bits @0700@ regardless of the process umask (a
--- generation under @umask 000@ still yields a @0700@ root).  Other
--- unprivileged users of the machine therefore cannot traverse, read,
--- link into, or write below the staging tree or the installed root
--- while this tool works or afterwards; the files and the @src@
--- directory inside are created under the ambient umask, which is
--- sufficient because the root itself is not traversable by them.
--- Nothing is claimed against privileged users (root can traverse any
--- mode) or against a malicious process running as the same user,
--- which can chmod, rename, or replace the directories at will.
---
--- == Exclusions (stated, not claimed)
---
--- The validation is path-based: metadata is read by path before the
--- renames, not through descriptor-relative no-follow operations, so a
--- malicious same-user process racing this tool between a check and
--- the operation it guards — including between the second backup
--- absence check and the rename onto the backup path — is outside the
--- claim.  So are POSIX platforms other than the one exercised
--- (Linux): the metadata and the mode-requesting directory creation
--- come from the @unix@ package.
+-- generation under @umask 000@ still yields a @0700@ root), so other
+-- unprivileged users of the machine cannot traverse, read, link into,
+-- or write below the staging tree or the installed root while this
+-- tool works or afterwards; the files and the @src@ directory inside
+-- are created under the ambient umask, which is sufficient because
+-- the root itself is not traversable by them.  Nothing is claimed
+-- against privileged users (root can traverse any mode) or against a
+-- malicious process running as the same user, which can chmod,
+-- rename, or replace the directories at will.  The validation is
+-- path-based: metadata is read by path before the renames, not
+-- through descriptor-relative no-follow operations, so a malicious
+-- same-user process racing this tool between a check and the
+-- operation it guards — including between the second backup absence
+-- check and the rename onto the backup path — is outside the claim.
+-- So are POSIX platforms other than the one exercised (Linux): the
+-- metadata and the mode-requesting directory creation come from the
+-- @unix@ package.
 module Mithril.Core.Internal.WaspFilesystem
   ( -- * Root paths
     lexicalRootPath

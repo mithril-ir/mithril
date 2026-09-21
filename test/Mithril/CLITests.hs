@@ -1,7 +1,7 @@
 -- | Checks over the pure CLI boundary in "Mithril.CLI".
 --
 -- Every check calls the public surface directly; no CLI logic is
--- duplicated here.  The pre-existing bootstrap behaviors (no
+-- duplicated here.  The bootstrap behaviors (no
 -- arguments, help, short help, version, unknown arguments, extra
 -- arguments) are pinned alongside the @validate FILE@,
 -- @contract FILE@, @verify FILE@, @wasp --help@ / @wasp -h@,
@@ -263,7 +263,7 @@ helpChecks =
       "help never calls a result unsafe, dangerous, or a proof"
       (not (any (`isInfixOf` renderHelp) ["unsafe", "dangerous", "vulnerab", "proves"]))
   , check
-      "help no longer restates the scope ledger"
+      "help does not restate the scope ledger"
       ( not
           ( any
               (`isInfixOf` renderHelp)
@@ -373,7 +373,7 @@ waspHelpChecks =
       (renderHelp /= renderWaspHelp)
   ]
 
--- | Finding-5 regressions: user-controlled arguments inside usage
+-- | Argument-escaping regressions: user-controlled arguments inside usage
 -- errors are rendered through 'displayArgument', so control
 -- characters render visibly, quotes and backslashes cannot break the
 -- quoting convention, and every usage error keeps exactly two

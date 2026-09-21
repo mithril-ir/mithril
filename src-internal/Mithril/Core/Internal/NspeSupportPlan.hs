@@ -6,91 +6,50 @@
 --
 -- The one shared NoSelfPrivilegeEscalation support-plan facility: the
 -- deterministic support gate over the typed normalized representation
--- and the resolved plan it extracts.  It is the single statement of
--- the supported-shape classification, consumed by both backends of
--- typed normalized Core — the Agda verifier slice
+-- and the plan it extracts.  It is the single statement of the
+-- supported-shape classification, consumed unchanged by both backends
+-- of typed normalized Core — the Agda verifier slice
 -- ("Mithril.Core.Internal.Verify", behind "Mithril.Core.Verification")
 -- and the Wasp emitter ("Mithril.Core.Internal.Wasp", behind
 -- "Mithril.Core.Wasp").  Neither consumer restates any part of the
--- classification: the verifier transcribes the plan into the trusted
--- Agda kernel, the emitter lowers exactly the case shapes its profile
--- covers from the same tagged plan, and a document outside the rule
--- is unsupported to both for exactly the same deterministic reasons.
--- The plan is a typed value: an internal support witness
--- constructed by the handwritten Haskell support gate (not generated
--- code), and not a proof — it attests support only.
+-- classification, so a document outside the rule is unsupported to
+-- both for exactly the same deterministic reasons.  The plan is a
+-- typed value constructed by this handwritten gate (not generated
+-- code) and is a support witness only, not a proof.
 --
 -- == The support rule
 --
 -- Exactly one obligation family is supported: a document that selects
--- exactly one guarantee, a @NoSelfPrivilegeEscalation@ guarantee whose
--- non-empty case collection consists entirely of cases each matching
--- exactly one of the two supported proof rules below.  The shared
--- authority evidence is validated once for the whole guarantee:
+-- exactly one @NoSelfPrivilegeEscalation@ guarantee whose non-empty
+-- case collection consists entirely of cases each matching exactly
+-- one of two proof rules, rule 1 (/change-other/: three parameters,
+-- subject, scope, payload) or rule 2 (/bounded self-update/: two
+-- parameters, scope, payload).  The shared authority evidence is
+-- validated once for the whole guarantee: a binary relation whose
+-- subject endpoint is the distinguished @User@ entity and whose scope
+-- endpoint is a different entity, with a two-value payload enum
+-- carrying a materialized complete ranking, absence interpreted as
+-- bottom.  Every authored case is then classified independently, in
+-- authored order (never only the first case, never a case dropped,
+-- reordered, or deduplicated) and tagged with the rule it matched
+-- ('NspeCasePlan', 'NspeCaseMatch').  The exact parameter lists,
+-- effect bindings, case scopes, and allow policies of the two rules
+-- are the canonical ledger in @docs\/current-scope.md@; the rule
+-- matchers below are their one implementation.
 --
--- * the authority relation is binary, with the subject endpoint at
---   the distinguished @User@ entity — anchored to the identity the
---   normalized model carries independently for it
---   ('Normalized.modelUserEntity': the resolver's own designation,
---   validated by the typechecker and propagated by the normalizer),
---   never re-derived from an authored name, a declaration position,
---   the subject endpoint itself, or an @Actor@ term of a case — and
---   one scope endpoint at a different entity;
--- * the authority payload order is a two-value enum with a declared
---   (materialized) complete ranking, absence interpreted as bottom.
---
--- Every authored case is then classified independently, in authored
--- order — never only the first case, never with a case silently
--- dropped, reordered, or deduplicated — and tagged with the rule it
--- matched ('NspeCasePlan', 'NspeCaseMatch'):
---
--- /Rule 1, change-other/:
---
--- * the case action is @AuthenticatedOnly@ and declares exactly three
---   parameters in order: subject (@EntityRef@ of the subject
---   entity), scope (@EntityRef@ of the scope entity), payload (the
---   authority enum);
--- * the effect is @SetRelation@ on the authority relation, binding
---   the subject endpoint to exactly the subject parameter, the scope
---   endpoint to exactly the scope parameter, and the payload to
---   exactly the payload parameter;
--- * the case scope term is exactly the scope parameter; and
--- * the allow policy is exactly the conjunction
---   @And(LessOrEqual(Some(top authority value), Lookup(authority,
---   [Actor, scope parameter])), And(Not(Equal(Actor, subject
---   parameter)), IsSome(Lookup(authority, [subject parameter, scope
---   parameter]))))@ at the absence-as-bottom optional ordering of the
---   authority enum.
---
--- /Rule 2, bounded self-update/:
---
--- * the case action is @AuthenticatedOnly@ and declares exactly two
---   parameters in order: scope (@EntityRef@ of the scope entity),
---   payload (the authority enum);
--- * the effect is @SetRelation@ on the authority relation, binding
---   the subject endpoint to exactly @Actor@, the scope endpoint to
---   exactly the scope parameter, and the payload to exactly the
---   payload parameter;
--- * the case scope term is exactly the scope parameter; and
--- * the allow policy is exactly @LessOrEqual(Some(payload parameter),
---   Lookup(authority, [Actor, scope parameter]))@ at the
---   absence-as-bottom optional ordering of the authority enum — with
---   no further conjunct: an explicit @IsSome@ is redundant under
---   absence as bottom (a lifted value is never below an absent tuple)
---   and is deliberately not accepted.
---
--- The two rules are disjoint by declared arity — three parameters
--- against two — so the declared parameter count selects the one
--- candidate rule of a case deterministically, no case can match both
--- rules, and a case matching neither rule (any other arity, or a
--- mismatch against its candidate rule) makes the complete obligation
--- unsupported with reasons anchored at the offending case, action,
--- parameter, policy, effect, or case-scope site.  The gate inspects
--- stored identities and evidence structurally — it never compares raw
--- JSON bytes, recognizes filenames, hashes the model, reparses,
--- re-resolves, re-infers types, or evaluates policy — and it
--- deliberately rejects semantically equivalent but differently
--- authored shapes as unsupported.
+-- The two rules are disjoint by declared arity, so the declared
+-- parameter count selects the one candidate rule of a case
+-- deterministically, no case can match both, and a case matching
+-- neither makes the complete obligation unsupported with reasons
+-- anchored at the offending case, action, parameter, policy, effect,
+-- or case-scope site.  The gate inspects stored identities and
+-- evidence structurally — it never compares raw JSON bytes,
+-- recognizes filenames, hashes the model, reparses, re-resolves,
+-- re-infers types, or evaluates policy — and it deliberately rejects
+-- semantically equivalent but differently authored shapes as
+-- unsupported.  An explicit @IsSome@ conjunct in a rule-2 policy is
+-- redundant under absence as bottom (a lifted value is never below an
+-- absent tuple) and is deliberately not accepted.
 --
 -- == Identity preflight and the semantic anchor
 --
@@ -98,62 +57,59 @@
 -- canonical identity preflight ('canonicalDeclaration',
 -- 'canonicalChildren'): a reference resolves through its canonical
 -- declaration-list position, the recovered declaration's stored
--- self-identity must equal exactly the canonical identity the
--- reference names, and every owner-local child declaration (relation
--- endpoint, enum member, action parameter) must store exactly the
--- canonical identity derived from its already-validated owner
--- identity and its own declaration position.  Identity is validated
--- before types, ranking, bindings, policy shape, or names, and no
--- unvalidated stored self-identity is ever carried into
--- 'AuthorityFacts', support matching, name lookup, generated
--- evidence, or plan construction — so a stored identity drifted
--- coordinately with every stored reference later compared against it
--- still halts as an invariant violation before either consumer can
--- generate anything or launch any checker.  The subject entity is
--- additionally anchored semantically, not only canonically: the
--- entity the (validated) subject endpoint references must be exactly
--- the distinguished @User@ identity the normalized model carries, and
--- every @Actor@ term the rules inspect is then compared against that
--- same anchored identity ('AuthorityFacts' stores it as
--- 'factUserEntity').  Without the anchor, a subject endpoint, its
--- parameter types, and every @Actor@ term redirected coherently to
--- some other entity would agree with one another and pass every
--- self-consistency check, while the generated module would still
--- transcribe the subject as the kernel's fixed @UserK@; with it, such
--- evidence halts as an invariant violation at the authority's subject
--- endpoint reference — never as an unsupported shape and never as a
--- verified document.
+-- self-identity must equal the canonical identity the reference
+-- names, and every owner-local child declaration (relation endpoint,
+-- enum member, action parameter) must store exactly the canonical
+-- identity derived from its validated owner and its own position.
+-- Identity is validated before types, ranking, bindings, policy
+-- shape, or names, and no unvalidated stored self-identity is carried
+-- into 'AuthorityFacts', support matching, generated evidence, or plan
+-- construction, so a stored identity drifted coordinately with every
+-- stored reference later compared against it still halts as an
+-- invariant violation before either consumer generates anything.
 --
--- Soundness of the rules is the verifier's concern:
--- "Mithril.Core.Internal.Verify" states what the generated module
--- re-proves for each rule against the trusted fixed-schema kernel.
--- The gate itself proves nothing, and a plan attests support only.
+-- The subject entity is additionally anchored semantically: the
+-- entity the validated subject endpoint references must be exactly
+-- the distinguished @User@ identity the normalized model carries
+-- independently ('Normalized.modelUserEntity', stored here as
+-- 'factUserEntity'), and every @Actor@ term the rules inspect is
+-- compared against that same anchored identity.  Without the anchor,
+-- a subject endpoint, its parameter types, and every @Actor@ term
+-- redirected coherently to some other entity would pass every
+-- self-consistency check while the generated module still transcribed
+-- the subject as the kernel's fixed @UserK@; with it, such evidence
+-- halts as an invariant violation at the authority's subject endpoint
+-- reference, never as an unsupported shape and never as a verified
+-- document.
 --
 -- == The one ranking authority
 --
 -- The materialized ranking of the authority enum is validated here
--- and nowhere else: 'materializedRanking' requires the stored ranking
--- to be a consistently materialized complete permutation of the
--- enum's canonical member identities (every stored rank equal to its
--- position), classifies any other stored ranking evidence as an
--- invariant violation, identifies the bottom (rank 0) and the top —
--- the privilege floor the rule-1 allow policy names — and resolves
--- their numeric ranks, and derives the rank an absent tuple takes.
--- Both consumers read 'planRanking', 'planRankBottom', 'planRankTop',
--- and 'planAbsentRank' as validated values; neither scans the ranking
+-- and nowhere else ('materializedRanking'): the stored ranking must be
+-- a consistently materialized complete permutation of the enum's
+-- canonical member identities (every stored rank equal to its
+-- position), any other stored ranking evidence is an invariant
+-- violation, and the bottom (rank 0), the top (the privilege floor
+-- the rule-1 allow policy names), their numeric ranks, and the rank
+-- an absent tuple takes are derived once.  Both consumers read
+-- 'planRanking', 'planRankBottom', 'planRankTop', and
+-- 'planAbsentRank' as validated values; neither scans the ranking
 -- again, supplies a fallback rank, or classifies ranking evidence of
 -- its own.
 --
 -- == Failure classification
 --
 -- Shapes a well-typed author can write but the rule does not cover
--- are 'UnsupportedReason's — deterministic, sorted, deduplicated,
+-- are 'UnsupportedReason's: deterministic, sorted, deduplicated,
 -- decided before any generation.  Inconsistencies of the normalized
 -- model that no pipeline-produced document can exhibit (dangling or
 -- foreign identities, evidence drift) are
--- 'VerifierInvariantViolation's — internal tool errors shared by both
+-- 'VerifierInvariantViolation's: internal tool errors shared by both
 -- consumers, never authored-document problems and never semantic
--- verdicts.
+-- verdicts.  Soundness of the rules is the verifier's concern:
+-- "Mithril.Core.Internal.Verify" states what the generated module
+-- re-proves for each rule against the trusted fixed-schema kernel.
+-- The gate itself proves nothing, and a plan attests support only.
 module Mithril.Core.Internal.NspeSupportPlan
   ( -- * Shared support vocabulary
     UnsupportedReason (..)

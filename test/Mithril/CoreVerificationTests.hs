@@ -2,134 +2,68 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Checks over the Core v0 verifier boundary.
+-- | Checks over the Core v0 verifier boundary:
+-- "Mithril.Core.Verification" over the shared support gate of
+-- "Mithril.Core.Internal.NspeSupportPlan" and the generator and
+-- checker boundary of "Mithril.Core.Internal.Verify".
 --
--- Five cooperating groups over the singleton rule-1 fixture, then the
--- multi-case groups (6) over the two-case self-update fixture:
+-- The groups cover the singleton rule-1 fixture (supported pipeline,
+-- generated artifact, unsupported matrix, result classification,
+-- materiality of forged models) and the two-case rule-1, rule-2
+-- fixture (multi-case obligations).  The check names describe the
+-- individual cases; the machinery behind them is what makes them
+-- subtle:
 --
--- 1. /Supported pipeline./  The Acme-derived single-obligation
---    fixture flows through the complete public pipeline into
---    'verifyCoreDocument' and is checked by the real Agda 2.8.0
---    executable; the exact 'VerificationVerified' value is pinned,
---    two runs agree, and a path-independent copy of the fixture
---    produces the identical normalized model and identical generated
---    bytes.
---
--- 2. /Generated artifact./  The generator's exact bytes for the
---    supported fixture are pinned against the reviewed golden
---    @test\/fixtures\/nspe.generated.agda@, and an independent
---    structural oracle checks the artifact rather than trusting the
---    golden blindly: exact module header and kernel import
---    inventory, the structured theorem-block inventory complete and
---    verbatim in the module together with every checked manifest
---    entry (each qualified into the inner theorem module), safe-mode
---    pragma exactly once, no escape hatches (@postulate@,
---    @primTrustMe@, termination or rewrite pragmas, holes), no tabs,
---    no carriage returns, no temporary paths, and exactly one final
---    newline.  A hostile forged declaration name is escaped into a
---    single comment line rather than becoming Agda syntax.  The
---    checked manifest's force is then established against the real
---    Agda 2.8.0 executable: the valid artifact is accepted, and a
---    removed, renamed, wrongly typed, hole-carrying, coincidentally
---    shadowed, or multiline-string-swallowed required theorem is
---    rejected — no source-text scan decides theorem presence
---    anywhere.  A fake
---    recording checker captures the materialized workspace and pins
---    the exact checking-tree inventory: the five embedded kernel
---    modules byte-identical to the repository sources, plus the
---    generated module byte-identical to the golden, and nothing
---    else.
---
--- 3. /Unsupported matrix./  Authored JSON variants of the fixture —
---    the canonical Acme document, no guarantees, duplicated
---    guarantees and cases, other guarantee families, wrong actions,
---    effects, relations, bindings, parameter lists, a missing
---    actor\/subject guard, and semantically equivalent but
---    differently authored policy shapes — each land on their exact,
---    sorted, deduplicated unsupported reasons through the pure gate,
---    before any checker could run.
---
--- 4. /Result classification./  Fake checkers on a controlled search
---    path exercise the production runner: a missing checker, a
---    non-executable checker, a wrong version, a rejecting checker
---    with hostile multiline control-character output, and a
---    signal-terminated checker each map to their exact tool-failure
---    class; the isolated workspace is cleaned on the success path
---    and on failure paths; a hostile nonexistent TMPDIR classifies
---    with a stable operation-labelled diagnostic that leaks no
---    absolute path; the review's forged malformed-evidence models (a
---    drifted stored policy type, a duplicated ranking member, and
---    duplicated declared member identities under a superficially
---    complete ranking) classify as verifier invariants through the
---    pure gate and the production boundary without any checker being
---    launched; the coordinated identity-drift forgeries — each
---    proof-relevant stored self-identity (enum, relation, entity,
---    action) drifted together with every dependent stored reference
---    and type the gate compares against it, plus endpoint and
---    parameter owner and position drift coordinated with every
---    referencing binding and argument — halt on their exact canonical
---    identity-preflight invariants with zero runner invocations and
---    no checker discovery; the review's verification-boundary
---    forgery — the authority subject endpoint redirected to another
---    declared entity under intact canonical identities, with the
---    subject parameter type, every stored Actor entity, and every
---    subject-typed stored type of the case action redirected
---    coherently with it (so every self-consistency check agrees),
---    for the rule-1, the singleton rule-2, and the two-case model,
---    plus a drifted anchor under untouched evidence — halts on
---    exactly the distinguished-User anchor invariant at the
---    authority's subject endpoint reference through the pure gate,
---    the production boundary, an injected runner recording zero
---    invocations, and the Wasp emitter, while the unmodified
---    documents keep verifying under real Agda and the Wasp profile
---    dispatcher keeps its selections (Profile v0 for the singleton
---    rule-1 document, Profile v1 for the ordered rule-1, rule-2
---    pair); and no failure or report rendering ever contains a
---    violation verdict.
---
--- 5. /Materiality and forged models./  A pinned-size mutation table
---    walks every proof-relevant stored normalized evidence family of
---    the supported fixture — identities (including every declared
---    self-identity the canonical preflight validates: entity, enum,
---    relation, action, endpoint, and parameter), names, parameter
---    types and
---    order, principal mode, policy structure, effect relation and
---    bindings, payload, declared enum member identities (canonical
---    owner, position, and uniqueness), ranking (including its
---    bijection with the canonical declared identities), ordered
---    evidence, every stored policy- and
---    value-type annotation the supported shape visits, authority
---    endpoints, case action and scope — and each mutation either
---    changes the generated bytes or fails closed on its exact
---    unsupported reasons or verifier-invariant violations, with
---    forged dangling\/foreign identities and evidence drift reaching
---    their intended verifier branch.  Every entry is additionally
---    replayed against the Wasp emitter, which consumes the same
---    shared support plan: a metadata mutation must change the Wasp
---    bundle bytes as well, and a fail-closed mutation must refuse
---    the emitter with exactly the same reasons or violations.
---
--- 6. /Multi-case obligations./  The two-case self-update fixture (a
---    rule-1 change-other case plus a rule-2 bounded-self-update case)
---    verifies through the public pipeline under real Agda 2.8.0 with
---    both cases tagged in authored order; its production-generated
---    bytes are pinned against the reviewed golden
---    @test\/fixtures\/nspe-self-update.generated.agda@ (the general
---    position-qualified layout: one inner module per case, one
---    manifest module per case); the plan-derived required-theorem
---    inventory refuses doctored per-case inventories; real Agda
---    rejects a removed, renamed, duplicated, wrongly typed,
---    hole-carrying, or coincidentally shadowed per-case theorem; a
---    singleton rule-2 document and a reordered two-case document
---    verify (authored order and positions kept, never reordered or
---    deduplicated); every rule-2 near-miss — parameter count, order,
---    and types, a foreign relation, an added @IsSome@ conjunct, a
---    literal or swapped comparison, a non-@SetRelation@ effect — and
---    every mixed document with one unsupported case land on reasons
---    anchored at the offending case or action, with no head-only
---    selection; the dangerous self-promotion mutation stays
---    unsupported, never a verdict; and a pinned rule-2 materiality
---    table replays forged evidence of the second case.
+-- * /Real Agda./  Supported fixtures are checked by the real Agda
+--   2.8.0 executable through the complete public pipeline, and the
+--   generated bytes are pinned against the committed goldens
+--   @test\/fixtures\/nspe.generated.agda@ and
+--   @test\/fixtures\/nspe-self-update.generated.agda@.  An
+--   independent structural oracle checks the artifact rather than
+--   trusting the golden blindly, and a fake recording checker pins
+--   the exact materialized workspace: the five embedded kernel
+--   modules byte-identical to the repository sources, the generated
+--   module, and nothing else.
+-- * /The checked manifest has force./  Theorem presence is never
+--   decided by scanning source text: a removed, renamed, wrongly
+--   typed, hole-carrying, coincidentally shadowed, or
+--   string-literal-swallowed required theorem is rejected by real
+--   Agda, and the plan-derived inventory refuses doctored per-case
+--   inventories.
+-- * /Fake checkers on a controlled search path./  A missing,
+--   non-executable, wrong-version, rejecting (with hostile
+--   control-character output), or signal-terminated checker maps to
+--   its exact tool-failure class; the isolated workspace is cleaned
+--   on every path; a hostile nonexistent TMPDIR classifies with a
+--   stable diagnostic that leaks no absolute path; and no failure or
+--   report rendering ever contains a violation verdict.
+-- * /Forged normalized models./  The public pipeline cannot produce
+--   them, so they are built through the package-private sublibrary:
+--   malformed evidence (a drifted stored policy type, a duplicated
+--   ranking member, duplicated declared member identities under a
+--   superficially complete ranking), coordinated identity drift
+--   (every proof-relevant stored self-identity drifted together with
+--   every dependent stored reference the gate compares against it),
+--   and the coherently redirected subject (the authority's subject
+--   endpoint, the subject parameter type, every stored @Actor@
+--   entity, and every subject-typed stored type moved together to
+--   another entity, so every self-consistency check agrees) must each
+--   halt on their exact invariant with zero checker invocations and
+--   no checker discovery, through the pure gate, the production
+--   boundary, and the Wasp emitter alike, while the unmodified
+--   documents keep verifying under real Agda.
+-- * /Materiality./  A pinned-size mutation table walks every
+--   proof-relevant stored evidence family of each fixture; each
+--   mutation either changes the generated bytes or fails closed on
+--   its exact reasons or invariants, and every entry is replayed
+--   against the Wasp emitter, which consumes the same shared plan and
+--   must change its bytes or refuse with exactly the same reasons.
+-- * /Authored order./  Multi-case documents keep authored order and
+--   positions, never reordered or deduplicated; every rule-2
+--   near-miss and every mixed document with one unsupported case
+--   lands on reasons anchored at the offending case, with no
+--   head-only selection; and the dangerous self-promotion mutation
+--   stays unsupported, never a verdict.
 module Mithril.CoreVerificationTests
   ( tests
   ) where
@@ -441,7 +375,7 @@ generatedArtifactChecks baseModel goldenText =
           hostileGenerated =
             fmap renderObligationModule (rightMaybe (supportPlan hostileModel))
        in [ check
-              "the generated module is byte-identical to the reviewed golden"
+              "the generated module is byte-identical to the committed golden"
               (generated == goldenText)
           , check
               "the generated module carries the safe pragma as its only pragma"
@@ -720,7 +654,7 @@ manifestAgdaChecks baseModel =
               "case-scope-is-scope-argument s a γ = refl"
               "case-scope-is-scope-argument s a γ = ?"
               generated
-          -- The reviewer-accepted multiline string form: a literal
+          -- A multiline string literal that Agda accepts: a literal
           -- with raw newlines, its body carrying the required name at
           -- column 0 exactly as a top-level declaration would appear.
           stringCarrierLines =
@@ -1502,7 +1436,7 @@ workspaceLeakChecks baseModel =
 -- Group 4d: the two reported forged malformed-evidence models
 --------------------------------------------------------------------
 
--- | The review's demonstrated forgeries — a drifted root allow
+-- | The malformed-evidence forgeries — a drifted root allow
 -- 'N.policyTermType', a duplicated ranking member, and duplicated
 -- declared member identities under a superficially complete ranking
 -- (declared identities [A,A] against ranked identities [A,B]) — must
@@ -1589,11 +1523,11 @@ forgedEvidenceChecks baseModel =
 
     rankingForgedModel = onEnum0 duplicateRankingMember baseModel
 
-    -- The reviewer's [A,A]/[A,B] mutation: the second declared member
-    -- carries the first member's identity, while the materialized
-    -- ranking still ranks the two canonical identities — so the old
-    -- per-declaration counting check over the duplicated declaration
-    -- list would have passed.
+    -- The [A,A]/[A,B] mutation: the second declared member carries
+    -- the first member's identity, while the materialized ranking
+    -- still ranks the two canonical identities — so a per-declaration
+    -- counting check over the duplicated declaration list alone would
+    -- pass.
     declarationForgedModel =
       onEnum0
         (onMember 1 (\m -> m {N.enumMemberId = EnumValueId (EnumId 0) 0}))
@@ -1614,7 +1548,7 @@ forgedEvidenceChecks baseModel =
         ["schema", "enums", "0", "values", "1"]
         "this declared enum member's stored identity is not the canonical identity of its declaration position"
 
--- | The review's second forgery: rank 0 references rank 1's member,
+-- | The duplicated-ranking-member forgery: rank 0 references rank 1's member,
 -- so a declared member is ranked twice and another never — while the
 -- numeric ranks and the declared values stay untouched.
 duplicateRankingMember :: N.EnumDefinition -> N.EnumDefinition
@@ -2082,20 +2016,20 @@ coordinatedParameterPositionDrift =
 -- Group 4f: the distinguished-User anchor (coherently redirected subject)
 --------------------------------------------------------------------
 
--- | The review's verification-boundary forgery.  Canonical positional
+-- | The verification-boundary forgery.  Canonical positional
 -- identities are left intact; the authority relation's subject
 -- endpoint is redirected to another declared entity, and every piece
--- of evidence the old self-consistency-only checks compared against
+-- of evidence a self-consistency-only check would compare against
 -- the subject — the subject parameter's declared entity, every stored
 -- @Actor@ entity, and every stored subject-typed value and policy
 -- type of the case action — is redirected coherently with it, so
 -- subject endpoint, parameter types, @Actor@ terms, and bindings all
 -- agree on the wrong entity and no self-consistency check can object
--- (the driver of this forgery on the sources before the anchor
--- existed produced a plan naming that entity as the subject, a
--- rendered Wasp bundle, and VERIFIED under real Agda, the generated
--- module transcribing the redirected subject as the kernel's fixed
--- @UserK@).  The normalized model's independently carried
+-- (without the anchor, such a model yields a plan naming that entity
+-- as the subject, a rendered Wasp bundle, and VERIFIED under real
+-- Agda, with the generated module transcribing the redirected
+-- subject as the kernel's fixed @UserK@).  The normalized model's
+-- independently carried
 -- distinguished-User identity is the one piece of evidence the
 -- redirection cannot make consistent, and each forgery must halt on
 -- exactly that anchor invariant at the authority's subject endpoint
@@ -3107,7 +3041,7 @@ selfUpdatePipelineChecks selfUpdateBytes selfUpdateModel = do
 --------------------------------------------------------------------
 
 -- | The production-generated bytes of the two-case fixture are
--- pinned against the reviewed golden, and the general layout is
+-- pinned against the committed golden, and the general layout is
 -- checked structurally: one position-qualified inner module per case
 -- holding exactly that case's rule group, one manifest module per
 -- case opening it, the plan-derived inventory complete and refusing
@@ -3139,7 +3073,7 @@ selfUpdateArtifactChecks selfUpdateModel goldenText singletonGoldenText =
                 N.NoSelfPrivilegeEscalationGuarantee path authority (firstCase :| [])
               other -> other
        in [ check
-              "the two-case generated module is byte-identical to the reviewed golden"
+              "the two-case generated module is byte-identical to the committed golden"
               (generated == goldenText)
           , check
               "the two-case module carries the safe pragma once, the fixed module name, and the five kernel imports"

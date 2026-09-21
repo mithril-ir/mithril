@@ -185,7 +185,7 @@ are unconstructable).
   reference plus a proof it is fresh in the pre-state. The candidate is not
   part of the request, the action arguments, or the policy environment, and
   the allocator supplies no initializer values (required attributes come
-  from the declared `InitTerm`). Beyond unrepresentability, this is now a
+  from the declared `InitTerm`). Beyond unrepresentability, this is also a
   semantic theorem: `fresh-not-evaluable` shows no entity-reference term of
   a valid request (argument, actor, or attribute path) can evaluate to a
   fresh candidate, and a fresh candidate offered *as* an argument makes the
@@ -224,8 +224,8 @@ are unconstructable).
 
 ## The Acme application slice
 
-`Mithril.Guarantee` (kernel) and `Mithril.Acme` (experiment) carry the
-first application-level proof slice on top of the kernel: **one action, one
+`Mithril.Guarantee` (kernel) and `Mithril.Acme` (experiment) carry
+an application-level proof slice on top of the kernel: **one action, one
 property, by hand**. `Mithril.Acme` is a hand-transcribed, fixed-schema
 Agda application *experiment* outside the verifier kernel: `mithril verify`
 neither embeds nor imports it, no JSON-to-Agda lowering produces it, and
@@ -287,8 +287,7 @@ kernel could serve any other schema):
 - The creation payload (`AllocInit`/`InitTerm`) is a kind-indexed special
   case of "required attributes at creation".
 - Capability construction is by direct evidence (`grant`); a complete
-  Invalid/Denied decision procedure for requests is not part of this
-  correction.
+  Invalid/Denied decision procedure for requests is not provided.
 
 **Not mechanized in Agda at all**: JSON representation, parsing, the CLI,
 Wasp generation, production reference allocation, concurrency, the full

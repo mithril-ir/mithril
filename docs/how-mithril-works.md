@@ -288,17 +288,12 @@ regression fixture. `examples/` contains human-facing authored examples. Local
 experiments belong outside the repository or in an ignored location; generated
 goldens are never edited by hand.
 
-## Product and development use of coding agents
+## Where an LLM may participate
 
 In the product architecture, an optional untrusted LLM can propose only the
 authored Core JSON. No LLM participates after that boundary: parsing,
 normalization, contract rendering, Agda generation and checking, Wasp
 generation, and verdict reporting are deterministic toolchain steps.
-
-Separately, substantial coding-agent assistance has been used to develop this
-repository under human-directed architecture, review, and testing. That fact
-does not strengthen any trust claim. Agent-written code is reviewed and tested
-like other code, and test results remain evidence rather than proof.
 
 ## Short glossary
 
