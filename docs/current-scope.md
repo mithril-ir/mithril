@@ -230,7 +230,12 @@ These deliberate, documented gaps are not desired contracts:
 | cabal-install | 3.18.1.0 |
 | Agda | exactly 2.8.0 (`--safe --no-libraries --ignore-interfaces`) |
 | Language edition | GHC2021 |
-| Wasp (integration battery only) | 0.25.0 |
-| Node.js (integration battery only) | 24 |
-| PostgreSQL (integration battery only) | 16 |
+| Wasp (demonstrator execution and integration battery only) | 0.25.0 |
+| Node.js (demonstrator execution and integration battery only) | 24 |
+| PostgreSQL (demonstrator execution and integration battery only) | 16 |
 | Platform | Linux/POSIX (the documented current workflow) |
+
+The `mithril` commands themselves, including `mithril verify`, `mithril wasp
+generate`, and `mithril wasp check`, need none of the last three; they are
+required only to execute a generated Wasp demonstrator or to run the real
+Wasp/PostgreSQL integration battery.

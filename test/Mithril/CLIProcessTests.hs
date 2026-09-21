@@ -63,7 +63,7 @@ import System.Process
   , readProcessWithExitCode
   )
 
-import Mithril.CLI (renderHelp)
+import Mithril.CLI (renderHelp, renderWaspHelp)
 import Mithril.Test (Check, check)
 import Mithril.TestEnv (datadirVariable, withPermissiveDatadir)
 
@@ -94,18 +94,26 @@ tests = do
       )
   waspGenerateChecks <- waspProcessChecks
   helpTriple <- invokeMithril ["--help"]
+  waspHelpTriple <- invokeMithril ["wasp", "--help"]
   overrideChecks <- datadirOverrideChecks
   verifierToolFailureChecks <- verifierCheckerOverrideChecks
   pure $
     concat matrixChecks
-      <> [ -- Belt to the renderHelp-equality braces: the first help
-           -- line is also pinned literally, so the process contract
-           -- does not rest solely on the library value.
+      <> [ -- Belt to the renderHelp-equality braces: the first line of
+           -- each help text is also pinned literally, so the process
+           -- contract does not rest solely on the library values.
            check
             "--help output begins with the literal header line"
             ( case helpTriple of
                 (_, stdoutText, _) ->
-                  "mithril - host tool for the Mithril Core IR\n"
+                  "mithril - check Mithril Core permission rules and generate a Wasp demonstrator\n"
+                    `isPrefixOf` stdoutText
+            )
+         , check
+            "wasp --help output begins with the literal Wasp header line"
+            ( case waspHelpTriple of
+                (_, stdoutText, _) ->
+                  "mithril wasp - generate and check the closed Wasp demonstrator\n"
                     `isPrefixOf` stdoutText
             )
          ]
@@ -795,9 +803,12 @@ datadirOverrideChecks = do
 -- document is UNSUPPORTED to the wasp commands with exit 3; input
 -- failures keep the byte-exact validate diagnostics and
 -- classification; a missing root is an unusable root with exit 1;
--- and the wasp grammar errors mirror the other commands'.  Each
--- expectation runs twice through 'expectationChecks', pinning
--- repetition determinism.
+-- the Wasp-specific help (@wasp --help@ and @wasp -h@) prints alone
+-- on stdout with exit 0; and the wasp grammar errors mirror the other
+-- commands' but point at that help.  A help flag after a subcommand is
+-- that subcommand's CORE_FILE, never a help request.  Each expectation
+-- runs twice through 'expectationChecks', pinning repetition
+-- determinism.
 waspExpectations :: [CliExpectation]
 waspExpectations =
   [ CliExpectation
@@ -887,40 +898,75 @@ waspExpectations =
       , cliStderr = "test/fixtures/acme-nspe.mir.json: unusable Wasp root\n  is not a directory\n"
       }
   , CliExpectation
-      { cliName = "wasp without a subcommand is a usage error"
+      { cliName = "wasp --help"
+      , cliArgs = ["wasp", "--help"]
+      , cliExit = ExitSuccess
+      , cliStdout = renderWaspHelp
+      , cliStderr = ""
+      }
+  , CliExpectation
+      { cliName = "wasp -h"
+      , cliArgs = ["wasp", "-h"]
+      , cliExit = ExitSuccess
+      , cliStdout = renderWaspHelp
+      , cliStderr = ""
+      }
+  , CliExpectation
+      { cliName = "an extra argument after wasp --help is a usage error pointing at the wasp help"
+      , cliArgs = ["wasp", "--help", "extra"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "mithril: unexpected extra arguments after 'wasp --help': 'extra'\n\
+          \Run 'mithril wasp --help' for usage.\n"
+      }
+  , CliExpectation
+      { cliName = "wasp without a subcommand is a usage error pointing at the wasp help"
       , cliArgs = ["wasp"]
       , cliExit = ExitFailure 1
       , cliStdout = ""
       , cliStderr =
           "mithril: 'wasp' requires a subcommand: generate or check\n\
-          \Run 'mithril --help' for usage.\n"
+          \Run 'mithril wasp --help' for usage.\n"
       }
   , CliExpectation
-      { cliName = "an unknown wasp subcommand is a usage error"
+      { cliName = "an unknown wasp subcommand is a usage error pointing at the wasp help"
       , cliArgs = ["wasp", "frobnicate"]
       , cliExit = ExitFailure 1
       , cliStdout = ""
       , cliStderr =
           "mithril: unknown wasp subcommand 'frobnicate'\n\
-          \Run 'mithril --help' for usage.\n"
+          \Run 'mithril wasp --help' for usage.\n"
       }
   , CliExpectation
-      { cliName = "wasp generate with one argument is a usage error"
+      { cliName = "wasp generate with one argument is a usage error pointing at the wasp help"
       , cliArgs = ["wasp", "generate", nspePath]
       , cliExit = ExitFailure 1
       , cliStdout = ""
       , cliStderr =
           "mithril: 'wasp generate' requires exactly two arguments: CORE_FILE WASP_ROOT\n\
-          \Run 'mithril --help' for usage.\n"
+          \Run 'mithril wasp --help' for usage.\n"
       }
   , CliExpectation
-      { cliName = "an extra argument after wasp check CORE_FILE WASP_ROOT is a usage error"
+      { -- After a subcommand, a help flag is CORE_FILE (a path), so a
+        -- lone '--help' is the missing-arguments usage error, never
+        -- the help text.
+        cliName = "wasp generate --help is the missing-arguments usage error, not a help request"
+      , cliArgs = ["wasp", "generate", "--help"]
+      , cliExit = ExitFailure 1
+      , cliStdout = ""
+      , cliStderr =
+          "mithril: 'wasp generate' requires exactly two arguments: CORE_FILE WASP_ROOT\n\
+          \Run 'mithril wasp --help' for usage.\n"
+      }
+  , CliExpectation
+      { cliName = "an extra argument after wasp check CORE_FILE WASP_ROOT is a usage error pointing at the wasp help"
       , cliArgs = ["wasp", "check", nspePath, waspFixtureRoot, "surplus"]
       , cliExit = ExitFailure 1
       , cliStdout = ""
       , cliStderr =
           "mithril: unexpected extra arguments after 'wasp check CORE_FILE WASP_ROOT': 'surplus'\n\
-          \Run 'mithril --help' for usage.\n"
+          \Run 'mithril wasp --help' for usage.\n"
       }
   ]
 

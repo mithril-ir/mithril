@@ -74,7 +74,15 @@ Mithril checks a proof of this property, called **No Self Privilege Escalation**
 
 ## Try it
 
-The prototype runs from source on Linux. You need GHC 9.12.4, cabal-install 3.18.1.0, and Agda 2.8.0. See [Contributing](CONTRIBUTING.md) for setup instructions.
+The prototype runs from source on Linux.
+
+**To verify documents and generate the Wasp source root** (steps 1 to 3), you need GHC 9.12.4, cabal-install 3.18.1.0, and Agda 2.8.0 on your `PATH`. See [Contributing](CONTRIBUTING.md) for setup instructions. Nothing else is needed: `mithril` itself never runs Wasp, Node, or PostgreSQL.
+
+**To run the generated demonstrator** (step 4, optional), you additionally need the toolchain this repository pins and tests against: the [Wasp](https://wasp.sh/docs/quick-start) 0.25.0 CLI, Node.js 24, and a PostgreSQL 16 database. Mithril does not require Docker; one of Wasp's two database options uses it, as described in step 4.
+
+`cabal run mithril -- --help` prints the command summary and `cabal run mithril -- wasp --help` the Wasp-specific one.
+
+### 1. Verify the example
 
 ```sh
 git clone https://github.com/mithril-ir/mithril.git
@@ -83,9 +91,7 @@ cd mithril
 cabal run mithril -- verify test/fixtures/acme-nspe-self-update.mir.json
 ```
 
-The first run builds the tool. This command checks the example's selected operations and should return `VERIFIED`.
-
-`VERIFIED` means Agda accepted the required proofs for those operations. Rules outside the implemented support return `UNSUPPORTED`, which does not establish whether they are safe or unsafe.
+The first run builds the tool. This command checks the example's selected operations and should end with `VERIFIED` (exit code 0).
 
 To inspect the generated review text:
 
@@ -93,7 +99,73 @@ To inspect the generated review text:
 cabal run mithril -- contract test/fixtures/acme-nspe-self-update.mir.json
 ```
 
-The input is currently a test fixture. The review text's presentation is still provisional. See [How Mithril works](docs/how-mithril-works.md) for the walkthrough and Wasp generation commands.
+### 2. Generate the Wasp source root
+
+```sh
+cabal run mithril -- wasp generate test/fixtures/acme-nspe-self-update.mir.json /tmp/mithril-wasp-source
+```
+
+Generation repeats the verification and refuses a document that is not `VERIFIED` or that does not fit one of the two supported Wasp profiles. The report lists the fourteen generated files and ends with `confinement: CONFINED`. The directory is private (mode 0700) and is a **closed source artifact**: every file in it is generated, and nothing else may be present.
+
+### 3. Check the source root
+
+```sh
+cabal run mithril -- wasp check test/fixtures/acme-nspe-self-update.mir.json /tmp/mithril-wasp-source
+```
+
+`wasp check` regenerates the expected files in memory and compares them byte for byte with the directory. It prints `CONFINED` (exit 0) when the directory is exactly the generated root, and `NOT CONFINED` (exit 4) with one line per difference otherwise. It writes nothing, so run it whenever you want to re-check.
+
+### 4. Run the demonstrator in a disposable working copy (optional)
+
+Do not run Wasp inside the checked source root. Ordinary Wasp commands create `node_modules`, `.wasp`, `package-lock.json`, `migrations`, and `.env.server`, and none of them belongs to the closed source profile, so that same directory would then report `NOT CONFINED`. Copy the source root and run Wasp only in the copy:
+
+```sh
+rm -rf /tmp/mithril-wasp-run
+cp -R /tmp/mithril-wasp-source /tmp/mithril-wasp-run
+cd /tmp/mithril-wasp-run
+wasp install
+```
+
+The app needs a PostgreSQL connection. Choose one of Wasp's two options:
+
+- **An existing PostgreSQL server.** Create an empty database and put its connection string in `.env.server` inside the working copy, as Wasp's [database documentation](https://wasp.sh/docs/data-model/databases#connecting-to-a-database) describes:
+
+  ```sh
+  echo 'DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/mithril_demo' > .env.server
+  ```
+
+- **Wasp's development database.** In a second terminal, run `wasp start db` inside the working copy. This route requires Docker on your machine.
+
+Then create the schema and start the app:
+
+```sh
+wasp db migrate-dev --name init
+wasp start
+```
+
+By default, `wasp start` serves the client at http://localhost:3000 and the server at http://localhost:3001. The page is a static shell. The two generated Actions are authenticated Wasp operations (`POST /operations/mithril-case-action` and `POST /operations/mithril-self-update-action`); the repository's [integration battery](test/wasp-integration/) exercises them through Wasp's real HTTP and authentication path.
+
+The working copy is now `NOT CONFINED`. That is expected and is not evidence that generation failed: the untouched source root in `/tmp/mithril-wasp-source` still reports `CONFINED`. When the Core document changes, regenerate the source root, check it, delete the working copy, and copy again.
+
+```text
+Core document
+    ↓  mithril wasp generate
+clean source root         /tmp/mithril-wasp-source   (CONFINED)
+    ↓  copy
+disposable working copy   /tmp/mithril-wasp-run      (NOT CONFINED, as expected)
+    ↓  wasp install / wasp db migrate-dev / wasp start
+running demonstrator
+```
+
+### What the results mean
+
+- `VERIFIED` (exit 0): Agda accepted the required proofs for every selected case of the document's one selected guarantee.
+- `UNSUPPORTED` (exit 3): the document is outside the implemented proof rules. This establishes neither safety nor a violation. Mithril has no `VIOLATED` result and no counterexample engine. For example, `verify test/fixtures/acme-nspe-dangerous.mir.json` returns `UNSUPPORTED` because its role-changing rule is written in a shape outside the two proof rules; the result says nothing about whether that rule is safe.
+- `CONFINED` (exit 0) or `NOT CONFINED` (exit 4): the Wasp source root is, or is not, byte-identical to the regenerated closed bundle.
+
+An invalid document exits 1. A tool failure, such as a missing Agda 2.8.0, exits 2 and is never a verdict.
+
+The input is currently a test fixture, and the review text's presentation is still provisional. See [How Mithril works](docs/how-mithril-works.md) for the walkthrough.
 
 <a name="trust-and-limitations"></a>
 
